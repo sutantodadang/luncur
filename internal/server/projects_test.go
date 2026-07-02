@@ -21,6 +21,24 @@ func TestProjectRoutes(t *testing.T) {
 		t.Fatalf("bad name: want 400, got %d", resp.StatusCode)
 	}
 
+	// Duplicate name: 409 project_exists.
+	dup := doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`)
+	if dup.StatusCode != 409 {
+		t.Fatalf("duplicate: want 409, got %d", dup.StatusCode)
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(dup.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	dup.Body.Close()
+	if env.Error.Code != "project_exists" {
+		t.Fatalf("want code project_exists, got %q", env.Error.Code)
+	}
+
 	// List: member sees nothing until added.
 	var list []map[string]any
 	resp := doAuthed(t, "GET", srv.URL+"/v1/projects", member, "")

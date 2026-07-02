@@ -48,11 +48,19 @@ func (s *server) handleCreateProject(w http.ResponseWriter, r *http.Request, _ s
 	}
 	p, err := s.st.CreateProject(req.Name)
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		// Either projects.name or projects.k8s_namespace may trip first;
+		// namespace derives 1:1 from name, so both mean "duplicate project".
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: projects.") {
 			writeError(w, http.StatusConflict, "project_exists", "project already exists")
 			return
 		}
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		var ve *store.ValidationError
+		if errors.As(err, &ve) {
+			writeError(w, http.StatusBadRequest, "bad_request", ve.Error())
+			return
+		}
+		log.Printf("create project: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 	writeJSON(w, http.StatusCreated, projectJSON(p))

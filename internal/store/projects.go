@@ -23,7 +23,7 @@ type Project struct {
 
 func (s *Store) CreateProject(name string) (Project, error) {
 	if !validName(name) {
-		return Project{}, fmt.Errorf("invalid project name %q (lowercase letters, digits, dashes; max 40 chars)", name)
+		return Project{}, validationErrorf("invalid project name %q (lowercase letters, digits, dashes; max 40 chars)", name)
 	}
 	ns := "luncur-" + name
 	res, err := s.db.Exec(`INSERT INTO projects (name, k8s_namespace) VALUES (?, ?)`, name, ns)
