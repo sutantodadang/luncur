@@ -21,7 +21,7 @@ func testEnv(t *testing.T) *httptest.Server {
 	if _, err := st.CreateUser("root@b.co", "pw123456", "admin"); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(server.New(st))
+	srv := httptest.NewServer(server.New(server.Deps{Store: st}))
 	t.Cleanup(func() { srv.Close(); st.Close() })
 	return srv
 }

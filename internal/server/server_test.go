@@ -17,7 +17,7 @@ func testServer(t *testing.T) (*httptest.Server, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(New(st))
+	srv := httptest.NewServer(New(Deps{Store: st}))
 	t.Cleanup(func() { srv.Close(); st.Close() })
 	return srv, st
 }
