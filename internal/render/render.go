@@ -5,6 +5,7 @@
 package render
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -13,6 +14,7 @@ import (
 	netv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"sigs.k8s.io/yaml"
 )
 
@@ -34,6 +36,57 @@ type Object struct {
 
 type Rendered struct {
 	Objects []Object
+}
+
+// dataStructFor returns the typed zero value strategicpatch needs to
+// understand list-merge keys (e.g. containers merged by name).
+func dataStructFor(kind string) (any, error) {
+	switch kind {
+	case "Deployment":
+		return appsv1.Deployment{}, nil
+	case "Service":
+		return corev1.Service{}, nil
+	case "Ingress":
+		return netv1.Ingress{}, nil
+	default:
+		return nil, fmt.Errorf("kind %q cannot be overridden", kind)
+	}
+}
+
+func applyOverride(kind string, base []byte, patch string) ([]byte, error) {
+	ds, err := dataStructFor(kind)
+	if err != nil {
+		return nil, err
+	}
+	merged, err := strategicpatch.StrategicMergePatch(base, []byte(patch), ds)
+	if err != nil {
+		return nil, fmt.Errorf("apply %s override: %w", kind, err)
+	}
+	// Round-trip through the typed struct so type mismatches fail loudly
+	// at render time instead of at cluster apply time.
+	typed, err := roundTrip(kind, merged)
+	if err != nil {
+		return nil, fmt.Errorf("%s override produces invalid object: %w", kind, err)
+	}
+	return typed, nil
+}
+
+func roundTrip(kind string, raw []byte) ([]byte, error) {
+	var v any
+	switch kind {
+	case "Deployment":
+		v = &appsv1.Deployment{}
+	case "Service":
+		v = &corev1.Service{}
+	case "Ingress":
+		v = &netv1.Ingress{}
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return nil, err
+	}
+	return json.Marshal(v)
 }
 
 func SecretName(app string) string { return app + "-env" }
@@ -152,6 +205,23 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 	}
 	if err := add("Ingress", ing); err != nil {
 		return Rendered{}, err
+	}
+
+	for kind := range in.Overrides {
+		if _, err := dataStructFor(kind); err != nil {
+			return Rendered{}, err
+		}
+	}
+	for i, o := range objs {
+		patch, ok := in.Overrides[o.Kind]
+		if !ok {
+			continue
+		}
+		merged, err := applyOverride(o.Kind, o.JSON, patch)
+		if err != nil {
+			return Rendered{}, err
+		}
+		objs[i].JSON = merged
 	}
 
 	return Rendered{Objects: objs}, nil
