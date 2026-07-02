@@ -20,6 +20,8 @@ func New(st *store.Store) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /v1/login", s.handleLogin)
+	mux.HandleFunc("GET /v1/me", s.authed(s.handleMe))
+	mux.HandleFunc("POST /v1/users", s.adminOnly(s.handleCreateUser))
 
 	return mux
 }
