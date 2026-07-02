@@ -1,0 +1,6 @@
+luncur
+luncur.exe
+*.db
+*.db-wal
+*.db-shm
+tmp-*

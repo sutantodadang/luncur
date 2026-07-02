@@ -1,0 +1,33 @@
+// Package server implements luncur's REST API.
+package server
+
+import (
+	"net/http"
+
+	"github.com/sutantodadang/luncur/internal/store"
+)
+
+type server struct {
+	st *store.Store
+}
+
+// New builds the full API handler. Later plans add their routes here.
+func New(st *store.Store) http.Handler {
+	s := &server{st: st}
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("POST /v1/login", s.handleLogin)
+	mux.HandleFunc("GET /v1/me", s.authed(s.handleMe))
+	mux.HandleFunc("POST /v1/users", s.adminOnly(s.handleCreateUser))
+
+	// Fallback for unmatched paths keeps every response envelope-compliant
+	// instead of falling through to the stdlib's plain-text 404.
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
+	})
+
+	return mux
+}
