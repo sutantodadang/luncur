@@ -12,8 +12,8 @@ func (s *Store) SetOverride(appID int64, kind, patchJSON string) error {
 		return fmt.Errorf("unsupported kind %q (Deployment, Service, or Ingress)", kind)
 	}
 	var obj map[string]any
-	if err := json.Unmarshal([]byte(patchJSON), &obj); err != nil {
-		return fmt.Errorf("override patch must be a JSON object: %w", err)
+	if err := json.Unmarshal([]byte(patchJSON), &obj); err != nil || obj == nil {
+		return fmt.Errorf("override patch must be a JSON object (got %q): %v", patchJSON, err)
 	}
 	_, err := s.db.Exec(
 		`INSERT INTO overrides (app_id, kind, patch_json) VALUES (?, ?, ?)
