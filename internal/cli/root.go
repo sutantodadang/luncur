@@ -20,6 +20,9 @@ func newRoot() *cobra.Command {
 			cmd.Println(version)
 		},
 	})
+	root.AddCommand(loginCmd())
+	root.AddCommand(whoamiCmd())
+	root.AddCommand(userCmd())
 	root.AddCommand(serveCmd())
 	return root
 }
