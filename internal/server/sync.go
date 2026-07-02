@@ -1,0 +1,80 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/sutantodadang/luncur/internal/render"
+	"github.com/sutantodadang/luncur/internal/store"
+)
+
+// hostFor builds the sslip.io hostname luncur assigns each app: the app
+// name, then the external IP with dots swapped for dashes (sslip.io
+// resolves that pattern back to the IP without any DNS setup).
+func hostFor(app, externalIP string) string {
+	return app + "." + strings.ReplaceAll(externalIP, ".", "-") + ".sslip.io"
+}
+
+// renderApp assembles the manifest set for one app: unseals its env vars,
+// loads its overrides, and renders against imageRef.
+func (s *server) renderApp(p store.Project, a store.App, imageRef string) (render.Rendered, error) {
+	sealedEnv, err := s.st.ListEnv(a.ID)
+	if err != nil {
+		return render.Rendered{}, fmt.Errorf("list env: %w", err)
+	}
+	if len(sealedEnv) > 0 && s.sealer == nil {
+		return render.Rendered{}, fmt.Errorf("cannot unseal env: no sealer configured")
+	}
+	env := make(map[string]string, len(sealedEnv))
+	for k, sealed := range sealedEnv {
+		plain, err := s.sealer.Open(sealed)
+		if err != nil {
+			return render.Rendered{}, fmt.Errorf("unseal env %q: %w", k, err)
+		}
+		env[k] = string(plain)
+	}
+
+	overrides, err := s.st.Overrides(a.ID)
+	if err != nil {
+		return render.Rendered{}, fmt.Errorf("load overrides: %w", err)
+	}
+
+	in := render.Input{
+		AppName:   a.Name,
+		Namespace: p.Namespace,
+		Image:     imageRef,
+		Host:      hostFor(a.Name, s.externalIP),
+		Port:      int32(a.Port),
+		Replicas:  int32(a.Replicas),
+		Overrides: overrides,
+	}
+	return render.Render(in, env)
+}
+
+// syncApp re-applies an app's current state to the cluster, using the image
+// from its latest deployment. If there is no deployment, or the latest one
+// isn't live, there is nothing running to sync — that's a no-op, not an
+// error.
+func (s *server) syncApp(ctx context.Context, p store.Project, a store.App) error {
+	d, err := s.st.LatestDeployment(a.ID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if d.Status != "live" {
+		return nil
+	}
+
+	rendered, err := s.renderApp(p, a, d.ImageRef)
+	if err != nil {
+		return err
+	}
+	if err := s.kube.EnsureNamespace(ctx, p.Namespace); err != nil {
+		return err
+	}
+	return s.kube.Apply(ctx, p.Namespace, rendered.Objects)
+}

@@ -44,6 +44,12 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /v1/projects", s.adminOnly(s.handleCreateProject))
 	mux.HandleFunc("GET /v1/projects", s.authed(s.handleListProjects))
 	mux.HandleFunc("POST /v1/projects/{project}/members", s.adminOnly(s.handleAddMember))
+	mux.HandleFunc("POST /v1/projects/{project}/apps", s.authed(s.handleCreateApp))
+	mux.HandleFunc("GET /v1/projects/{project}/apps", s.authed(s.handleListApps))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}", s.authed(s.handleGetApp))
+	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}", s.authed(s.handleDeleteApp))
+	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/deploy", s.authed(s.handleDeployApp))
+	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/scale", s.authed(s.handleScaleApp))
 
 	// Fallback for unmatched paths keeps every response envelope-compliant
 	// instead of falling through to the stdlib's plain-text 404.

@@ -11,14 +11,33 @@ import (
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
-func testServer(t *testing.T) (*httptest.Server, *store.Store) {
+// httptestServer names the concrete type newHTTPTest returns, for helpers
+// (e.g. apps_test.go's kubeServer) that need to spell it in a signature.
+type httptestServer = httptest.Server
+
+// newTestStore opens a fresh SQLite store backed by a temp file.
+func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(New(Deps{Store: st}))
-	t.Cleanup(func() { srv.Close(); st.Close() })
+	t.Cleanup(func() { st.Close() })
+	return st
+}
+
+// newHTTPTest builds a test HTTP server from arbitrary Deps.
+func newHTTPTest(t *testing.T, d Deps) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(New(d))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func testServer(t *testing.T) (*httptest.Server, *store.Store) {
+	t.Helper()
+	st := newTestStore(t)
+	srv := newHTTPTest(t, Deps{Store: st})
 	return srv, st
 }
 
@@ -54,7 +73,9 @@ func TestLogin(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
-	var out struct{ Token string `json:"token"` }
+	var out struct {
+		Token string `json:"token"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
