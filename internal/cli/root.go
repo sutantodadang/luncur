@@ -20,6 +20,7 @@ func newRoot() *cobra.Command {
 			cmd.Println(version)
 		},
 	})
+	root.AddCommand(serveCmd())
 	return root
 }
 
