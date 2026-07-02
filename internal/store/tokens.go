@@ -42,6 +42,7 @@ func (s *Store) UserForToken(plaintext string) (User, error) {
 	if err != nil {
 		return User{}, err
 	}
-	s.db.Exec(`UPDATE api_tokens SET last_used_at = datetime('now') WHERE hash = ?`, h)
+	// Best-effort: a failed timestamp update must never fail authentication.
+	_, _ = s.db.Exec(`UPDATE api_tokens SET last_used_at = datetime('now') WHERE hash = ?`, h)
 	return u, nil
 }
