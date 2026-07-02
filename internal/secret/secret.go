@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 type Sealer struct {
@@ -47,7 +48,8 @@ func LoadOrCreate(path string) (*Sealer, error) {
 	if err != nil {
 		return nil, err
 	}
-	key, err := hex.DecodeString(string(b))
+	// Tolerate trailing newline from external provisioning (openssl rand -hex 32 > file).
+	key, err := hex.DecodeString(strings.TrimSpace(string(b)))
 	if err != nil {
 		return nil, fmt.Errorf("key file %s: %w", path, err)
 	}
