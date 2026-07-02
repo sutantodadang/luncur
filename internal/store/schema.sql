@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS deployments (
   status     TEXT NOT NULL CHECK (status IN ('building','deploying','live','failed')),
   image_ref  TEXT,
   log_path   TEXT,
-  created_by INTEGER REFERENCES users(id),
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
