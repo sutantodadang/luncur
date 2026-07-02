@@ -65,6 +65,34 @@ func TestLoginWhoamiUserAdd(t *testing.T) {
 	}
 }
 
+func TestLoginPromptsForEmail(t *testing.T) {
+	srv := testEnv(t)
+
+	root := newRoot()
+	out := &bytes.Buffer{}
+	root.SetOut(out)
+	root.SetErr(out)
+	root.SetIn(strings.NewReader("root@b.co\n"))
+	root.SetArgs([]string{"login", srv.URL, "--password", "pw123456"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("login with prompted email: %v (%s)", err, out.String())
+	}
+	if !strings.Contains(out.String(), "email: ") {
+		t.Fatalf("want email prompt, got %q", out.String())
+	}
+	if !strings.Contains(out.String(), "logged in") {
+		t.Fatalf("want 'logged in', got %q", out.String())
+	}
+
+	got, err := run(t, "whoami")
+	if err != nil {
+		t.Fatalf("whoami after prompted login: %v", err)
+	}
+	if !strings.Contains(got, "root@b.co (admin)") {
+		t.Fatalf("want identity line, got %q", got)
+	}
+}
+
 func TestWhoamiWithoutLogin(t *testing.T) {
 	t.Setenv("LUNCUR_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	if _, err := run(t, "whoami"); err == nil {
