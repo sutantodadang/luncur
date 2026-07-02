@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -47,7 +48,15 @@ func serveCmd() *cobra.Command {
 				}
 			}
 			log.Printf("luncur serve listening on %s (db %s)", listen, dbPath)
-			return http.ListenAndServe(listen, server.New(st))
+			srv := &http.Server{
+				Addr:              listen,
+				Handler:           server.New(st),
+				ReadHeaderTimeout: 5 * time.Second,
+				ReadTimeout:       30 * time.Second,
+				WriteTimeout:      30 * time.Second,
+				IdleTimeout:       120 * time.Second,
+			}
+			return srv.ListenAndServe()
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "luncur.db", "path to SQLite database")

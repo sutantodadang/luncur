@@ -33,15 +33,23 @@ func TestCreateAndAuthenticateUser(t *testing.T) {
 
 func TestCreateUserRejectsBadInput(t *testing.T) {
 	s := openTest(t)
-	if _, err := s.CreateUser("a@b.co", "pw", "superuser"); err == nil {
+	if _, err := s.CreateUser("a@b.co", "longpw12", "superuser"); err == nil {
 		t.Fatal("want error for invalid role")
 	}
-	if _, err := s.CreateUser("", "pw", "member"); err == nil {
+	if _, err := s.CreateUser("", "longpw12", "member"); err == nil {
 		t.Fatal("want error for empty email")
 	}
-	if _, _ = s.CreateUser("dup@b.co", "pw", "member"); true {
-		if _, err := s.CreateUser("dup@b.co", "pw", "member"); err == nil {
-			t.Fatal("want error for duplicate email")
-		}
+	if _, err := s.CreateUser("dup@b.co", "longpw12", "member"); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := s.CreateUser("dup@b.co", "longpw12", "member"); err == nil {
+		t.Fatal("want error for duplicate email")
+	}
+}
+
+func TestCreateUserRejectsShortPassword(t *testing.T) {
+	s := openTest(t)
+	if _, err := s.CreateUser("short@b.co", "pw", "member"); err == nil {
+		t.Fatal("want error for short password")
 	}
 }

@@ -86,3 +86,33 @@ func TestCreateUserAdminOnly(t *testing.T) {
 		t.Fatalf("new user cannot authenticate: %v", err)
 	}
 }
+
+func TestCreateUserDuplicateEmail(t *testing.T) {
+	srv, st := testServer(t)
+	adminTok := seedUserToken(t, st, "admin2@b.co", "admin")
+
+	body := `{"email":"dup2@b.co","password":"pw123456","role":"member"}`
+	first := doAuthed(t, "POST", srv.URL+"/v1/users", adminTok, body)
+	defer first.Body.Close()
+	if first.StatusCode != 201 {
+		t.Fatalf("first create: want 201, got %d", first.StatusCode)
+	}
+
+	second := doAuthed(t, "POST", srv.URL+"/v1/users", adminTok, body)
+	defer second.Body.Close()
+	if second.StatusCode != 409 {
+		t.Fatalf("duplicate: want 409, got %d", second.StatusCode)
+	}
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(second.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Error.Code != "email_taken" {
+		t.Fatalf("want code email_taken, got %q", env.Error.Code)
+	}
+}

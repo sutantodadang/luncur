@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/sutantodadang/luncur/internal/store"
@@ -23,12 +24,14 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		log.Printf("login authenticate: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 	tok, err := s.st.CreateToken(u.ID, "login")
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		log.Printf("login create token: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"token": tok})

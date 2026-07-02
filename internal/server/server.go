@@ -23,5 +23,11 @@ func New(st *store.Store) http.Handler {
 	mux.HandleFunc("GET /v1/me", s.authed(s.handleMe))
 	mux.HandleFunc("POST /v1/users", s.adminOnly(s.handleCreateUser))
 
+	// Fallback for unmatched paths keeps every response envelope-compliant
+	// instead of falling through to the stdlib's plain-text 404.
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
+	})
+
 	return mux
 }

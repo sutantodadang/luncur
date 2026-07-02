@@ -8,7 +8,7 @@ import (
 
 func TestTokenRoundTrip(t *testing.T) {
 	s := openTest(t)
-	u, err := s.CreateUser("t@b.co", "pw", "member")
+	u, err := s.CreateUser("t@b.co", "pw123456", "member")
 	if err != nil {
 		t.Fatal(err)
 	}

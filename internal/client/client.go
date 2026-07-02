@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type Client struct {
@@ -25,7 +26,7 @@ func New(server, token string) *Client {
 	return &Client{
 		base:  strings.TrimRight(server, "/"),
 		token: token,
-		http:  &http.Client{},
+		http:  &http.Client{Timeout: 30 * time.Second},
 	}
 }
 

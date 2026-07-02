@@ -2,7 +2,10 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
+	"strings"
 
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -25,13 +28,19 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request, _ stor
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	if len(req.Password) < 8 {
-		writeError(w, http.StatusBadRequest, "bad_request", "password must be at least 8 characters")
-		return
-	}
 	u, err := s.st.CreateUser(req.Email, req.Password, req.Role)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.email") {
+			writeError(w, http.StatusConflict, "email_taken", "email already exists")
+			return
+		}
+		var ve *store.ValidationError
+		if errors.As(err, &ve) {
+			writeError(w, http.StatusBadRequest, "bad_request", ve.Error())
+			return
+		}
+		log.Printf("create user: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 	writeJSON(w, http.StatusCreated, userJSON(u))

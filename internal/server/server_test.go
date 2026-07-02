@@ -80,3 +80,27 @@ func TestLogin(t *testing.T) {
 		t.Fatalf("want code auth_failed, got %q", env.Error.Code)
 	}
 }
+
+func TestUnknownPathReturns404Envelope(t *testing.T) {
+	srv, _ := testServer(t)
+	resp, err := http.Get(srv.URL + "/v1/no-such-endpoint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatalf("want 404, got %d", resp.StatusCode)
+	}
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Error.Code != "not_found" {
+		t.Fatalf("want code not_found, got %q", env.Error.Code)
+	}
+}
