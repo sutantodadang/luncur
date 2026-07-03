@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
@@ -25,6 +27,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"Ingress":    {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
 	"Secret":     {Group: "", Version: "v1", Resource: "secrets"},
 	"Namespace":  {Group: "", Version: "v1", Resource: "namespaces"},
+	"Job":        {Group: "batch", Version: "v1", Resource: "jobs"},
 }
 
 type Client struct {
@@ -122,4 +125,25 @@ func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) er
 		}
 	}
 	return nil
+}
+
+// WaitJob polls a Job until it succeeds (true), fails (false), or ctx ends.
+func (c *Client) WaitJob(ctx context.Context, namespace, name string, poll time.Duration) (bool, error) {
+	for {
+		u, err := c.dyn.Resource(gvrByKind["Job"]).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, fmt.Errorf("get job %s: %w", name, err)
+		}
+		if n, _, _ := unstructured.NestedInt64(u.Object, "status", "succeeded"); n >= 1 {
+			return true, nil
+		}
+		if n, _, _ := unstructured.NestedInt64(u.Object, "status", "failed"); n >= 1 {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(poll):
+		}
+	}
 }
