@@ -1,78 +1,14 @@
 package cli
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 
 	"github.com/spf13/cobra"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	netv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/util/strategicpatch"
-	"sigs.k8s.io/yaml"
+
+	"github.com/sutantodadang/luncur/internal/render"
 )
-
-// dataStructFor returns the typed zero value strategicpatch needs to
-// understand list-merge keys. Duplicated from internal/render on purpose —
-// the brief calls for a local copy rather than exporting the render one.
-func dataStructFor(kind string) (any, error) {
-	switch kind {
-	case "Deployment":
-		return appsv1.Deployment{}, nil
-	case "Service":
-		return corev1.Service{}, nil
-	case "Ingress":
-		return netv1.Ingress{}, nil
-	default:
-		return nil, fmt.Errorf("kind %q cannot be overridden", kind)
-	}
-}
-
-// extractDoc splits a multi-document YAML stream on "---" boundaries and
-// returns the document whose top-level `kind:` matches, erroring if none do.
-func extractDoc(yamlMulti []byte, kind string) ([]byte, error) {
-	docs := bytes.Split(yamlMulti, []byte("\n---"))
-	for _, doc := range docs {
-		doc = bytes.TrimSpace(doc)
-		if len(doc) == 0 {
-			continue
-		}
-		var meta struct {
-			Kind string `json:"kind"`
-		}
-		if err := yaml.Unmarshal(doc, &meta); err != nil {
-			continue
-		}
-		if meta.Kind == kind {
-			return doc, nil
-		}
-	}
-	return nil, fmt.Errorf("no document with kind %q found", kind)
-}
-
-// computeOverride diffs baseYAML against editedYAML and returns a strategic
-// merge patch JSON string ("{}" if there is no difference). Pure function.
-func computeOverride(kind string, baseYAML, editedYAML []byte) (string, error) {
-	ds, err := dataStructFor(kind)
-	if err != nil {
-		return "", err
-	}
-	baseJSON, err := yaml.YAMLToJSON(baseYAML)
-	if err != nil {
-		return "", fmt.Errorf("base yaml: %w", err)
-	}
-	editedJSON, err := yaml.YAMLToJSON(editedYAML)
-	if err != nil {
-		return "", fmt.Errorf("edited yaml: %w", err)
-	}
-	patch, err := strategicpatch.CreateTwoWayMergePatch(baseJSON, editedJSON, ds)
-	if err != nil {
-		return "", fmt.Errorf("compute patch: %w", err)
-	}
-	return string(patch), nil
-}
 
 func editCmd() *cobra.Command {
 	var project string
@@ -102,11 +38,11 @@ func editCmd() *cobra.Command {
 				return err
 			}
 
-			baseDoc, err := extractDoc(baseRaw, kind)
+			baseDoc, err := render.ExtractDoc(baseRaw, kind)
 			if err != nil {
 				return err
 			}
-			currentDoc, err := extractDoc(currentRaw, kind)
+			currentDoc, err := render.ExtractDoc(currentRaw, kind)
 			if err != nil {
 				return err
 			}
@@ -138,7 +74,7 @@ func editCmd() *cobra.Command {
 				return err
 			}
 
-			patch, err := computeOverride(kind, baseDoc, editedDoc)
+			patch, err := render.ComputeOverride(kind, baseDoc, editedDoc)
 			if err != nil {
 				return err
 			}

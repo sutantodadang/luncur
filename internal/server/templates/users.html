@@ -1,0 +1,38 @@
+{{define "users.html"}}
+{{template "head" .}}{{template "nav" .}}
+<h1>Users</h1>
+<table><tr><th>Email</th><th>Role</th><th>Created</th><th>Tokens</th><th></th></tr>
+{{range .Users}}<tr>
+  <td>{{.Email}}</td><td>{{.Role}}</td><td>{{.CreatedAt}}</td><td>{{.TokenCount}}</td>
+  <td>{{if ne .ID $.Self}}
+    <form class="inline" method="post" action="/ui/users/delete">
+      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <button type="submit">delete</button>
+    </form>
+  {{end}}</td>
+</tr>{{end}}
+</table>
+
+<h2>Invites</h2>
+<table><tr><th>Link</th><th>Role</th><th>Expires</th><th>Status</th><th></th></tr>
+{{range .Invites}}<tr>
+  <td><input readonly size="48" value="/ui/register?token={{.Token}}"></td>
+  <td>{{.Role}}</td><td>{{.ExpiresAt}}</td>
+  <td>{{if .Used}}used{{else}}open{{end}}</td>
+  <td>{{if not .Used}}
+    <form class="inline" method="post" action="/ui/users/invite/revoke">
+      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="token" value="{{.Token}}">
+      <button type="submit">revoke</button>
+    </form>
+  {{end}}</td>
+</tr>{{end}}
+</table>
+<form method="post" action="/ui/users/invite">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <label>role <select name="role"><option>member</option><option>admin</option></select></label>
+  <button type="submit">create invite</button>
+</form>
+{{template "foot" .}}
+{{end}}

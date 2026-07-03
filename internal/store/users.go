@@ -88,3 +88,45 @@ func (s *Store) Authenticate(email, password string) (User, error) {
 	}
 	return u, nil
 }
+
+// UserInfo is the admin listing view of a user.
+type UserInfo struct {
+	ID         int64
+	Email      string
+	Role       string
+	CreatedAt  string
+	TokenCount int64
+}
+
+// ListUsers returns every user with their live token count.
+func (s *Store) ListUsers() ([]UserInfo, error) {
+	rows, err := s.db.Query(
+		`SELECT u.id, u.email, u.role, u.created_at, COUNT(t.id)
+		 FROM users u LEFT JOIN api_tokens t ON t.user_id = u.id
+		 GROUP BY u.id ORDER BY u.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserInfo
+	for rows.Next() {
+		var u UserInfo
+		if err := rows.Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt, &u.TokenCount); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// DeleteUser removes a user; tokens, ssh keys, and memberships cascade.
+func (s *Store) DeleteUser(id int64) error {
+	res, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

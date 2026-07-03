@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -697,5 +698,328 @@ func TestUIRollback(t *testing.T) {
 	}
 	if !strings.Contains(string(body), fmt.Sprintf("(rollback of %d)", d1.ID)) {
 		t.Fatalf("app page after rollback: want rollback marker, got: %s", body)
+	}
+}
+
+// TestUIRegisterFlow exercises the session-less invite-based registration
+// flow: a valid token renders the form, a bogus one shows the error page, a
+// successful POST logs the new user straight in and burns the invite, and
+// the created user carries the invite's role.
+func TestUIRegisterFlow(t *testing.T) {
+	srv, st := testServer(t)
+	admin, err := st.CreateUser("root@b.co", "password123", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := st.CreateInvite("member", admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := noRedirectClient()
+
+	// 1. GET /ui/register?token=<tok> -> 200, body contains the email field.
+	resp1, err := client.Get(srv.URL + "/ui/register?token=" + inv.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ui/register valid token: want 200, got %d", resp1.StatusCode)
+	}
+	body1, err := io.ReadAll(resp1.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body1), `name="email"`) {
+		t.Fatalf("GET /ui/register valid token: body missing email field, got: %s", body1)
+	}
+
+	// 2. GET /ui/register?token=bogus -> 200, body contains "invalid or
+	// expired", no email field.
+	resp2, err := client.Get(srv.URL + "/ui/register?token=bogus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ui/register bogus token: want 200, got %d", resp2.StatusCode)
+	}
+	body2, err := io.ReadAll(resp2.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body2), "invalid or expired") {
+		t.Fatalf("GET /ui/register bogus token: body missing error, got: %s", body2)
+	}
+	if strings.Contains(string(body2), `name="email"`) {
+		t.Fatalf("GET /ui/register bogus token: unexpected email field, got: %s", body2)
+	}
+
+	// 3. POST /ui/register (csrf-correct) -> 303 to /ui/, Set-Cookie
+	// luncur_session.
+	csrfCk := uiCSRF(t, client, srv.URL)
+	form := url.Values{
+		"email":    {"new@x.com"},
+		"password": {"secret123"},
+		"token":    {inv.Token},
+	}
+	resp3 := uiPost(t, client, srv.URL+"/ui/register", csrfCk, nil, form)
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST /ui/register: want 303, got %d", resp3.StatusCode)
+	}
+	if loc := resp3.Header.Get("Location"); loc != "/ui/" {
+		t.Fatalf("POST /ui/register: want Location /ui/, got %q", loc)
+	}
+	var sessionCk *http.Cookie
+	for _, c := range resp3.Cookies() {
+		if c.Name == sessionCookie {
+			sessionCk = c
+		}
+	}
+	if sessionCk == nil {
+		t.Fatal("POST /ui/register: expected Set-Cookie luncur_session")
+	}
+
+	// 4. The invite is burned: GET /ui/register?token=<tok> -> invalid page.
+	resp4, err := client.Get(srv.URL + "/ui/register?token=" + inv.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp4.Body.Close()
+	body4, err := io.ReadAll(resp4.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body4), "invalid or expired") {
+		t.Fatalf("GET /ui/register burned token: want invalid page, got: %s", body4)
+	}
+
+	// 5. New user exists with role member.
+	newUser, err := st.GetUserByEmail("new@x.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newUser.Role != "member" {
+		t.Fatalf("new user role: want member, got %q", newUser.Role)
+	}
+}
+
+// TestUIUsersPageAdminOnly exercises the admin-only users page: a member
+// gets a plain 404 (leak-nothing, mirroring uiProject), an admin sees both
+// users, can create an invite (which then shows up as a registration link),
+// and can delete another user but not themselves.
+func TestUIUsersPageAdminOnly(t *testing.T) {
+	srv, st := testServer(t)
+	admin, err := st.CreateUser("root@b.co", "password123", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := st.CreateUser("m@b.co", "password123", "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := noRedirectClient()
+
+	// Member GETs /ui/users -> 404.
+	memberCk := uiSessionCookie(t, st, member.ID)
+	req, err := http.NewRequest("GET", srv.URL+"/ui/users", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(memberCk)
+	memberResp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer memberResp.Body.Close()
+	if memberResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /ui/users as member: want 404, got %d", memberResp.StatusCode)
+	}
+
+	// Admin GETs -> 200 with both users' emails.
+	adminCk := uiSessionCookie(t, st, admin.ID)
+	usersPage := func(t *testing.T) string {
+		t.Helper()
+		req, err := http.NewRequest("GET", srv.URL+"/ui/users", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(adminCk)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /ui/users as admin: want 200, got %d", resp.StatusCode)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	adminBody := usersPage(t)
+	if !strings.Contains(adminBody, "root@b.co") || !strings.Contains(adminBody, "m@b.co") {
+		t.Fatalf("GET /ui/users as admin: want both emails listed, got: %s", adminBody)
+	}
+
+	// Admin posts /ui/users/invite (role member) -> 303; page now shows
+	// /ui/register?token=.
+	csrfCk := uiCSRF(t, client, srv.URL)
+	inviteForm := url.Values{"role": {"member"}}
+	inviteResp := uiPost(t, client, srv.URL+"/ui/users/invite", csrfCk, adminCk, inviteForm)
+	inviteResp.Body.Close()
+	if inviteResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST /ui/users/invite: want 303, got %d", inviteResp.StatusCode)
+	}
+	if body := usersPage(t); !strings.Contains(body, "/ui/register?token=") {
+		t.Fatalf("GET /ui/users after invite: want registration link, got: %s", body)
+	}
+
+	// Admin posts /ui/users/delete with the member's id -> 303; page no
+	// longer lists the member.
+	delForm := url.Values{"id": {fmt.Sprintf("%d", member.ID)}}
+	delResp := uiPost(t, client, srv.URL+"/ui/users/delete", csrfCk, adminCk, delForm)
+	delResp.Body.Close()
+	if delResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST /ui/users/delete: want 303, got %d", delResp.StatusCode)
+	}
+	if body := usersPage(t); strings.Contains(body, "m@b.co") {
+		t.Fatalf("GET /ui/users after delete: want member removed, got: %s", body)
+	}
+
+	// Admin posting its own id -> 400.
+	selfDelForm := url.Values{"id": {fmt.Sprintf("%d", admin.ID)}}
+	selfDelResp := uiPost(t, client, srv.URL+"/ui/users/delete", csrfCk, adminCk, selfDelForm)
+	defer selfDelResp.Body.Close()
+	if selfDelResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("POST /ui/users/delete self: want 400, got %d", selfDelResp.StatusCode)
+	}
+}
+
+// extractTextarea pulls the value out of edit.html's single <textarea> via a
+// plain substring split (no HTML parser needed for a fixture that only ever
+// emits one), unescaping the entities html/template's text-context escaping
+// introduces.
+func extractTextarea(t *testing.T, body string) string {
+	t.Helper()
+	open := strings.Index(body, "<textarea")
+	if open == -1 {
+		t.Fatalf("no <textarea> in body: %s", body)
+	}
+	start := strings.Index(body[open:], ">")
+	if start == -1 {
+		t.Fatalf("unterminated <textarea> tag in body: %s", body)
+	}
+	start += open + 1
+	end := strings.Index(body[start:], "</textarea>")
+	if end == -1 {
+		t.Fatalf("no closing </textarea> in body: %s", body)
+	}
+	return html.UnescapeString(body[start : start+end])
+}
+
+// TestUIYAMLEditor exercises the per-kind rendered-YAML editor: GET shows
+// the current doc, a CSRF-correct POST with an edited replica count stores
+// the diff as an override that survives redeploys, invalid YAML re-renders
+// the editor with the error and the user's text preserved, and an
+// unsupported kind 404s.
+func TestUIYAMLEditor(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/p/apps", admin, `{"name":"web","port":3000}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	editURL := srv.URL + "/ui/projects/p/apps/web/edit/Deployment"
+
+	// 1. GET edit/Deployment -> 200, textarea contains "kind: Deployment"
+	// and the current replica count.
+	req1, err := http.NewRequest("GET", editURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req1.AddCookie(ck)
+	resp1, err := client.Do(req1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("GET edit/Deployment: want 200, got %d", resp1.StatusCode)
+	}
+	body1, err := io.ReadAll(resp1.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	textarea1 := extractTextarea(t, string(body1))
+	if !strings.Contains(textarea1, "kind: Deployment") || !strings.Contains(textarea1, "replicas: 1") {
+		t.Fatalf("GET edit/Deployment: textarea missing expected content, got: %s", textarea1)
+	}
+
+	// 2. CSRF-correct POST with replicas edited 1 -> 4 redirects to the app
+	// page and stores the override.
+	csrfCk := uiCSRF(t, client, srv.URL)
+	edited := strings.Replace(textarea1, "replicas: 1", "replicas: 4", 1)
+	postForm := url.Values{"yaml": {edited}}
+	resp2 := uiPost(t, client, editURL, csrfCk, ck, postForm)
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST edit/Deployment: want 303, got %d", resp2.StatusCode)
+	}
+	if loc := resp2.Header.Get("Location"); loc != "/ui/projects/p/apps/web" {
+		t.Fatalf("POST edit/Deployment: want Location /ui/projects/p/apps/web, got %q", loc)
+	}
+	id := appID(t, st, "p", "web")
+	overrides, err := st.Overrides(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(overrides["Deployment"], `"replicas":4`) {
+		t.Fatalf("stored override: want replicas:4, got: %s", overrides["Deployment"])
+	}
+
+	// 3. POST invalid YAML re-renders the editor (200) with the error and
+	// the submitted text preserved.
+	badForm := url.Values{"yaml": {"not: [valid"}}
+	resp3 := uiPost(t, client, editURL, csrfCk, ck, badForm)
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("POST invalid yaml: want 200, got %d", resp3.StatusCode)
+	}
+	body3, err := io.ReadAll(resp3.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body3), `class="err"`) {
+		t.Fatalf("POST invalid yaml: want error message, got: %s", body3)
+	}
+	if !strings.Contains(extractTextarea(t, string(body3)), "not: [valid") {
+		t.Fatalf("POST invalid yaml: want submitted text preserved, got: %s", body3)
+	}
+
+	// 4. GET edit/ConfigMap -> 404 (unsupported kind).
+	req4, err := http.NewRequest("GET", srv.URL+"/ui/projects/p/apps/web/edit/ConfigMap", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req4.AddCookie(ck)
+	resp4, err := client.Do(req4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp4.Body.Close()
+	if resp4.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET edit/ConfigMap: want 404, got %d", resp4.StatusCode)
 	}
 }

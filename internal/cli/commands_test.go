@@ -333,3 +333,44 @@ func TestTokenAndRollbackCommands(t *testing.T) {
 		t.Fatalf("want kubernetes error, got %v", err)
 	}
 }
+
+func TestInviteCommands(t *testing.T) {
+	srv := testEnv(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "invite", "create", "--role", "member")
+	if err != nil {
+		t.Fatalf("invite create: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "/ui/register?token=") {
+		t.Fatalf("create output missing link: %s", out)
+	}
+
+	out, err = run(t, "invite", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := ""
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 4 && len(fields[0]) == 32 {
+			tok = fields[0]
+		}
+	}
+	if tok == "" {
+		t.Fatalf("no token in list output:\n%s", out)
+	}
+
+	if out, err = run(t, "invite", "revoke", tok); err != nil {
+		t.Fatalf("revoke: %v (%s)", err, out)
+	}
+	out, err = run(t, "invite", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, tok) {
+		t.Fatalf("revoked invite still listed:\n%s", out)
+	}
+}
