@@ -27,6 +27,12 @@ type Input struct {
 	Replicas  int32
 	// Overrides maps Kind -> strategic-merge-patch JSON. Applied by Task 6.
 	Overrides map[string]string
+	// ExtraHosts adds Ingress rules (same backend) for custom domains.
+	ExtraHosts []string
+	// IngressAnnotations lands on the Ingress metadata (cert providers).
+	IngressAnnotations map[string]string
+	// TLS is set as spec.tls verbatim (secret refs per issued domain).
+	TLS []netv1.IngressTLS
 }
 
 type Object struct {
@@ -180,27 +186,39 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 	}
 
 	pathType := netv1.PathTypePrefix
+	rule := func(host string) netv1.IngressRule {
+		return netv1.IngressRule{
+			Host: host,
+			IngressRuleValue: netv1.IngressRuleValue{
+				HTTP: &netv1.HTTPIngressRuleValue{
+					Paths: []netv1.HTTPIngressPath{{
+						Path:     "/",
+						PathType: &pathType,
+						Backend: netv1.IngressBackend{
+							Service: &netv1.IngressServiceBackend{
+								Name: in.AppName,
+								Port: netv1.ServiceBackendPort{Number: 80},
+							},
+						},
+					}},
+				},
+			},
+		}
+	}
+	rules := []netv1.IngressRule{rule(in.Host)}
+	for _, h := range in.ExtraHosts {
+		rules = append(rules, rule(h))
+	}
+	ingMeta := meta(in, in.AppName)
+	if len(in.IngressAnnotations) > 0 {
+		ingMeta.Annotations = in.IngressAnnotations
+	}
 	ing := &netv1.Ingress{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
-		ObjectMeta: meta(in, in.AppName),
+		ObjectMeta: ingMeta,
 		Spec: netv1.IngressSpec{
-			Rules: []netv1.IngressRule{{
-				Host: in.Host,
-				IngressRuleValue: netv1.IngressRuleValue{
-					HTTP: &netv1.HTTPIngressRuleValue{
-						Paths: []netv1.HTTPIngressPath{{
-							Path:     "/",
-							PathType: &pathType,
-							Backend: netv1.IngressBackend{
-								Service: &netv1.IngressServiceBackend{
-									Name: in.AppName,
-									Port: netv1.ServiceBackendPort{Number: 80},
-								},
-							},
-						}},
-					},
-				},
-			}},
+			Rules: rules,
+			TLS:   in.TLS,
 		},
 	}
 	if err := add("Ingress", ing); err != nil {

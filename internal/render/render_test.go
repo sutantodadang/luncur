@@ -143,3 +143,35 @@ func TestRenderValidatesInput(t *testing.T) {
 		t.Fatal("want error for empty image")
 	}
 }
+
+func TestRenderCustomDomains(t *testing.T) {
+	in := Input{
+		AppName: "web", Namespace: "proj", Image: "img:1",
+		Host: "web.1-2-3-4.sslip.io", Port: 8080, Replicas: 1,
+		ExtraHosts:         []string{"www.example.com"},
+		IngressAnnotations: map[string]string{"cert-manager.io/cluster-issuer": "luncur-le"},
+		TLS: []netv1.IngressTLS{{
+			Hosts: []string{"www.example.com"}, SecretName: "tls-web-abc12345",
+		}},
+	}
+	r, err := Render(in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ing string
+	for _, o := range r.Objects {
+		if o.Kind == "Ingress" {
+			ing = string(o.JSON)
+		}
+	}
+	for _, want := range []string{
+		`"www.example.com"`,
+		`"web.1-2-3-4.sslip.io"`,
+		`"cert-manager.io/cluster-issuer":"luncur-le"`,
+		`"secretName":"tls-web-abc12345"`,
+	} {
+		if !strings.Contains(ing, want) {
+			t.Fatalf("ingress missing %s:\n%s", want, ing)
+		}
+	}
+}
