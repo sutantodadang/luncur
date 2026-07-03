@@ -231,23 +231,29 @@ func (s *server) handleCreateAddon(w http.ResponseWriter, r *http.Request, u sto
 	})
 }
 
-func (s *server) handleListAddons(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
-	if !ok {
-		return
-	}
+// addonRow is a project addon's list-view model — its StatefulSet
+// readiness and the apps it's attached to — shared by the JSON API
+// (handleListAddons) and both UI addon sections (project + app pages).
+type addonRow struct {
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	Version    string   `json:"version"`
+	SizeGB     int      `json:"size_gb"`
+	Ready      bool     `json:"ready"`
+	AttachedTo []string `json:"attached_to"`
+}
+
+// addonRows builds every addon row for a project.
+func (s *server) addonRows(ctx context.Context, p store.Project) ([]addonRow, error) {
 	list, err := s.st.ListAddons(p.ID)
 	if err != nil {
-		log.Printf("list addons: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
+		return nil, err
 	}
-
-	out := make([]map[string]any, 0, len(list))
+	out := make([]addonRow, 0, len(list))
 	for _, a := range list {
 		ready := false
 		if s.kube != nil {
-			ready, err = s.kube.StatefulSetReady(r.Context(), p.Namespace, addon.ServiceName(a.Name))
+			ready, err = s.kube.StatefulSetReady(ctx, p.Namespace, addon.ServiceName(a.Name))
 			if err != nil {
 				log.Printf("statefulset ready %s: %v", a.Name, err)
 				ready = false
@@ -255,20 +261,32 @@ func (s *server) handleListAddons(w http.ResponseWriter, r *http.Request, u stor
 		}
 		apps, err := s.st.AppsForAddon(a.ID)
 		if err != nil {
-			log.Printf("apps for addon: %v", err)
-			writeError(w, http.StatusInternalServerError, "internal", "internal error")
-			return
+			return nil, err
 		}
 		names := make([]string, 0, len(apps))
 		for _, app := range apps {
 			names = append(names, app.Name)
 		}
-		out = append(out, map[string]any{
-			"name": a.Name, "type": a.Type, "version": a.Version, "size_gb": a.SizeGB,
-			"ready": ready, "attached_to": names,
+		out = append(out, addonRow{
+			Name: a.Name, Type: a.Type, Version: a.Version, SizeGB: a.SizeGB,
+			Ready: ready, AttachedTo: names,
 		})
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
+}
+
+func (s *server) handleListAddons(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	rows, err := s.addonRows(r.Context(), p)
+	if err != nil {
+		log.Printf("list addons: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, rows)
 }
 
 // attachAddon is the shared core of handleAttachAddon: attach the addon to
@@ -371,6 +389,28 @@ func (s *server) handleDetachAddon(w http.ResponseWriter, r *http.Request, u sto
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// errAddonAttached guards removeAddon: an addon still attached to one or
+// more apps is not deleted unless force is set.
+var errAddonAttached = errors.New("addon is attached to one or more apps")
+
+// removeAddon is the shared core of handleDeleteAddon and its UI twin:
+// guard against silently orphaning a live app's connection (unless force),
+// delete the cluster objects, then the store row. Caller must have already
+// confirmed s.kube is non-nil.
+func (s *server) removeAddon(ctx context.Context, p store.Project, ad store.Addon, force, keepData bool) error {
+	apps, err := s.st.AppsForAddon(ad.ID)
+	if err != nil {
+		return err
+	}
+	if len(apps) > 0 && !force {
+		return errAddonAttached
+	}
+	if err := s.kube.DeleteAddonObjects(ctx, p.Namespace, ad.Name, keepData); err != nil {
+		return err
+	}
+	return s.st.DeleteAddon(ad.ID)
+}
+
 func (s *server) handleDeleteAddon(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.requireProject(w, u, r.PathValue("project"))
 	if !ok {
@@ -387,23 +427,11 @@ func (s *server) handleDeleteAddon(w http.ResponseWriter, r *http.Request, u sto
 	force := r.URL.Query().Get("force") == "1"
 	keepData := r.URL.Query().Get("keep_data") == "1"
 
-	apps, err := s.st.AppsForAddon(ad.ID)
-	if err != nil {
-		log.Printf("apps for addon: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-	if len(apps) > 0 && !force {
-		writeError(w, http.StatusConflict, "addon_attached", "addon is attached to one or more apps; pass ?force=1 to remove anyway")
-		return
-	}
-
-	if err := s.kube.DeleteAddonObjects(r.Context(), p.Namespace, ad.Name, keepData); err != nil {
-		log.Printf("delete addon objects: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-	if err := s.st.DeleteAddon(ad.ID); err != nil {
+	if err := s.removeAddon(r.Context(), p, ad, force, keepData); err != nil {
+		if errors.Is(err, errAddonAttached) {
+			writeError(w, http.StatusConflict, "addon_attached", "addon is attached to one or more apps; pass ?force=1 to remove anyway")
+			return
+		}
 		log.Printf("delete addon: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return

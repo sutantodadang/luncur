@@ -1023,3 +1023,106 @@ func TestUIYAMLEditor(t *testing.T) {
 		t.Fatalf("GET edit/ConfigMap: want 404, got %d", resp4.StatusCode)
 	}
 }
+
+// TestUIAddons exercises the project-page create/delete and app-page
+// attach/detach addon forms end to end, reusing addons_test.go's
+// fake-kube fixture (addonTestServer) since these handlers need a kube
+// client to provision/delete cluster objects.
+func TestUIAddons(t *testing.T) {
+	_, srv, st, _ := addonTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	projectPage := func(t *testing.T) string {
+		t.Helper()
+		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(ck)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET project page: want 200, got %d", resp.StatusCode)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	appPage := func(t *testing.T) string {
+		t.Helper()
+		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(ck)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET app page: want 200, got %d", resp.StatusCode)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	// 1. Create via the project page's create form -> 303, addon listed.
+	createResp := uiPost(t, client, srv.URL+"/ui/projects/proj/addons", csrfCk, ck, url.Values{"type": {"postgres"}})
+	createResp.Body.Close()
+	if createResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST addons create: want 303, got %d", createResp.StatusCode)
+	}
+	if body := projectPage(t); !strings.Contains(body, "<td>postgres1</td>") {
+		t.Fatalf("project page after create: want postgres1 listed, got: %s", body)
+	}
+
+	// 2. Attach via the app page's attach form -> 303, addon shown attached.
+	attachResp := uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/addons/attach", csrfCk, ck, url.Values{"name": {"postgres1"}})
+	attachResp.Body.Close()
+	if attachResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST addons attach: want 303, got %d", attachResp.StatusCode)
+	}
+	if body := appPage(t); !strings.Contains(body, "<td>postgres1</td>") {
+		t.Fatalf("app page after attach: want postgres1 listed, got: %s", body)
+	}
+
+	// 3. Detach -> 303, no longer in the attached list.
+	detachResp := uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/addons/detach", csrfCk, ck, url.Values{"name": {"postgres1"}})
+	detachResp.Body.Close()
+	if detachResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST addons detach: want 303, got %d", detachResp.StatusCode)
+	}
+	if body := appPage(t); strings.Contains(body, "<td>postgres1</td>") {
+		t.Fatalf("app page after detach: want postgres1 removed, got: %s", body)
+	}
+
+	// 4. Delete with force from the project page -> 303, gone from the list.
+	deleteResp := uiPost(t, client, srv.URL+"/ui/projects/proj/addons/delete", csrfCk, ck,
+		url.Values{"name": {"postgres1"}, "force": {"1"}})
+	deleteResp.Body.Close()
+	if deleteResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST addons delete: want 303, got %d", deleteResp.StatusCode)
+	}
+	if body := projectPage(t); strings.Contains(body, "<td>postgres1</td>") {
+		t.Fatalf("project page after delete: want postgres1 removed, got: %s", body)
+	}
+}

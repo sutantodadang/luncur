@@ -38,6 +38,10 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/delete", s.uiPage(s.handleUIEnvUnset))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains", s.uiPage(s.handleUIDomainAdd))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/delete", s.uiPage(s.handleUIDomainDelete))
+	mux.HandleFunc("POST /ui/projects/{project}/addons", s.uiPage(s.handleUIAddonCreate))
+	mux.HandleFunc("POST /ui/projects/{project}/addons/delete", s.uiPage(s.handleUIAddonDelete))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/addons/attach", s.uiPage(s.handleUIAddonAttach))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/addons/detach", s.uiPage(s.handleUIAddonDetach))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/deploy", s.uiPage(s.handleUIDeploy))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/rollback", s.uiPage(s.handleUIRollback))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/edit/{kind}", s.uiPage(s.handleUIEditGet))
@@ -219,6 +223,22 @@ func (s *server) uiApp(w http.ResponseWriter, r *http.Request, p store.Project) 
 	return a, true
 }
 
+// uiAddon is requireAddon's UI twin: 404s with plain text instead of a JSON
+// envelope.
+func (s *server) uiAddon(w http.ResponseWriter, p store.Project, name string) (store.Addon, bool) {
+	a, err := s.st.GetAddon(p.ID, name)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return store.Addon{}, false
+	}
+	if err != nil {
+		log.Printf("ui get addon: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return store.Addon{}, false
+	}
+	return a, true
+}
+
 func (s *server) handleUIProjects(w http.ResponseWriter, r *http.Request, u store.User) {
 	list, err := s.visibleProjects(u)
 	if err != nil {
@@ -252,7 +272,16 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	for _, a := range list {
 		rows = append(rows, uiAppRow{Name: a.Name, Replicas: a.Replicas, URL: "http://" + hostFor(a.Name, s.externalIP)})
 	}
-	s.renderPage(w, "apps.html", map[string]any{"User": u, "Project": p, "Apps": rows, "CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin"})
+	addons, err := s.addonRows(r.Context(), p)
+	if err != nil {
+		log.Printf("ui addons: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.renderPage(w, "apps.html", map[string]any{
+		"User": u, "Project": p, "Apps": rows, "Addons": addons,
+		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
+	})
 }
 
 func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -303,12 +332,26 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 		return
 	}
 
+	attached, err := s.st.AddonsForApp(a.ID)
+	if err != nil {
+		log.Printf("ui app addons: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	projectAddons, err := s.st.ListAddons(p.ID)
+	if err != nil {
+		log.Printf("ui project addons: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	s.renderPage(w, "app.html", map[string]any{
 		"User": u, "Project": p, "App": a,
 		"Status": status, "LatestID": latestID, "URL": "http://" + hostFor(a.Name, s.externalIP),
 		"History": history, "EnvKeys": envKeys,
 		"IsGit":   a.SourceType == "git",
-		"Domains": domains, "DNSWarning": r.URL.Query().Get("warn"),
+		"Domains": domains, "Warning": r.URL.Query().Get("warn"),
+		"Addons": attached, "ProjectAddons": projectAddons,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	})
 }
@@ -462,6 +505,145 @@ func (s *server) handleUIDomainDelete(w http.ResponseWriter, r *http.Request, u 
 			return
 		}
 		log.Printf("ui delete domain: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.syncIfLive(r.Context(), p, a)
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIAddonCreate is handleCreateAddon's UI twin: same shared
+// createAddon core (unattached — the project page's form has no app
+// picker), redirect instead of a 201 body.
+func (s *server) handleUIAddonCreate(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	if s.kube == nil {
+		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	sizeGB := 1
+	if v := r.PostFormValue("size_gb"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, "invalid size_gb", http.StatusBadRequest)
+			return
+		}
+		sizeGB = n
+	}
+
+	if _, err := s.createAddon(r.Context(), p, r.PostFormValue("type"), r.PostFormValue("name"), r.PostFormValue("version"), sizeGB, ""); err != nil {
+		switch {
+		case errors.Is(err, errSealerUnavailable):
+			http.Error(w, "sealer is not configured", http.StatusServiceUnavailable)
+		default:
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+		return
+	}
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
+}
+
+// handleUIAddonDelete is handleDeleteAddon's UI twin: same shared
+// removeAddon core, redirect instead of a 204. force/keep_data ride form
+// checkboxes instead of query params.
+func (s *server) handleUIAddonDelete(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	if s.kube == nil {
+		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	ad, ok := s.uiAddon(w, p, r.PostFormValue("name"))
+	if !ok {
+		return
+	}
+	force := r.PostFormValue("force") == "1"
+	keepData := r.PostFormValue("keep_data") == "1"
+
+	if err := s.removeAddon(r.Context(), p, ad, force, keepData); err != nil {
+		if errors.Is(err, errAddonAttached) {
+			http.Error(w, "addon is attached to one or more apps; check force to remove anyway", http.StatusConflict)
+			return
+		}
+		log.Printf("ui delete addon: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
+}
+
+// handleUIAddonAttach is handleAttachAddon's UI twin: same shared
+// attachAddon core. A non-empty collision warning rides the ?warn= query
+// param, same mechanism handleUIDomainAdd uses.
+func (s *server) handleUIAddonAttach(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	ad, ok := s.uiAddon(w, p, r.PostFormValue("name"))
+	if !ok {
+		return
+	}
+
+	warning, err := s.attachAddon(r.Context(), p, ad, a.Name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if warning != "" {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?warn="+url.QueryEscape(warning), http.StatusSeeOther)
+		return
+	}
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIAddonDetach is handleDetachAddon's UI twin: same store+sync
+// calls, redirect instead of a 204.
+func (s *server) handleUIAddonDetach(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	ad, ok := s.uiAddon(w, p, r.PostFormValue("name"))
+	if !ok {
+		return
+	}
+
+	if err := s.st.DetachAddon(ad.ID, a.ID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "addon is not attached to this app", http.StatusNotFound)
+			return
+		}
+		log.Printf("ui detach addon: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
