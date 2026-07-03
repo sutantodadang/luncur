@@ -210,22 +210,28 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	if err := s.st.SetReplicas(a.ID, req.Replicas); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	a.Replicas = req.Replicas
 
+	// Check whether the app is live BEFORE persisting the replica change:
+	// a live app with no kube client can't apply a scale, so it must not
+	// record a DB state it can't honor.
 	d, err := s.st.LatestDeployment(a.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		log.Printf("latest deployment: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	if err == nil && d.Status == "live" {
-		if !s.requireKube(w) {
-			return
-		}
+	live := err == nil && d.Status == "live"
+	if live && !s.requireKube(w) {
+		return
+	}
+
+	if err := s.st.SetReplicas(a.ID, req.Replicas); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	a.Replicas = req.Replicas
+
+	if live {
 		if err := s.syncApp(r.Context(), p, a); err != nil {
 			log.Printf("sync app: %v", err)
 			writeError(w, http.StatusInternalServerError, "internal", "internal error")

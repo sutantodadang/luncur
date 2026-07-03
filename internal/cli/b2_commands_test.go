@@ -16,8 +16,11 @@ func TestProjectAppEnvCommands(t *testing.T) {
 	if out, err := run(t, "app", "create", "api", "--project", "web", "--port", "3000"); err != nil || !strings.Contains(out, "api") {
 		t.Fatalf("app create: %v %q", err, out)
 	}
-	if _, err := run(t, "env", "set", "api", "K=v", "--project", "web"); err != nil {
+	if out, err := run(t, "env", "set", "api", "K=v", "--project", "web"); err != nil {
 		t.Fatal(err)
+	} else if strings.Contains(out, "K=v") || !strings.Contains(out, "set K on api") {
+		// "env set" must echo only the key, never the value.
+		t.Fatalf("env set output must not echo the value: %q", out)
 	}
 	if out, _ := run(t, "env", "list", "api", "--project", "web"); !strings.Contains(out, "K=v") {
 		t.Fatalf("env list: %q", out)

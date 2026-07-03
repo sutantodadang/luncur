@@ -32,7 +32,7 @@ func envCmd() *cobra.Command {
 			if err := c.EnvSet(setProject, args[0], key, value); err != nil {
 				return err
 			}
-			cmd.Printf("set %s=%s on %s\n", key, value, args[0])
+			cmd.Printf("set %s on %s\n", key, args[0])
 			return nil
 		},
 	}

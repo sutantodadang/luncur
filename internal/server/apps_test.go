@@ -119,6 +119,44 @@ func TestDeployWithoutKube503(t *testing.T) {
 	}
 }
 
+func TestScaleLiveAppWithoutKube503LeavesReplicasUnchanged(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	// Simulate a previously-live deployment directly in the store: the
+	// deploy handler itself requires kube, so this test constructs the
+	// "live app, no kube available now" state without going through it.
+	id := appID(t, st, "web", "api")
+	if _, err := st.CreateDeployment(id, "live", "nginx:1"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/scale", admin, `{"replicas":5}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != 503 {
+		t.Fatalf("want 503, got %d", resp.StatusCode)
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Replicas != 1 {
+		t.Fatalf("replicas must be unchanged (still 1), got %d", a.Replicas)
+	}
+}
+
+func mustProjectID(t *testing.T, st *store.Store, project string) int64 {
+	t.Helper()
+	p, err := st.GetProject(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p.ID
+}
+
 func TestMemberForbiddenOnForeignProject(t *testing.T) {
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")

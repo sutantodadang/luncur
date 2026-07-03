@@ -18,6 +18,7 @@ type recorded struct {
 	namespace string
 	name      string
 	patchType string
+	patch     []byte
 }
 
 // fakeClient returns a Client whose dynamic layer records every action.
@@ -36,6 +37,7 @@ func fakeClient(t *testing.T) (*Client, *[]recorded) {
 		case ktesting.PatchAction:
 			rec.name = a.GetName()
 			rec.patchType = string(a.GetPatchType())
+			rec.patch = a.GetPatch()
 		case ktesting.DeleteAction:
 			rec.name = a.GetName()
 		}
@@ -90,6 +92,20 @@ func TestEnsureNamespace(t *testing.T) {
 	rec := (*log)[0]
 	if rec.verb != "patch" || rec.resource != "namespaces" || rec.name != "luncur-web" {
 		t.Fatalf("bad action: %+v", rec)
+	}
+	var body struct {
+		Metadata struct {
+			Labels map[string]string `json:"labels"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(rec.patch, &body); err != nil {
+		t.Fatalf("unmarshal patch body: %v", err)
+	}
+	if body.Metadata.Labels["app.kubernetes.io/managed-by"] != "luncur" {
+		t.Fatalf("managed-by label missing: %+v", body.Metadata.Labels)
+	}
+	if body.Metadata.Labels["pod-security.kubernetes.io/enforce"] != "restricted" {
+		t.Fatalf("pod-security enforce label missing: %+v", body.Metadata.Labels)
 	}
 }
 

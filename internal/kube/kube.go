@@ -75,7 +75,7 @@ func nameOf(objJSON []byte) (string, error) {
 
 func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
 	ns := fmt.Sprintf(
-		`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q,"labels":{"app.kubernetes.io/managed-by":"luncur"}}}`,
+		`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q,"labels":{"app.kubernetes.io/managed-by":"luncur","pod-security.kubernetes.io/enforce":"restricted"}}}`,
 		name,
 	)
 	_, err := c.dyn.Resource(gvrByKind["Namespace"]).Patch(
