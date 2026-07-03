@@ -345,13 +345,20 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 		return
 	}
 
+	metrics, err := s.appMetricsData(r.Context(), p, a)
+	if err != nil {
+		log.Printf("ui app metrics: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	s.renderPage(w, "app.html", map[string]any{
 		"User": u, "Project": p, "App": a,
 		"Status": status, "LatestID": latestID, "URL": "http://" + hostFor(a.Name, s.externalIP),
 		"History": history, "EnvKeys": envKeys,
 		"IsGit":   a.SourceType == "git",
 		"Domains": domains, "Warning": r.URL.Query().Get("warn"),
-		"Addons": attached, "ProjectAddons": projectAddons,
+		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	})
 }

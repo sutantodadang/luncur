@@ -3,7 +3,7 @@
 Tiny self-hosted PaaS on K3s. One Go binary, SQLite, deploys as simple as
 Heroku — with an escape hatch to the real Kubernetes objects.
 
-Status: Phase 3 in progress — addons shipped (Plan I), on top of Phase 2
+Status: Phase 3 in progress — addons + metrics shipped (Plans I-J), on top of Phase 2
 (Plans E-H: git push deploys, custom domains + TLS, rollback + hardening,
 invites + user admin + the web YAML editor) and Phase 1's PaaS core (Plans
 A-D). Working today:
@@ -154,9 +154,13 @@ luncur edit myapp Deployment --project myproj
 # List apps in a project (name + URL)
 luncur status --project myproj
 
-# Show one app's status (replicas, image, URL)
+# Show one app's status (replicas, image, URL, live cpu/memory, deploy count)
 luncur status myapp --project myproj
 ```
+
+Live cpu/memory come from the cluster's `metrics-server` (K3s bundles it by
+default); if it's not installed or unreachable, `status` prints `metrics:
+unavailable` instead — the deploy count is always shown regardless.
 
 ## Web UI
 
@@ -165,7 +169,9 @@ After `luncur up`, the panel is served at `http://panel.<ip>.sslip.io/ui/`
 via `luncur user add` or an invite). From there you can browse projects and
 apps, scale and edit env vars, trigger a deploy, roll back to a previous
 deploy, and watch build/runtime logs stream live via Server-Sent Events — no
-CLI required.
+CLI required. Each app page shows a stats line (cpu/memory when
+`metrics-server` is available, ready/desired replicas, deploy count) under
+the title.
 
 Admins get a **users page** (`/ui/users`) to list every user (email, role,
 created, active token count), delete a user, and mint invites — each invite
@@ -213,7 +219,10 @@ up --cert-provider ...` to change it):
 
 Both `traefik` and `cert-manager` issue certs themselves — luncur just
 annotates the Ingress and marks the domain `external` rather than tracking
-issuance state.
+issuance state. For `cert-manager`, the daily cert sweep additionally reads
+the issued cert's expiry back from the TLS Secret cert-manager maintains, so
+`domain list` and the web UI show a real `cert_expires_at` once cert-manager
+has issued it.
 
 Set the ACME account email (used by the `builtin` provider and passed to
 `traefik`/`cert-manager`'s issuer config) with:
@@ -294,7 +303,7 @@ mirrored in a hidden `_csrf` field, checked on every POST before it runs.
 - Push progress streams via a `post-receive` hook, so the `git push` exit code cannot reflect a build failure (refs land before the hook runs). The client still sees the full build log and a final `BUILD FAILED`/`app live` line.
 - The builtin ACME provider's HTTP-01 challenge Ingress lives in the `luncur-system` namespace, not the app's own namespace, because an Ingress's backend Service must be in the same namespace and the challenge responder runs as part of luncur itself.
 - The TLS cert provider (`builtin`/`traefik`/`cert-manager`) is fixed when `luncur serve` starts, read once from the `cert_provider` setting; changing it requires a restart (`luncur up --cert-provider ...` triggers one).
-- `cert-manager` mode reports domain status as `external` rather than reading the issued Secret back for its real expiry date — a nice-to-have deferred to a future Phase 2 pass.
+- `cert-manager` mode reports domain status as `external`; its cert's expiry is read back from the issued TLS Secret during the daily cert sweep rather than on every request, so `cert_expires_at` can lag briefly right after issuance or renewal.
 - CSRF is the stateless double-submit-cookie pattern (a random `luncur_csrf` cookie plus a matching `_csrf` hidden form field, compared with `crypto/subtle`) rather than a server-stored per-session token — same protection for this threat model (browser forms, no JS API), zero schema.
 - Rollback's registry-presence check only applies to images hosted in the embedded registry (ref prefixed with the configured `--registry-host`); externally-hosted image refs are assumed present since luncur has no credentials to check them.
 - No email delivery for invites — the admin copies the `/ui/register?token=...` link and shares it out of band.

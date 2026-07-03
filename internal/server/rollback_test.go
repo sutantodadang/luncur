@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	ktesting "k8s.io/client-go/testing"
 
@@ -51,8 +52,17 @@ func rollbackServer(t *testing.T, registryHost string) (*httptestServer, *store.
 	t.Helper()
 	st := newTestStore(t)
 	scheme := runtime.NewScheme()
-	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	// PodMetrics needs a registered list kind — the app page's metrics
+	// stats line calls kube.AppMetrics, which the fake dynamic client
+	// panics on for any GVR it can't resolve a ListKind for.
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{podMetricsGVR: "PodMetricsList"})
 	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		if a.GetVerb() == "get" || a.GetVerb() == "list" {
+			// Let the default tracker answer reads (the app page's metrics
+			// stats line needs a real List/Get result, not a swallowed nil).
+			return false, nil, nil
+		}
 		return true, nil, nil
 	})
 	sealer, err := secret.New(make([]byte, 32))

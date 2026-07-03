@@ -40,7 +40,7 @@ func TestLuncurObjects(t *testing.T) {
 	if strings.Contains(all, "cluster-admin") {
 		t.Fatal("cluster-admin binding must be gone")
 	}
-	for _, want := range []string{`"ClusterRole"`, "pods/log", "helmchartconfigs", "clusterissuers", "pods/exec", "statefulsets"} {
+	for _, want := range []string{`"ClusterRole"`, "pods/log", "helmchartconfigs", "clusterissuers", "pods/exec", "statefulsets", "metrics.k8s.io"} {
 		if !strings.Contains(all, want) {
 			t.Fatalf("manifests missing %q", want)
 		}

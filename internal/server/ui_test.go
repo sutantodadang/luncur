@@ -361,6 +361,9 @@ func TestUIAppDetailShowsStatus(t *testing.T) {
 	if !strings.Contains(string(body), `class="status-live"`) {
 		t.Fatalf("GET /ui/projects/web/apps/api: body missing live status, got: %s", body)
 	}
+	if !strings.Contains(string(body), "deploys") {
+		t.Fatalf("GET /ui/projects/web/apps/api: body missing metrics stats line, got: %s", body)
+	}
 }
 
 // TestUIScalePersists mirrors TestScaleLiveAppWithoutKube503LeavesReplicasUnchanged's

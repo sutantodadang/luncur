@@ -13,6 +13,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -42,6 +43,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"HelmChartConfig":       {Group: "helm.cattle.io", Version: "v1", Resource: "helmchartconfigs"},
 	"ClusterIssuer":         {Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"},
 	"StatefulSet":           {Group: "apps", Version: "v1", Resource: "statefulsets"},
+	"PodMetrics":            {Group: "metrics.k8s.io", Version: "v1beta1", Resource: "pods"},
 }
 
 // clusterScoped marks kinds Apply must patch without a namespace.
@@ -342,4 +344,55 @@ func (c *Client) HasGroupVersion(ctx context.Context, gv string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// AppMetrics sums CPU/memory usage across an app's pods via the
+// metrics.k8s.io API. ok=false when metrics-server isn't available —
+// callers render "metrics unavailable", never an error.
+type AppMetrics struct {
+	CPUMilli  int64
+	MemoryMiB int64
+	Pods      int
+}
+
+func (c *Client) AppMetrics(ctx context.Context, namespace, app string) (AppMetrics, bool) {
+	list, err := c.dyn.Resource(gvrByKind["PodMetrics"]).Namespace(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/name=" + app,
+	})
+	if err != nil {
+		return AppMetrics{}, false
+	}
+	var out AppMetrics
+	for _, item := range list.Items {
+		out.Pods++
+		containers, _, _ := unstructured.NestedSlice(item.Object, "containers")
+		for _, ci := range containers {
+			cm, ok := ci.(map[string]any)
+			if !ok {
+				continue
+			}
+			usage, _, _ := unstructured.NestedStringMap(cm, "usage")
+			if q, err := resource.ParseQuantity(usage["cpu"]); err == nil {
+				out.CPUMilli += q.MilliValue()
+			}
+			if q, err := resource.ParseQuantity(usage["memory"]); err == nil {
+				out.MemoryMiB += q.Value() / (1 << 20)
+			}
+		}
+	}
+	return out, true
+}
+
+// DeploymentStatus reports ready/desired replicas; absent → zeros.
+func (c *Client) DeploymentStatus(ctx context.Context, namespace, name string) (ready, desired int64, err error) {
+	u, err := c.dyn.Resource(gvrByKind["Deployment"]).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	ready, _, _ = unstructured.NestedInt64(u.Object, "status", "readyReplicas")
+	desired, _, _ = unstructured.NestedInt64(u.Object, "spec", "replicas")
+	return ready, desired, nil
 }

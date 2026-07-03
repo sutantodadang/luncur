@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log"
 	"net/http"
@@ -81,14 +83,21 @@ func (m *certManager) Run(ctx context.Context) {
 	}
 }
 
-// sweep re-enqueues unissued domains and soon-to-expire certs.
+// sweep re-enqueues unissued domains and soon-to-expire certs. For the
+// cert-manager provider, issuance isn't luncur's job — instead it reads the
+// expiry back from the TLS Secret cert-manager maintains.
 func (m *certManager) sweep(ctx context.Context) {
 	domains, err := m.s.st.AllDomains()
 	if err != nil {
 		log.Printf("cert sweep: %v", err)
 		return
 	}
+	provider := m.s.certProviderName()
 	for _, d := range domains {
+		if provider == "cert-manager" && d.CertStatus == "external" {
+			m.readbackExpiry(ctx, d)
+			continue
+		}
 		renew := false
 		switch d.CertStatus {
 		case "none", "pending":
@@ -182,6 +191,36 @@ func (m *certManager) issue(ctx context.Context, j certJob) {
 		log.Printf("sync after cert %s: %v", j.d.Hostname, err)
 	}
 	log.Printf("cert issued for %s (expires %s)", j.d.Hostname, notAfter.Format(time.RFC3339))
+}
+
+// readbackExpiry fills cert_expires_at for cert-manager-managed domains by
+// parsing the leaf cert out of the TLS Secret cert-manager maintains.
+func (m *certManager) readbackExpiry(ctx context.Context, d store.Domain) {
+	if m.s.kube == nil {
+		return
+	}
+	p, a, err := m.s.projectAppForDomain(d)
+	if err != nil {
+		return
+	}
+	data, err := m.s.kube.GetSecretData(ctx, p.Namespace, certSecretName(a.Name, d.Hostname))
+	if err != nil || data == nil {
+		return // not issued yet
+	}
+	blk, _ := pem.Decode(data["tls.crt"])
+	if blk == nil {
+		return
+	}
+	cert, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		return
+	}
+	exp := cert.NotAfter.UTC().Format(time.RFC3339)
+	if exp != d.CertExpiresAt {
+		if err := m.s.st.SetDomainCert(d.ID, "external", "", exp); err != nil {
+			log.Printf("cert expiry readback %s: %v", d.Hostname, err)
+		}
+	}
 }
 
 // accountKey loads the ACME account key from the luncur-acme-account
