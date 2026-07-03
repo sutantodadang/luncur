@@ -76,7 +76,9 @@ func (c *Client) do(method, path string, in, out any) error {
 }
 
 func (c *Client) Login(email, password string) (string, error) {
-	var out struct{ Token string `json:"token"` }
+	var out struct {
+		Token string `json:"token"`
+	}
 	err := c.do("POST", "/v1/login",
 		map[string]string{"email": email, "password": password}, &out)
 	return out.Token, err
@@ -478,4 +480,29 @@ func (c *Client) ListTokens() ([]TokenInfo, error) {
 
 func (c *Client) RevokeToken(id int64) error {
 	return c.do("DELETE", fmt.Sprintf("/v1/tokens/%d", id), nil, nil)
+}
+
+// InviteInfo is one registration invite as returned by the API.
+type InviteInfo struct {
+	Token     string `json:"token"`
+	Role      string `json:"role"`
+	ExpiresAt string `json:"expires_at"`
+	Path      string `json:"path"`
+	Used      bool   `json:"used"`
+}
+
+func (c *Client) CreateInvite(role string) (InviteInfo, error) {
+	var out InviteInfo
+	err := c.do("POST", "/v1/invites", map[string]string{"role": role}, &out)
+	return out, err
+}
+
+func (c *Client) ListInvites() ([]InviteInfo, error) {
+	var out []InviteInfo
+	err := c.do("GET", "/v1/invites", nil, &out)
+	return out, err
+}
+
+func (c *Client) RevokeInvite(token string) error {
+	return c.do("DELETE", "/v1/invites/"+token, nil, nil)
 }

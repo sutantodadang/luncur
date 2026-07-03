@@ -41,6 +41,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(configCmd())
 	root.AddCommand(rollbackCmd())
 	root.AddCommand(tokenCmd())
+	root.AddCommand(inviteCmd())
 	return root
 }
 
