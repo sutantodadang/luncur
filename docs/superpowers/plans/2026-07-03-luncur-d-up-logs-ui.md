@@ -1937,6 +1937,23 @@ Register in `root.go`: `root.AddCommand(upCmd())`.
 
 ---
 
+### Task 13: Plan C deferred fixes (backlog burn-down)
+
+**Files:**
+- Modify: `internal/server/apps.go` (upload cap), `internal/build/job.go` (Job hygiene), `internal/cli/serve.go` (errors.Is), `internal/cli/archive.go` (stderr), `internal/store/deployments.go` (scan-err shape)
+- Test: extend the touching packages' existing test files where behavior changes
+
+**Interfaces:** none new — these are the Plan C final-review deferrals recorded in the progress ledger.
+
+- [ ] **Step 1: M1 — upload size cap.** In `handleDeployApp`, before `ParseMultipartForm`, wrap the body: `r.Body = http.MaxBytesReader(w, r.Body, 256<<20)` (256 MiB; a source tarball larger than that is a mistake, not an app). On `ParseMultipartForm` error the existing `bad_request` path already fires. Add a test posting a multipart body with an over-limit Content-Length? Too slow — instead assert the wrap exists behaviorally with a small limit is not configurable; keep the test to: existing multipart deploy tests still pass.
+- [ ] **Step 2: M2 — build Job hygiene.** In `RenderBuildJob`: set `TTLSecondsAfterFinished: ptr(int32(3600))`, `ActiveDeadlineSeconds: ptr(int64(900))`, and container resources (requests cpu `100m`/memory `256Mi`, limits memory `2Gi`). Extend the existing job render test to assert the three fields.
+- [ ] **Step 3: M5 — `errors.Is(err, http.ErrServerClosed)`** in `internal/cli/serve.go`.
+- [ ] **Step 4: M6 — `archive.go` git-archive uses `CombinedOutput`** (or captures stderr into the returned error) so failures carry git's message. Adjust its test if one asserts the error text.
+- [ ] **Step 5: M7 — store scan-err shape.** In `GetDeployment`/`LatestDeployment`, only assign `d.ImageRef, d.LogPath = img.String, logp.String` when `err == nil`.
+- [ ] **Step 6: Run** `go test ./...` — green. **Commit** — `fix: plan C review backlog (upload cap, job hygiene, error handling)`
+
+---
+
 ## Final verification (after all tasks)
 
 - [ ] `go build ./... && go vet ./... && go test ./...` — everything green.
