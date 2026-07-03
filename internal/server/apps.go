@@ -254,7 +254,8 @@ func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Pro
 		if setErr := s.st.SetDeploymentStatus(d.ID, "failed"); setErr != nil {
 			log.Printf("set deployment failed: %v", setErr)
 		}
-		writeError(w, http.StatusBadGateway, "deploy_failed", err.Error())
+		log.Printf("deploy image %s: %v", image, err)
+		writeError(w, http.StatusBadGateway, "deploy_failed", "deploy failed")
 		return
 	}
 
