@@ -58,3 +58,45 @@ func (s *Store) UserForToken(plaintext string) (User, error) {
 	_, _ = s.db.Exec(`UPDATE api_tokens SET last_used_at = datetime('now') WHERE hash = ?`, h)
 	return u, nil
 }
+
+// TokenInfo is the listing view of an API token — never the hash.
+type TokenInfo struct {
+	ID         int64
+	Name       string
+	CreatedAt  string
+	LastUsedAt string
+	ExpiresAt  string
+}
+
+// ListTokens returns a user's tokens, newest first.
+func (s *Store) ListTokens(userID int64) ([]TokenInfo, error) {
+	rows, err := s.db.Query(
+		`SELECT id, name, created_at, COALESCE(last_used_at, ''), COALESCE(expires_at, '')
+		 FROM api_tokens WHERE user_id = ? ORDER BY id DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TokenInfo
+	for rows.Next() {
+		var t TokenInfo
+		if err := rows.Scan(&t.ID, &t.Name, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// RevokeToken deletes one of userID's tokens. ErrNotFound covers both a
+// missing id and someone else's token.
+func (s *Store) RevokeToken(userID, id int64) error {
+	res, err := s.db.Exec(`DELETE FROM api_tokens WHERE id = ? AND user_id = ?`, id, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

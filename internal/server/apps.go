@@ -280,6 +280,28 @@ func (s *server) deployGitApp(p store.Project, a store.App, userID int64) (store
 	return d, nil
 }
 
+// applyImageDeploy is the synchronous render+apply core shared by prebuilt
+// image deploys and rollbacks: apply the app at `image`, then mark the
+// deployment live — or failed, returning the error.
+func (s *server) applyImageDeploy(ctx context.Context, p store.Project, a store.App, d store.Deployment, image string) error {
+	rendered, err := s.renderApp(p, a, image, true)
+	if err == nil {
+		if err = s.kube.EnsureNamespace(ctx, p.Namespace); err == nil {
+			err = s.kube.Apply(ctx, p.Namespace, rendered.Objects)
+		}
+	}
+	if err != nil {
+		if e := s.st.SetDeploymentStatus(d.ID, "failed"); e != nil {
+			log.Printf("mark deploy %d failed: %v", d.ID, e)
+		}
+		return err
+	}
+	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
+		log.Printf("mark deploy %d live (apply already succeeded): %v", d.ID, err)
+	}
+	return nil
+}
+
 // deployImage is the synchronous prebuilt-image deploy path: render, apply,
 // mark live. Unchanged from the pre-build-pipeline behavior.
 func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Project, a store.App, image string) {
@@ -290,24 +312,9 @@ func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Pro
 		return
 	}
 
-	rendered, err := s.renderApp(p, a, image, true)
-	if err == nil {
-		if err = s.kube.EnsureNamespace(r.Context(), p.Namespace); err == nil {
-			err = s.kube.Apply(r.Context(), p.Namespace, rendered.Objects)
-		}
-	}
-	if err != nil {
-		if setErr := s.st.SetDeploymentStatus(d.ID, "failed"); setErr != nil {
-			log.Printf("set deployment failed: %v", setErr)
-		}
+	if err := s.applyImageDeploy(r.Context(), p, a, d, image); err != nil {
 		log.Printf("deploy image %s: %v", image, err)
 		writeError(w, http.StatusBadGateway, "deploy_failed", "deploy failed")
-		return
-	}
-
-	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
-		log.Printf("set deployment live: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 

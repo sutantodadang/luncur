@@ -1,6 +1,9 @@
 package server
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
@@ -13,6 +16,7 @@ import (
 )
 
 const sessionCookie = "luncur_session"
+const csrfCookie = "luncur_csrf"
 
 func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/login", s.handleUILoginPage)
@@ -27,6 +31,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains", s.uiPage(s.handleUIDomainAdd))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/delete", s.uiPage(s.handleUIDomainDelete))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/deploy", s.uiPage(s.handleUIDeploy))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/rollback", s.uiPage(s.handleUIRollback))
 }
 
 // uiUser resolves the session cookie to a user.
@@ -51,8 +56,47 @@ func (s *server) uiPage(next func(http.ResponseWriter, *http.Request, store.User
 			http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
 			return
 		}
+		if r.Method == http.MethodPost && !s.checkCSRF(w, r) {
+			return
+		}
 		next(w, r, u)
 	}
+}
+
+// csrf returns the request's CSRF token, minting the cookie on first use.
+// Double-submit pattern: the value is only ever compared against the same
+// browser's form field, so no server-side state is needed.
+func (s *server) csrf(w http.ResponseWriter, r *http.Request) string {
+	if ck, err := r.Cookie(csrfCookie); err == nil && ck.Value != "" {
+		return ck.Value
+	}
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		log.Printf("csrf rand: %v", err)
+		return ""
+	}
+	v := hex.EncodeToString(raw)
+	http.SetCookie(w, &http.Cookie{
+		Name: csrfCookie, Value: v, Path: "/",
+		HttpOnly: true, SameSite: http.SameSiteStrictMode,
+	})
+	return v
+}
+
+// checkCSRF verifies a POST's _csrf field against the cookie. Writes the
+// 403 itself so callers can just return.
+func (s *server) checkCSRF(w http.ResponseWriter, r *http.Request) bool {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return false
+	}
+	ck, err := r.Cookie(csrfCookie)
+	if err != nil || ck.Value == "" ||
+		subtle.ConstantTimeCompare([]byte(ck.Value), []byte(r.PostFormValue("_csrf"))) != 1 {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 func (s *server) renderPage(w http.ResponseWriter, page string, data any) {
@@ -63,28 +107,31 @@ func (s *server) renderPage(w http.ResponseWriter, page string, data any) {
 }
 
 func (s *server) handleUILoginPage(w http.ResponseWriter, r *http.Request) {
-	s.renderPage(w, "login.html", map[string]any{})
+	s.renderPage(w, "login.html", map[string]any{"CSRF": s.csrf(w, r)})
 }
 
 func (s *server) handleUILogin(w http.ResponseWriter, r *http.Request) {
+	if !s.checkCSRF(w, r) {
+		return
+	}
 	if err := r.ParseForm(); err != nil {
-		s.renderPage(w, "login.html", map[string]any{"Error": "invalid form"})
+		s.renderPage(w, "login.html", map[string]any{"Error": "invalid form", "CSRF": s.csrf(w, r)})
 		return
 	}
 	u, err := s.st.Authenticate(r.PostFormValue("email"), r.PostFormValue("password"))
 	if errors.Is(err, store.ErrAuthFailed) {
-		s.renderPage(w, "login.html", map[string]any{"Error": "wrong email or password"})
+		s.renderPage(w, "login.html", map[string]any{"Error": "wrong email or password", "CSRF": s.csrf(w, r)})
 		return
 	}
 	if err != nil {
 		log.Printf("ui login: %v", err)
-		s.renderPage(w, "login.html", map[string]any{"Error": "internal error"})
+		s.renderPage(w, "login.html", map[string]any{"Error": "internal error", "CSRF": s.csrf(w, r)})
 		return
 	}
 	tok, err := s.st.CreateSessionToken(u.ID, "session")
 	if err != nil {
 		log.Printf("ui session token: %v", err)
-		s.renderPage(w, "login.html", map[string]any{"Error": "internal error"})
+		s.renderPage(w, "login.html", map[string]any{"Error": "internal error", "CSRF": s.csrf(w, r)})
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -96,6 +143,9 @@ func (s *server) handleUILogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleUILogout(w http.ResponseWriter, r *http.Request) {
+	if !s.checkCSRF(w, r) {
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, MaxAge: -1,
 	})
@@ -153,7 +203,7 @@ func (s *server) handleUIProjects(w http.ResponseWriter, r *http.Request, u stor
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.renderPage(w, "projects.html", map[string]any{"User": u, "Projects": list})
+	s.renderPage(w, "projects.html", map[string]any{"User": u, "Projects": list, "CSRF": s.csrf(w, r)})
 }
 
 // uiAppRow is apps.html's per-row view model: the store.App plus its
@@ -179,7 +229,7 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	for _, a := range list {
 		rows = append(rows, uiAppRow{Name: a.Name, Replicas: a.Replicas, URL: "http://" + hostFor(a.Name, s.externalIP)})
 	}
-	s.renderPage(w, "apps.html", map[string]any{"User": u, "Project": p, "Apps": rows})
+	s.renderPage(w, "apps.html", map[string]any{"User": u, "Project": p, "Apps": rows, "CSRF": s.csrf(w, r)})
 }
 
 func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -236,6 +286,7 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 		"History": history, "EnvKeys": envKeys,
 		"IsGit":   a.SourceType == "git",
 		"Domains": domains, "DNSWarning": r.URL.Query().Get("warn"),
+		"CSRF": s.csrf(w, r),
 	})
 }
 
@@ -423,6 +474,55 @@ func (s *server) handleUIDeploy(w http.ResponseWriter, r *http.Request, u store.
 			http.Error(w, "server has no data directory configured", http.StatusServiceUnavailable)
 		default:
 			log.Printf("ui deploy: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIRollback is handleRollback's UI twin: same shared s.rollback
+// core, plain-text statuses instead of a JSON envelope, redirect instead of
+// a 202 body. Guards on s.kube itself (rather than relying on a sentinel
+// out of s.rollback) because applyImageDeploy would otherwise panic on a
+// nil client — mirroring handleRollback's requireKube check.
+func (s *server) handleUIRollback(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if s.kube == nil {
+		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	deployID, err := strconv.ParseInt(r.PostFormValue("deploy_id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid deploy_id", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := s.rollback(r.Context(), p, a, u, deployID); err != nil {
+		var missing *errImageMissing
+		var regErr *errRegistryCheck
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			http.Error(w, "no such deployment for this app", http.StatusNotFound)
+		case errors.Is(err, errNoRollbackTarget):
+			http.Error(w, errNoRollbackTarget.Error(), http.StatusConflict)
+		case errors.As(err, &missing):
+			http.Error(w, missing.Error(), http.StatusConflict)
+		case errors.As(err, &regErr):
+			http.Error(w, "could not verify image in registry", http.StatusServiceUnavailable)
+		default:
+			log.Printf("ui rollback: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
 		return

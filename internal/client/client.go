@@ -450,3 +450,32 @@ func (c *Client) GetSetting(key string) (string, error) {
 func (c *Client) SetSetting(key, value string) error {
 	return c.do("PUT", "/v1/settings/"+key, map[string]string{"value": value}, nil)
 }
+
+// Rollback redeploys a previous deployment's image (deployID == 0 auto-picks
+// the previous live deployment) and returns the new deployment's id.
+func (c *Client) Rollback(project, app string, deployID int64) (int64, error) {
+	var out struct {
+		DeploymentID int64 `json:"deployment_id"`
+	}
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/rollback",
+		map[string]int64{"deploy_id": deployID}, &out)
+	return out.DeploymentID, err
+}
+
+type TokenInfo struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	CreatedAt  string `json:"created_at"`
+	LastUsedAt string `json:"last_used_at"`
+	ExpiresAt  string `json:"expires_at"`
+}
+
+func (c *Client) ListTokens() ([]TokenInfo, error) {
+	var out []TokenInfo
+	err := c.do("GET", "/v1/tokens", nil, &out)
+	return out, err
+}
+
+func (c *Client) RevokeToken(id int64) error {
+	return c.do("DELETE", fmt.Sprintf("/v1/tokens/%d", id), nil, nil)
+}

@@ -7,6 +7,7 @@
 
 <h2>Scale</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/scale">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <input type="number" name="replicas" min="0" value="{{.App.Replicas}}">
   <button type="submit">scale</button>
 </form>
@@ -14,6 +15,7 @@
 {{if .IsGit}}
 <h2>Deploy</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/deploy">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <button type="submit">Deploy from git</button>
 </form>
 {{end}}
@@ -21,20 +23,30 @@
 <h2>Environment</h2>
 <table>{{range .EnvKeys}}<tr><td><code>{{.}}</code></td><td>
   <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/env/delete">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
     <input type="hidden" name="key" value="{{.}}"><button type="submit">unset</button>
   </form></td></tr>{{end}}
 </table>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/env">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <input name="key" placeholder="KEY" required>
   <input name="value" placeholder="value" required>
   <button type="submit">set</button>
 </form>
 
 <h2>Deploys</h2>
-<table><tr><th>ID</th><th>Status</th><th>Image</th><th>When</th></tr>
+<table><tr><th>ID</th><th>Status</th><th>Image</th><th>When</th><th></th></tr>
 {{range .History}}<tr>
   <td>{{.ID}}</td><td class="status-{{.Status}}">{{.Status}}</td>
-  <td><code>{{.ImageRef}}</code></td><td>{{.CreatedAt}}</td>
+  <td><code>{{.ImageRef}}</code>{{if .RolledBackFrom}} <em>(rollback of {{.RolledBackFrom}})</em>{{end}}</td>
+  <td>{{.CreatedAt}}</td>
+  <td>{{if and .ImageRef (ne .ID $.LatestID)}}
+    <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollback">
+      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="deploy_id" value="{{.ID}}">
+      <button type="submit">rollback</button>
+    </form>
+  {{end}}</td>
 </tr>{{end}}
 </table>
 
@@ -46,11 +58,13 @@
   <td class="status-{{.CertStatus}}">{{.CertStatus}}{{if .CertError}} — {{.CertError}}{{end}}</td>
   <td>{{.CertExpiresAt}}</td>
   <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/domains/delete">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
     <input type="hidden" name="hostname" value="{{.Hostname}}"><button type="submit">remove</button>
   </form></td>
 </tr>{{end}}
 </table>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/domains">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <input name="hostname" placeholder="www.example.com" required>
   <button type="submit">add domain</button>
 </form>

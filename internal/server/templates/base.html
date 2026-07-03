@@ -25,6 +25,7 @@ pre.logs{background:#111;color:#ddd;padding:1rem;overflow:auto;max-height:24rem;
 <nav>
   <strong><a href="/ui/">luncur</a></strong>
   <form class="inline" method="post" action="/ui/logout">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
     <span>{{.User.Email}}</span> <button type="submit">log out</button>
   </form>
 </nav>
