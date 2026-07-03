@@ -159,7 +159,7 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	d, err := s.st.CreateDeployment(a.ID, "deploying", req.Image)
+	d, err := s.st.CreateDeployment(a.ID, "deploying", req.Image, 0)
 	if err != nil {
 		log.Printf("create deployment: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")

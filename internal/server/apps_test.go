@@ -129,7 +129,7 @@ func TestScaleLiveAppWithoutKube503LeavesReplicasUnchanged(t *testing.T) {
 	// deploy handler itself requires kube, so this test constructs the
 	// "live app, no kube available now" state without going through it.
 	id := appID(t, st, "web", "api")
-	if _, err := st.CreateDeployment(id, "live", "nginx:1"); err != nil {
+	if _, err := st.CreateDeployment(id, "live", "nginx:1", 0); err != nil {
 		t.Fatal(err)
 	}
 

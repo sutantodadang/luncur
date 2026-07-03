@@ -72,11 +72,11 @@ func TestDeployments(t *testing.T) {
 		t.Fatalf("want ErrNotFound with no deployments, got %v", err)
 	}
 
-	d1, err := s.CreateDeployment(a.ID, "deploying", "registry/x:1")
+	d1, err := s.CreateDeployment(a.ID, "deploying", "registry/x:1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d2, err := s.CreateDeployment(a.ID, "deploying", "registry/x:2")
+	d2, err := s.CreateDeployment(a.ID, "deploying", "registry/x:2", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestDeployments(t *testing.T) {
 		t.Fatalf("latest: %+v %v (d1=%d d2=%d)", latest, err, d1.ID, d2.ID)
 	}
 
-	if _, err := s.CreateDeployment(a.ID, "bogus", "x"); err == nil {
+	if _, err := s.CreateDeployment(a.ID, "bogus", "x", 0); err == nil {
 		t.Fatal("want CHECK violation for bogus status")
 	}
 }
