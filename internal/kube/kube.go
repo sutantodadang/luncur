@@ -36,6 +36,12 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"ClusterRoleBinding":    {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"},
 }
 
+// clusterScoped marks kinds Apply must patch without a namespace.
+var clusterScoped = map[string]bool{
+	"Namespace":          true,
+	"ClusterRoleBinding": true,
+}
+
 type Client struct {
 	dyn dynamic.Interface
 	cs  kubernetes.Interface
@@ -113,8 +119,8 @@ func (c *Client) Apply(ctx context.Context, namespace string, objs []render.Obje
 		if err != nil {
 			return fmt.Errorf("%s: %w", o.Kind, err)
 		}
-		// Namespace is cluster-scoped: never namespace the patch call itself.
-		if o.Kind == "Namespace" {
+		// Cluster-scoped kinds: never namespace the patch call itself.
+		if clusterScoped[o.Kind] {
 			_, err = c.dyn.Resource(gvr).Patch(
 				ctx, name, types.ApplyPatchType, o.JSON, applyOpts(),
 			)

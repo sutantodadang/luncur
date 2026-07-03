@@ -101,6 +101,33 @@ func TestApplyUsesSSAForEveryObject(t *testing.T) {
 	}
 }
 
+// TestApplyClusterRoleBindingSkipsNamespace guards against Apply treating
+// ClusterRoleBinding (cluster-scoped, per gvrByKind) as namespaced. Using
+// the recorded-action fakeClient is the simplest reliable path: the fake
+// dynamic client's short-circuit reactor never round-trips through a real
+// ObjectTracker, so asserting on the recorded namespace is sufficient
+// without needing a Get-based round trip.
+func TestApplyClusterRoleBindingSkipsNamespace(t *testing.T) {
+	c, log := fakeClient(t)
+	crb := []render.Object{{
+		Kind: "ClusterRoleBinding",
+		JSON: json.RawMessage(`{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"luncur-crb"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"cluster-admin"},"subjects":[{"kind":"ServiceAccount","name":"luncur","namespace":"luncur-system"}]}`),
+	}}
+	if err := c.Apply(context.Background(), "luncur-web", crb); err != nil {
+		t.Fatal(err)
+	}
+	if len(*log) != 1 {
+		t.Fatalf("want 1 action, got %d: %+v", len(*log), *log)
+	}
+	rec := (*log)[0]
+	if rec.resource != "clusterrolebindings" || rec.name != "luncur-crb" {
+		t.Fatalf("bad action: %+v", rec)
+	}
+	if rec.namespace != "" {
+		t.Fatalf("want no namespace on cluster-scoped patch, got %q", rec.namespace)
+	}
+}
+
 func TestEnsureNamespace(t *testing.T) {
 	c, log := fakeClient(t)
 	if err := c.EnsureNamespace(context.Background(), "luncur-web"); err != nil {
