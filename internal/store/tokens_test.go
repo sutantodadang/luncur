@@ -102,3 +102,35 @@ func TestSessionTokenExpiresInSevenDays(t *testing.T) {
 		t.Fatalf("session token expires_at = %q, want ~7 days out", exp)
 	}
 }
+
+func TestListAndRevokeTokens(t *testing.T) {
+	st := openTest(t)
+	u, _ := st.CreateUser("tok2@example.com", "password123", "member")
+	other, _ := st.CreateUser("other@example.com", "password123", "member")
+	if _, err := st.CreateToken(u.ID, "laptop"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateToken(u.ID, "ci"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := st.ListTokens(u.ID)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("list = %+v err=%v", list, err)
+	}
+	if list[0].Name != "ci" { // newest first
+		t.Fatalf("order: %+v", list)
+	}
+	if list[0].ExpiresAt == "" {
+		t.Fatal("expires_at missing")
+	}
+	// Foreign revoke → ErrNotFound; own revoke works and kills auth.
+	if err := st.RevokeToken(other.ID, list[0].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign revoke: %v", err)
+	}
+	if err := st.RevokeToken(u.ID, list[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := st.ListTokens(u.ID); len(l) != 1 {
+		t.Fatalf("after revoke: %+v", l)
+	}
+}

@@ -49,3 +49,33 @@ func TestListDeployments(t *testing.T) {
 		t.Fatalf("want [d2 d1] newest-first, got %+v", list)
 	}
 }
+
+func TestRollbackDeployment(t *testing.T) {
+	st := openTest(t)
+	p, _ := st.CreateProject("proj")
+	a, _ := st.CreateApp(p.ID, "web", 8080)
+	u, err := st.CreateUser("rollback@example.com", "password123", "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d1, err := st.CreateDeployment(a.ID, "live", "img:1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb, err := st.CreateRollbackDeployment(a.ID, "img:1", u.ID, d1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rb.Status != "deploying" || rb.ImageRef != "img:1" || rb.RolledBackFrom != d1.ID {
+		t.Fatalf("rollback row = %+v", rb)
+	}
+	got, err := st.GetDeployment(rb.ID)
+	if err != nil || got.RolledBackFrom != d1.ID {
+		t.Fatalf("get: %+v err=%v", got, err)
+	}
+	// Non-rollback rows read back 0.
+	got, err = st.GetDeployment(d1.ID)
+	if err != nil || got.RolledBackFrom != 0 {
+		t.Fatalf("plain row rolled_back_from = %d err=%v", got.RolledBackFrom, err)
+	}
+}
