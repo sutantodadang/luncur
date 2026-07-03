@@ -3,6 +3,8 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -273,6 +275,15 @@ func TestStatefulSetReady(t *testing.T) {
 	ok, err = c.StatefulSetReady(context.Background(), "proj", "absent")
 	if err != nil || ok {
 		t.Fatalf("absent: ready=%v err=%v, want false nil", ok, err)
+	}
+}
+
+func TestClientImplementsPodExecer(t *testing.T) {
+	var _ PodExecer = (*Client)(nil)
+	c := NewForTest(nil, nil)
+	err := c.ExecPod(context.Background(), "ns", "pod", "c", []string{"true"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "exec unavailable") {
+		t.Fatalf("cfg-less exec: %v", err)
 	}
 }
 

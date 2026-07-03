@@ -19,8 +19,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/remotecommand"
 
 	"github.com/sutantodadang/luncur/internal/render"
 )
@@ -52,6 +54,13 @@ var clusterScoped = map[string]bool{
 type Client struct {
 	dyn dynamic.Interface
 	cs  kubernetes.Interface
+	cfg *rest.Config
+}
+
+// PodExecer runs a command inside a pod container. Faked in tests; the
+// real implementation streams over SPDY.
+type PodExecer interface {
+	ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdout, stderr io.Writer) error
 }
 
 // New builds a client from a kubeconfig path, or in-cluster config when
@@ -75,7 +84,7 @@ func New(kubeconfig string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{dyn: dyn, cs: cs}, nil
+	return &Client{dyn: dyn, cs: cs, cfg: cfg}, nil
 }
 
 func NewFromDynamic(dyn dynamic.Interface) *Client { return &Client{dyn: dyn} }
@@ -203,6 +212,25 @@ func (c *Client) AppPods(ctx context.Context, namespace, app string) ([]string, 
 // PodLogStream streams a pod's logs, optionally following new output.
 func (c *Client) PodLogStream(ctx context.Context, namespace, pod string, follow bool) (io.ReadCloser, error) {
 	return c.cs.CoreV1().Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Follow: follow}).Stream(ctx)
+}
+
+// ExecPod implements PodExecer via the pods/exec subresource.
+func (c *Client) ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdout, stderr io.Writer) error {
+	if c.cfg == nil {
+		return fmt.Errorf("exec unavailable: no rest config (test client?)")
+	}
+	req := c.cs.CoreV1().RESTClient().Post().
+		Resource("pods").Namespace(namespace).Name(pod).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: container, Command: cmd,
+			Stdout: true, Stderr: true,
+		}, scheme.ParameterCodec)
+	exec, err := remotecommand.NewSPDYExecutor(c.cfg, "POST", req.URL())
+	if err != nil {
+		return err
+	}
+	return exec.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: stdout, Stderr: stderr})
 }
 
 // WaitDeployment polls until the Deployment has at least one ready replica
