@@ -30,6 +30,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(scaleCmd())
 	root.AddCommand(destroyCmd())
 	root.AddCommand(envCmd())
+	root.AddCommand(editCmd())
 	return root
 }
 

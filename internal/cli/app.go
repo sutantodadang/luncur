@@ -77,6 +77,27 @@ func appCmd() *cobra.Command {
 	info.Flags().StringVar(&infoProject, "project", "", "project name")
 	info.MarkFlagRequired("project")
 
-	cmd.AddCommand(create, list, info)
+	var rawProject string
+	raw := &cobra.Command{
+		Use:   "raw <name>",
+		Short: "Print the rendered manifest for an app",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			out, err := c.Raw(rawProject, args[0], false)
+			if err != nil {
+				return err
+			}
+			cmd.Print(string(out))
+			return nil
+		},
+	}
+	raw.Flags().StringVar(&rawProject, "project", "", "project name")
+	raw.MarkFlagRequired("project")
+
+	cmd.AddCommand(create, list, info, raw)
 	return cmd
 }
