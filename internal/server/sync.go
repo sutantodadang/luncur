@@ -20,23 +20,45 @@ func hostFor(app, externalIP string) string {
 	return app + "." + strings.ReplaceAll(externalIP, ".", "-") + ".sslip.io"
 }
 
-// renderApp assembles the manifest set for one app: unseals its env vars,
-// loads its overrides, and renders against imageRef.
-func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOverrides bool) (render.Rendered, error) {
+// plainEnv unseals an app's stored env vars to plaintext. Shared by
+// renderApp and addon attach's collision check (addonEnv).
+func (s *server) plainEnv(a store.App) (map[string]string, error) {
 	sealedEnv, err := s.st.ListEnv(a.ID)
 	if err != nil {
-		return render.Rendered{}, fmt.Errorf("list env: %w", err)
+		return nil, fmt.Errorf("list env: %w", err)
 	}
 	if len(sealedEnv) > 0 && s.sealer == nil {
-		return render.Rendered{}, fmt.Errorf("cannot unseal env: no sealer configured")
+		return nil, fmt.Errorf("cannot unseal env: no sealer configured")
 	}
 	env := make(map[string]string, len(sealedEnv))
 	for k, sealed := range sealedEnv {
 		plain, err := s.sealer.Open(sealed)
 		if err != nil {
-			return render.Rendered{}, fmt.Errorf("unseal env %q: %w", k, err)
+			return nil, fmt.Errorf("unseal env %q: %w", k, err)
 		}
 		env[k] = string(plain)
+	}
+	return env, nil
+}
+
+// renderApp assembles the manifest set for one app: unseals its env vars,
+// injects connection env for attached addons, loads its overrides, and
+// renders against imageRef.
+func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOverrides bool) (render.Rendered, error) {
+	env, err := s.plainEnv(a)
+	if err != nil {
+		return render.Rendered{}, err
+	}
+
+	addonOut, collisions, err := s.addonEnv(p, a, env)
+	if err != nil {
+		return render.Rendered{}, fmt.Errorf("addon env: %w", err)
+	}
+	for k, v := range addonOut {
+		env[k] = v
+	}
+	if len(collisions) > 0 {
+		log.Printf("app %s: addon env collides with user env, user wins: %s", a.Name, strings.Join(collisions, ", "))
 	}
 
 	overrides := map[string]string{}

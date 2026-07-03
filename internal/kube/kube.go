@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
 
+	"github.com/sutantodadang/luncur/internal/addon"
 	"github.com/sutantodadang/luncur/internal/render"
 )
 
@@ -160,6 +161,30 @@ func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) er
 		{"Service", app},
 		{"Ingress", app},
 		{"Secret", render.SecretName(app)},
+	}
+	for _, t := range targets {
+		err := c.dyn.Resource(gvrByKind[t.kind]).Namespace(namespace).Delete(
+			ctx, t.name, metav1.DeleteOptions{},
+		)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete %s/%s: %w", t.kind, t.name, err)
+		}
+	}
+	return nil
+}
+
+// DeleteAddonObjects removes an addon instance's StatefulSet, headless
+// Service, and credentials Secret, and (unless keepData) its PVC.
+// NotFound is fine — deletion must be idempotent.
+func (c *Client) DeleteAddonObjects(ctx context.Context, namespace, name string, keepData bool) error {
+	svcName := addon.ServiceName(name)
+	targets := []struct{ kind, name string }{
+		{"StatefulSet", svcName},
+		{"Service", svcName},
+		{"Secret", addon.SecretName(name)},
+	}
+	if !keepData {
+		targets = append(targets, struct{ kind, name string }{"PersistentVolumeClaim", "data-" + svcName + "-0"})
 	}
 	for _, t := range targets {
 		err := c.dyn.Resource(gvrByKind[t.kind]).Namespace(namespace).Delete(
