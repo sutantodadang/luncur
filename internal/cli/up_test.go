@@ -15,6 +15,10 @@ func TestUpDefaults(t *testing.T) {
 	if img != "ghcr.io/sutantodadang/luncur:latest" { // version == "dev" in tests
 		t.Fatalf("image default = %q", img)
 	}
+	certProvider, _ := cmd.Flags().GetString("cert-provider")
+	if certProvider != "builtin" {
+		t.Fatalf("cert-provider default = %q, want builtin", certProvider)
+	}
 }
 
 func TestUpRefusesNonLinuxWithoutKubeconfig(t *testing.T) {

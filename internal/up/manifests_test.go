@@ -43,6 +43,7 @@ func TestLuncurObjects(t *testing.T) {
 		`"nodePort":30022`,
 		`"luncur-ssh"`,
 		`"containerPort":2222`,
+		`"--cert-provider"`,
 	} {
 		if !strings.Contains(all, want) {
 			t.Fatalf("manifests missing %q", want)

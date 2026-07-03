@@ -31,6 +31,8 @@ type Params struct {
 	Image        string // luncur server image
 	ExternalIP   string
 	BuilderImage string
+	CertProvider string // builtin|traefik|cert-manager
+	ACMEEmail    string
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -81,6 +83,22 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 		return nil, err
 	}
 
+	args := []string{
+		"serve",
+		"--listen", ":8080",
+		"--db", "/var/lib/luncur/luncur.db",
+		"--data-dir", "/var/lib/luncur/data",
+		"--secret-key-file", "/var/lib/luncur/luncur.key",
+		"--external-ip", p.ExternalIP,
+		"--builder-image", p.BuilderImage,
+		"--bootstrap-admin", "$(BOOTSTRAP_ADMIN)",
+		"--ssh-listen", ":2222",
+		"--cert-provider", p.CertProvider,
+	}
+	if p.ACMEEmail != "" {
+		args = append(args, "--acme-email", p.ACMEEmail)
+	}
+
 	dep := &appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{
@@ -98,17 +116,7 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 					Containers: []corev1.Container{{
 						Name:  "luncur",
 						Image: p.Image,
-						Args: []string{
-							"serve",
-							"--listen", ":8080",
-							"--db", "/var/lib/luncur/luncur.db",
-							"--data-dir", "/var/lib/luncur/data",
-							"--secret-key-file", "/var/lib/luncur/luncur.key",
-							"--external-ip", p.ExternalIP,
-							"--builder-image", p.BuilderImage,
-							"--bootstrap-admin", "$(BOOTSTRAP_ADMIN)",
-							"--ssh-listen", ":2222",
-						},
+						Args:  args,
 						Env: []corev1.EnvVar{{
 							Name: "BOOTSTRAP_ADMIN",
 							ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{

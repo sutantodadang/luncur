@@ -46,6 +46,7 @@ func serveCmd() *cobra.Command {
 	var dbPath, listen, bootstrap, kubeconfig, secretKeyFile, externalIP string
 	var dataDir, builderImage, registryHost string
 	var sshListen, sshHostKeyFile string
+	var certProvider, acmeEmail string
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the luncur API server",
@@ -70,6 +71,17 @@ func serveCmd() *cobra.Command {
 				return err
 			}
 
+			if certProvider != "" {
+				if err := st.SetSetting("cert_provider", certProvider); err != nil {
+					return err
+				}
+			}
+			if acmeEmail != "" {
+				if err := st.SetSetting("acme_email", acmeEmail); err != nil {
+					return err
+				}
+			}
+
 			var kubeClient *kube.Client
 			kc, err := kube.New(kubeconfig)
 			if err != nil {
@@ -85,8 +97,29 @@ func serveCmd() *cobra.Command {
 				}
 			}
 
+			if kubeClient != nil {
+				provider, err := st.GetSetting("cert_provider")
+				if err != nil || provider == "" {
+					provider = "builtin"
+				}
+				gv := ""
+				switch provider {
+				case "traefik":
+					gv = "helm.cattle.io/v1"
+				case "cert-manager":
+					gv = "cert-manager.io/v1"
+				}
+				if gv != "" {
+					if ok, err := kubeClient.HasGroupVersion(context.Background(), gv); err != nil {
+						log.Printf("warning: checking cert-provider %q prerequisites: %v", provider, err)
+					} else if !ok {
+						log.Printf("warning: cert-provider %q selected but %s is not available on this cluster — certs will not be issued until it is installed", provider, gv)
+					}
+				}
+			}
+
 			log.Printf("luncur serve listening on %s (db %s)", listen, dbPath)
-			handler, pushBackend, _ := server.NewWithBackend(server.Deps{
+			handler, pushBackend, startCerts := server.NewWithBackend(server.Deps{
 				Store:        st,
 				Sealer:       sealer,
 				Kube:         kubeClient,
@@ -138,6 +171,7 @@ func serveCmd() *cobra.Command {
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			startCerts(ctx)
 
 			select {
 			case err := <-errCh:
@@ -167,5 +201,7 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&registryHost, "registry-host", "registry.luncur-system:5000", "in-cluster registry host:port")
 	cmd.Flags().StringVar(&sshListen, "ssh-listen", ":2222", "git-push SSH listen address (empty disables)")
 	cmd.Flags().StringVar(&sshHostKeyFile, "ssh-hostkey-file", "", "SSH host key path (default luncur_host_key beside --db)")
+	cmd.Flags().StringVar(&certProvider, "cert-provider", "", "TLS cert provider to persist: builtin, traefik, or cert-manager (empty keeps the existing setting)")
+	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "email for Let's Encrypt account registration (empty keeps the existing setting)")
 	return cmd
 }
