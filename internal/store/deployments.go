@@ -131,6 +131,14 @@ func (s *Store) LatestDeployment(appID int64) (Deployment, error) {
 	return d, err
 }
 
+// CountDeployments returns an app's total deploy count (history table cap
+// notwithstanding — COUNT is exact).
+func (s *Store) CountDeployments(appID int64) (int64, error) {
+	var n int64
+	err := s.db.QueryRow(`SELECT count(*) FROM deployments WHERE app_id = ?`, appID).Scan(&n)
+	return n, err
+}
+
 // ListDeployments returns an app's deploy history, newest first.
 // ponytail: hard cap 50 — paging when someone actually has 51 deploys to read.
 func (s *Store) ListDeployments(appID int64) ([]Deployment, error) {

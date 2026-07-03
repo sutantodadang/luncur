@@ -79,3 +79,33 @@ func TestRollbackDeployment(t *testing.T) {
 		t.Fatalf("plain row rolled_back_from = %d err=%v", got.RolledBackFrom, err)
 	}
 }
+
+func TestCountDeployments(t *testing.T) {
+	st := openTest(t)
+	p, _ := st.CreateProject("web")
+	a, _ := st.CreateApp(p.ID, "api", 8080)
+	empty, _ := st.CreateApp(p.ID, "empty", 8081)
+
+	if _, err := st.CreateDeployment(a.ID, "failed", "img:1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateDeployment(a.ID, "live", "img:2", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := st.CountDeployments(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("count = %d, want 2", n)
+	}
+
+	n, err = st.CountDeployments(empty.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("count = %d, want 0", n)
+	}
+}
