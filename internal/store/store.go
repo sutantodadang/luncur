@@ -54,15 +54,22 @@ func (s *Store) DB() *sql.DB { return s.db }
 // migrate adds columns introduced after a table first shipped; schema.sql
 // only creates missing tables, so pre-existing DBs need explicit ALTERs.
 func migrate(db *sql.DB) error {
-	var n int
-	if err := db.QueryRow(
-		`SELECT count(*) FROM pragma_table_info('api_tokens') WHERE name = 'expires_at'`,
-	).Scan(&n); err != nil {
-		return err
-	}
-	if n == 0 {
-		if _, err := db.Exec(`ALTER TABLE api_tokens ADD COLUMN expires_at TEXT`); err != nil {
+	for _, col := range []struct{ table, name, ddl string }{
+		{"api_tokens", "expires_at", `ALTER TABLE api_tokens ADD COLUMN expires_at TEXT`},
+		{"domains", "cert_status", `ALTER TABLE domains ADD COLUMN cert_status TEXT NOT NULL DEFAULT 'none'`},
+		{"domains", "cert_error", `ALTER TABLE domains ADD COLUMN cert_error TEXT NOT NULL DEFAULT ''`},
+		{"domains", "cert_expires_at", `ALTER TABLE domains ADD COLUMN cert_expires_at TEXT NOT NULL DEFAULT ''`},
+	} {
+		var n int
+		if err := db.QueryRow(
+			`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, col.table, col.name,
+		).Scan(&n); err != nil {
 			return err
+		}
+		if n == 0 {
+			if _, err := db.Exec(col.ddl); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
