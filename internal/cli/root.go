@@ -24,6 +24,12 @@ func newRoot() *cobra.Command {
 	root.AddCommand(whoamiCmd())
 	root.AddCommand(userCmd())
 	root.AddCommand(serveCmd())
+	root.AddCommand(projectCmd())
+	root.AddCommand(appCmd())
+	root.AddCommand(deployCmd())
+	root.AddCommand(scaleCmd())
+	root.AddCommand(destroyCmd())
+	root.AddCommand(envCmd())
 	return root
 }
 

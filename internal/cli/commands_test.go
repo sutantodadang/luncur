@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/server"
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -21,7 +22,11 @@ func testEnv(t *testing.T) *httptest.Server {
 	if _, err := st.CreateUser("root@b.co", "pw123456", "admin"); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(server.New(server.Deps{Store: st}))
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(server.New(server.Deps{Store: st, Sealer: sealer}))
 	t.Cleanup(func() { srv.Close(); st.Close() })
 	return srv
 }
