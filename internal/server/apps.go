@@ -141,8 +141,9 @@ func (s *server) handleDeleteApp(w http.ResponseWriter, r *http.Request, u store
 // handleDeployApp dispatches on the request shape: a multipart body carries
 // a source tarball for an async build (Job -> wait -> apply); a JSON body
 // with a non-empty "image" is the synchronous prebuilt-image path (kept
-// byte-for-byte compatible with the pre-build-pipeline behavior); anything
-// else is a bad request, unless/until Task 6 wires git-source apps.
+// byte-for-byte compatible with the pre-build-pipeline behavior); a git-source
+// app (App.SourceType == "git") with neither triggers an async build cloning
+// from its configured repo; anything else is a bad request.
 func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.requireProject(w, u, r.PathValue("project"))
 	if !ok {
@@ -207,9 +208,21 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	// Task 6 adds App.SourceType; git-source deploy wired then. Until
-	// then, a deploy request with no image and no tarball has no source
-	// to build from.
+	if a.SourceType == "git" {
+		if s.src == nil {
+			writeError(w, http.StatusServiceUnavailable, "build_unavailable", "server has no data directory configured")
+			return
+		}
+		d, err := s.st.CreateDeployment(a.ID, "building", "", u.ID)
+		if err != nil {
+			log.Printf("create deployment: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		s.startBuild(p, a, d)
+		writeJSON(w, http.StatusAccepted, map[string]any{"deployment_id": d.ID, "status": "building"})
+		return
+	}
 	writeError(w, http.StatusBadRequest, "bad_request", "provide a source tarball or an image")
 }
 

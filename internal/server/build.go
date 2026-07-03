@@ -59,11 +59,10 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 		DataPVC:      s.dataPVC,
 		ImageRef:     imageRef,
 		RegistryHost: s.registryHost,
-		// Task 6 adds App.SourceType/GitURL/GitBranch; wire real values
-		// then. Until then every build is a tarball build: the Job reads
-		// the uploaded tarball from the shared data volume.
-		SourceType: "tarball",
-		DeployID:   d.ID,
+		SourceType:   a.SourceType,
+		GitURL:       a.GitURL,
+		GitBranch:    a.GitBranch,
+		DeployID:     d.ID,
 	})
 	if err != nil {
 		return fail(err)
