@@ -85,6 +85,11 @@ func (s *Store) ListAddons(projectID int64) ([]Addon, error) {
 	return s.listAddons(`SELECT `+addonCols+` FROM addons WHERE project_id = ? ORDER BY id`, projectID)
 }
 
+// AllAddons returns every addon across all projects, ordered by id.
+func (s *Store) AllAddons() ([]Addon, error) {
+	return s.listAddons(`SELECT ` + addonCols + ` FROM addons ORDER BY id`)
+}
+
 func (s *Store) AddonsForApp(appID int64) ([]Addon, error) {
 	return s.listAddons(
 		`SELECT a.id, a.project_id, a.type, a.name, a.version, a.size_gb, a.creds_enc, a.created_at

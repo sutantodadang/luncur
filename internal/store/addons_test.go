@@ -80,3 +80,26 @@ func TestAddonLifecycle(t *testing.T) {
 		t.Fatalf("second delete: %v", err)
 	}
 }
+
+func TestAllAddons(t *testing.T) {
+	s := openTest(t)
+	p1, _ := s.CreateProject("proj1")
+	p2, _ := s.CreateProject("proj2")
+
+	a1, err := s.CreateAddon(p1.ID, "postgres", "db1", "16", 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2, err := s.CreateAddon(p2.ID, "redis", "cache1", "7", 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := s.AllAddons()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || all[0].ID != a1.ID || all[1].ID != a2.ID {
+		t.Fatalf("all addons = %+v", all)
+	}
+}
