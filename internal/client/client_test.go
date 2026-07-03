@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/server"
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -16,7 +17,11 @@ func testAPI(t *testing.T) (*httptest.Server, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(server.New(server.Deps{Store: st}))
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(server.New(server.Deps{Store: st, Sealer: sealer}))
 	t.Cleanup(func() { srv.Close(); st.Close() })
 	return srv, st
 }
@@ -57,5 +62,37 @@ func TestClientSurfacesAPIErrors(t *testing.T) {
 	_, err := c.Login("ghost@b.co", "nope")
 	if err == nil || !strings.Contains(err.Error(), "auth_failed") {
 		t.Fatalf("want auth_failed in error, got %v", err)
+	}
+}
+
+func TestClientProjectAppEnvRawFlow(t *testing.T) {
+	srv, st := testAPI(t)
+	st.CreateUser("root@b.co", "pw123456", "admin")
+	c := New(srv.URL, "")
+	tok, _ := c.Login("root@b.co", "pw123456")
+	c = New(srv.URL, tok)
+
+	if _, err := c.CreateProject("web"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CreateApp("web", "api", 3000); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.EnvSet("web", "api", "K", "v"); err != nil {
+		t.Fatal(err)
+	}
+	env, err := c.EnvList("web", "api")
+	if err != nil || env["K"] != "v" {
+		t.Fatalf("env: %v %v", env, err)
+	}
+	if err := c.PutOverride("web", "api", "Deployment", `{"metadata":{"labels":{"t":"x"}}}`); err != nil {
+		t.Fatal(err)
+	}
+	y, err := c.Raw("web", "api", false)
+	if err != nil || !strings.Contains(string(y), "t: x") {
+		t.Fatalf("raw: %v\n%s", err, y)
+	}
+	if err := c.DeleteApp("web", "api"); err == nil || !strings.Contains(err.Error(), "kubernetes_unavailable") {
+		t.Fatalf("want kubernetes_unavailable, got %v", err)
 	}
 }
