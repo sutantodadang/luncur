@@ -166,7 +166,7 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	rendered, err := s.renderApp(p, a, req.Image)
+	rendered, err := s.renderApp(p, a, req.Image, true)
 	if err == nil {
 		if err = s.kube.EnsureNamespace(r.Context(), p.Namespace); err == nil {
 			err = s.kube.Apply(r.Context(), p.Namespace, rendered.Objects)

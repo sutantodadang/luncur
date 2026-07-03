@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/sutantodadang/luncur/internal/render"
@@ -19,7 +20,7 @@ func hostFor(app, externalIP string) string {
 
 // renderApp assembles the manifest set for one app: unseals its env vars,
 // loads its overrides, and renders against imageRef.
-func (s *server) renderApp(p store.Project, a store.App, imageRef string) (render.Rendered, error) {
+func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOverrides bool) (render.Rendered, error) {
 	sealedEnv, err := s.st.ListEnv(a.ID)
 	if err != nil {
 		return render.Rendered{}, fmt.Errorf("list env: %w", err)
@@ -36,9 +37,12 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string) (rende
 		env[k] = string(plain)
 	}
 
-	overrides, err := s.st.Overrides(a.ID)
-	if err != nil {
-		return render.Rendered{}, fmt.Errorf("load overrides: %w", err)
+	overrides := map[string]string{}
+	if withOverrides {
+		overrides, err = s.st.Overrides(a.ID)
+		if err != nil {
+			return render.Rendered{}, fmt.Errorf("load overrides: %w", err)
+		}
 	}
 
 	in := render.Input{
@@ -69,7 +73,7 @@ func (s *server) syncApp(ctx context.Context, p store.Project, a store.App) erro
 		return nil
 	}
 
-	rendered, err := s.renderApp(p, a, d.ImageRef)
+	rendered, err := s.renderApp(p, a, d.ImageRef, true)
 	if err != nil {
 		return err
 	}
@@ -77,4 +81,27 @@ func (s *server) syncApp(ctx context.Context, p store.Project, a store.App) erro
 		return err
 	}
 	return s.kube.Apply(ctx, p.Namespace, rendered.Objects)
+}
+
+// syncIfLive re-applies an app's manifests if kube is configured and the
+// app's latest deployment is live. Used after env/override mutations so
+// running apps pick up the change without requiring an explicit deploy.
+// Any error is logged, never surfaced — these are opportunistic syncs.
+func (s *server) syncIfLive(ctx context.Context, p store.Project, a store.App) {
+	if s.kube == nil {
+		return
+	}
+	d, err := s.st.LatestDeployment(a.ID)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			log.Printf("latest deployment: %v", err)
+		}
+		return
+	}
+	if d.Status != "live" {
+		return
+	}
+	if err := s.syncApp(ctx, p, a); err != nil {
+		log.Printf("sync app: %v", err)
+	}
 }
