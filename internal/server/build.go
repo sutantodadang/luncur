@@ -100,5 +100,8 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 	if err := s.kube.Apply(ctx, p.Namespace, rendered.Objects); err != nil {
 		return fail(err)
 	}
-	return s.st.SetDeploymentStatus(d.ID, "live")
+	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
+		log.Printf("mark deploy %d live (kube apply already succeeded): %v", d.ID, err)
+	}
+	return nil
 }

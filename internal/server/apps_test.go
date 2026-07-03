@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -197,7 +198,7 @@ func TestDeployMultipartBuildsAsync(t *testing.T) {
 		return true, &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "batch/v1", "kind": "Job",
 			"metadata": map[string]any{"name": a.(ktesting.GetAction).GetName(), "namespace": "luncur-system"},
-			"status":   map[string]any{},
+			"status":   map[string]any{"failed": int64(1)},
 		}}, nil
 	})
 	sealer, err := secret.New(make([]byte, 32))
@@ -245,12 +246,28 @@ func TestDeployMultipartBuildsAsync(t *testing.T) {
 	}
 	depID := int64(out["deployment_id"].(float64))
 
-	got, err := st.GetDeployment(depID)
-	if err != nil {
-		t.Fatal(err)
+	// The 202 response above already proved the synchronous state is
+	// "building". The async build goroutine then runs; the fake job reports
+	// failed, so poll until the deployment reaches its terminal state. This
+	// also guarantees the goroutine finishes its store writes before
+	// t.Cleanup closes the store (no write-to-closed-DB race, no leak).
+	var got store.Deployment
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, err = st.GetDeployment(depID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status == "failed" || got.Status == "live" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("deployment did not reach terminal status, stuck at %q", got.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	if got.Status != "building" {
-		t.Fatalf("row status=%q want building", got.Status)
+	if got.Status != "failed" {
+		t.Fatalf("row status=%q want failed (fake job failed)", got.Status)
 	}
 
 	src, err := build.NewSource(dataDir)
