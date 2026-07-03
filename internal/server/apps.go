@@ -43,14 +43,22 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
-		Port int    `json:"port"`
+		Name      string `json:"name"`
+		Port      int    `json:"port"`
+		GitURL    string `json:"git_url"`
+		GitBranch string `json:"git_branch"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	a, err := s.st.CreateApp(p.ID, req.Name, req.Port)
+	var a store.App
+	var err error
+	if req.GitURL != "" {
+		a, err = s.st.CreateGitApp(p.ID, req.Name, req.Port, req.GitURL, req.GitBranch)
+	} else {
+		a, err = s.st.CreateApp(p.ID, req.Name, req.Port)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			writeError(w, http.StatusConflict, "app_exists", "app already exists")

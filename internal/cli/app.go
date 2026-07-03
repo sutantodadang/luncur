@@ -1,6 +1,10 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/sutantodadang/luncur/internal/client"
+)
 
 func appCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -10,6 +14,7 @@ func appCmd() *cobra.Command {
 
 	var project string
 	var port int
+	var gitURL, branch string
 
 	create := &cobra.Command{
 		Use:   "create <name>",
@@ -20,7 +25,12 @@ func appCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			a, err := c.CreateApp(project, args[0], port)
+			var a client.AppInfo
+			if gitURL != "" {
+				a, err = c.CreateGitApp(project, args[0], port, gitURL, branch)
+			} else {
+				a, err = c.CreateApp(project, args[0], port)
+			}
 			if err != nil {
 				return err
 			}
@@ -32,6 +42,8 @@ func appCmd() *cobra.Command {
 	create.MarkFlagRequired("project")
 	create.Flags().IntVar(&port, "port", 0, "container port")
 	create.MarkFlagRequired("port")
+	create.Flags().StringVar(&gitURL, "git-url", "", "git repo URL (creates a git-source app)")
+	create.Flags().StringVar(&branch, "branch", "", "git branch (default: main)")
 
 	var listProject string
 	list := &cobra.Command{

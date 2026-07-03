@@ -103,6 +103,29 @@ func TestAppLifecycle(t *testing.T) {
 	}
 }
 
+func TestCreateGitApp(t *testing.T) {
+	srv, st := testServer(t) // no kube needed for create-only
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"g","port":8080,"git_url":"https://x/y.git"}`)
+	if resp.StatusCode != 201 {
+		t.Fatalf("create git app: want 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "g")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SourceType != "git" {
+		t.Fatalf("source type: want git, got %q", a.SourceType)
+	}
+	if a.GitURL != "https://x/y.git" {
+		t.Fatalf("git url: got %q", a.GitURL)
+	}
+}
+
 func appID(t *testing.T, st *store.Store, project, app string) int64 {
 	t.Helper()
 	p, err := st.GetProject(project)
