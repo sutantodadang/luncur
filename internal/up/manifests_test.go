@@ -38,6 +38,16 @@ func TestLuncurObjects(t *testing.T) {
 			t.Fatalf("manifests missing %q", want)
 		}
 	}
+	for _, want := range []string{
+		`"--ssh-listen"`,
+		`"nodePort":30022`,
+		`"luncur-ssh"`,
+		`"containerPort":2222`,
+	} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("manifests missing %q", want)
+		}
+	}
 	if PanelHost("1.2.3.4") != "panel.1.2.3.4.sslip.io" {
 		t.Fatal("PanelHost")
 	}
