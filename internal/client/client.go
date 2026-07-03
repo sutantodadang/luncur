@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -88,4 +90,150 @@ func (c *Client) CreateUser(email, password, role string) (UserInfo, error) {
 	err := c.do("POST", "/v1/users",
 		map[string]string{"email": email, "password": password, "role": role}, &out)
 	return out, err
+}
+
+// doRaw sends a request with raw byte body and returns raw byte response.
+// Non-2xx responses still decode the JSON error envelope.
+func (c *Client) doRaw(method, path string, body []byte) ([]byte, error) {
+	req, err := http.NewRequest(method, c.base+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		var env struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(respBody, &env) == nil && env.Error.Code != "" {
+			return nil, fmt.Errorf("%s (%s)", env.Error.Message, env.Error.Code)
+		}
+		return nil, fmt.Errorf("server returned %s", resp.Status)
+	}
+	return respBody, nil
+}
+
+type ProjectInfo struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type AppInfo struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Port     int    `json:"port"`
+	Replicas int    `json:"replicas"`
+	URL      string `json:"url"`
+	Status   string `json:"status,omitempty"`
+	Image    string `json:"image,omitempty"`
+}
+
+type DeployResult struct {
+	DeploymentID int64  `json:"deployment_id"`
+	Status       string `json:"status"`
+	URL          string `json:"url"`
+}
+
+func (c *Client) CreateProject(name string) (ProjectInfo, error) {
+	var out ProjectInfo
+	err := c.do("POST", "/v1/projects",
+		map[string]string{"name": name}, &out)
+	return out, err
+}
+
+func (c *Client) ListProjects() ([]ProjectInfo, error) {
+	var out []ProjectInfo
+	err := c.do("GET", "/v1/projects", nil, &out)
+	return out, err
+}
+
+func (c *Client) AddMember(project, email string) error {
+	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/members",
+		map[string]string{"email": email}, nil)
+}
+
+func (c *Client) CreateApp(project, name string, port int) (AppInfo, error) {
+	var out AppInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
+		map[string]interface{}{"name": name, "port": port}, &out)
+	return out, err
+}
+
+func (c *Client) ListApps(project string) ([]AppInfo, error) {
+	var out []AppInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps", nil, &out)
+	return out, err
+}
+
+func (c *Client) GetApp(project, app string) (AppInfo, error) {
+	var out AppInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app), nil, &out)
+	return out, err
+}
+
+func (c *Client) DeleteApp(project, app string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app), nil, nil)
+}
+
+func (c *Client) Deploy(project, app, image string) (DeployResult, error) {
+	var out DeployResult
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/deploy",
+		map[string]string{"image": image}, &out)
+	return out, err
+}
+
+func (c *Client) Scale(project, app string, replicas int) error {
+	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/scale",
+		map[string]int{"replicas": replicas}, nil)
+}
+
+func (c *Client) EnvSet(project, app, key, value string) error {
+	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env",
+		map[string]string{"key": key, "value": value}, nil)
+}
+
+func (c *Client) EnvUnset(project, app, key string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env/"+url.PathEscape(key), nil, nil)
+}
+
+func (c *Client) EnvList(project, app string) (map[string]string, error) {
+	out := make(map[string]string)
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env", nil, &out)
+	return out, err
+}
+
+func (c *Client) Raw(project, app string, base bool) ([]byte, error) {
+	path := "/v1/projects/" + url.PathEscape(project) + "/apps/" + url.PathEscape(app) + "/raw"
+	if base {
+		path += "?base=1"
+	}
+	return c.doRaw("GET", path, nil)
+}
+
+func (c *Client) PutOverride(project, app, kind, patchJSON string) error {
+	_, err := c.doRaw("PUT",
+		"/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/overrides/"+url.PathEscape(kind),
+		[]byte(patchJSON))
+	return err
+}
+
+func (c *Client) DeleteOverride(project, app, kind string) error {
+	_, err := c.doRaw("DELETE",
+		"/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/overrides/"+url.PathEscape(kind),
+		nil)
+	return err
 }
