@@ -97,6 +97,9 @@ func (s *server) imageInRegistry(ctx context.Context, ref string) (bool, error) 
 // *errRegistryCheck) that each caller maps to its own response shape; any
 // other error is an unexpected internal failure.
 func (s *server) rollback(ctx context.Context, p store.Project, a store.App, u store.User, deployID int64) (store.Deployment, error) {
+	if a.Ejected {
+		return store.Deployment{}, errAppEjected
+	}
 	target, err := s.rollbackTarget(a, deployID)
 	if err != nil {
 		return store.Deployment{}, err
@@ -147,6 +150,8 @@ func (s *server) handleRollback(w http.ResponseWriter, r *http.Request, u store.
 		var missing *errImageMissing
 		var regErr *errRegistryCheck
 		switch {
+		case errors.Is(err, errAppEjected):
+			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, "not_found", "no such deployment for this app")
 		case errors.Is(err, errNoRollbackTarget):

@@ -391,6 +391,8 @@ func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.U
 	if _, err := s.scaleApp(r.Context(), p, a, replicas); err != nil {
 		var re *scaleReplicasError
 		switch {
+		case errors.Is(err, errAppEjected):
+			http.Error(w, err.Error(), http.StatusConflict)
 		case errors.Is(err, errKubeUnavailable):
 			http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
 		case errors.As(err, &re):
@@ -421,6 +423,8 @@ func (s *server) handleUIEnvSet(w http.ResponseWriter, r *http.Request, u store.
 	if err := s.setAppEnv(r.Context(), p, a, r.PostFormValue("key"), r.PostFormValue("value")); err != nil {
 		var ve *store.ValidationError
 		switch {
+		case errors.Is(err, errAppEjected):
+			http.Error(w, err.Error(), http.StatusConflict)
 		case errors.Is(err, errSealerUnavailable):
 			http.Error(w, "sealer is not configured", http.StatusServiceUnavailable)
 		case errors.As(err, &ve):
@@ -449,12 +453,15 @@ func (s *server) handleUIEnvUnset(w http.ResponseWriter, r *http.Request, u stor
 	}
 
 	if err := s.unsetAppEnv(r.Context(), p, a, r.PostFormValue("key")); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		switch {
+		case errors.Is(err, errAppEjected):
+			http.Error(w, err.Error(), http.StatusConflict)
+		case errors.Is(err, store.ErrNotFound):
 			http.Error(w, "no such env var", http.StatusNotFound)
-			return
+		default:
+			log.Printf("ui unset env: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
-		log.Printf("ui unset env: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	uiRedirect(w, r, p, a)
@@ -480,6 +487,10 @@ func (s *server) handleUIDomainAdd(w http.ResponseWriter, r *http.Request, u sto
 
 	_, warning, err := s.addDomain(r.Context(), p, a, r.PostFormValue("hostname"))
 	if err != nil {
+		if errors.Is(err, errAppEjected) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -499,6 +510,10 @@ func (s *server) handleUIDomainDelete(w http.ResponseWriter, r *http.Request, u 
 	}
 	a, ok := s.uiApp(w, r, p)
 	if !ok {
+		return
+	}
+	if a.Ejected {
+		http.Error(w, errAppEjected.Error(), http.StatusConflict)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -615,6 +630,10 @@ func (s *server) handleUIAddonAttach(w http.ResponseWriter, r *http.Request, u s
 
 	warning, err := s.attachAddon(r.Context(), p, ad, a.Name)
 	if err != nil {
+		if errors.Is(err, errAppEjected) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -725,6 +744,8 @@ func (s *server) handleUIRollback(w http.ResponseWriter, r *http.Request, u stor
 		var missing *errImageMissing
 		var regErr *errRegistryCheck
 		switch {
+		case errors.Is(err, errAppEjected):
+			http.Error(w, err.Error(), http.StatusConflict)
 		case errors.Is(err, store.ErrNotFound):
 			http.Error(w, "no such deployment for this app", http.StatusNotFound)
 		case errors.Is(err, errNoRollbackTarget):
@@ -1013,6 +1034,10 @@ func (s *server) handleUIEditPost(w http.ResponseWriter, r *http.Request, u stor
 	}
 
 	if err := s.setOverride(r.Context(), p, a, kind, patch); err != nil {
+		if errors.Is(err, errAppEjected) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		var ve *store.ValidationError
 		msg := "internal error"
 		if errors.As(err, &ve) {

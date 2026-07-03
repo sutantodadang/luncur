@@ -65,6 +65,9 @@ func domainJSON(d store.Domain, warning string) map[string]any {
 // manager. Returns the DNS warning ("" when all good); a non-nil error means
 // the store rejected the hostname (invalid or duplicate).
 func (s *server) addDomain(ctx context.Context, p store.Project, a store.App, hostname string) (store.Domain, string, error) {
+	if a.Ejected {
+		return store.Domain{}, "", errAppEjected
+	}
 	d, err := s.st.AddDomain(a.ID, hostname)
 	if err != nil {
 		return store.Domain{}, "", err
@@ -100,6 +103,10 @@ func (s *server) handleAddDomain(w http.ResponseWriter, r *http.Request, u store
 	}
 	d, warning, err := s.addDomain(r.Context(), p, a, req.Hostname)
 	if err != nil {
+		if errors.Is(err, errAppEjected) {
+			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
@@ -137,6 +144,9 @@ func (s *server) handleDeleteDomain(w http.ResponseWriter, r *http.Request, u st
 	if !ok {
 		return
 	}
+	if s.refuseEjected(w, a) {
+		return
+	}
 	if err := s.st.DeleteDomain(a.ID, r.PathValue("hostname")); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "no such domain")
 		return
@@ -156,6 +166,9 @@ func (s *server) handleRetryDomain(w http.ResponseWriter, r *http.Request, u sto
 	}
 	a, ok := s.requireApp(w, p, r.PathValue("app"))
 	if !ok {
+		return
+	}
+	if s.refuseEjected(w, a) {
 		return
 	}
 	if s.certProviderName() != "builtin" {

@@ -43,6 +43,9 @@ func (b *PushBackend) Branch(u store.User, project, app string) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("internal error")
 	}
+	if a.Ejected {
+		return "", errAppEjected
+	}
 	if a.GitBranch != "" {
 		return a.GitBranch, nil
 	}
