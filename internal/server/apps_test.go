@@ -1,14 +1,22 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"os"
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	ktesting "k8s.io/client-go/testing"
 
+	"github.com/sutantodadang/luncur/internal/build"
 	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/store"
@@ -166,5 +174,131 @@ func TestMemberForbiddenOnForeignProject(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 403 {
 		t.Fatalf("want 403, got %d", resp.StatusCode)
+	}
+}
+
+// TestDeployMultipartBuildsAsync exercises the tarball-upload deploy path:
+// 202 building, tarball persisted to the data dir, and the deployment row
+// left in "building" status. The fake Job's Get reactor reports neither
+// succeeded nor failed, so the background runBuild goroutine parks in
+// WaitJob's poll loop for the lifetime of this test — the row is
+// deterministically still "building" by the time we assert, without racing
+// the async completion.
+func TestDeployMultipartBuildsAsync(t *testing.T) {
+	st := newTestStore(t)
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	var actions []string
+	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		actions = append(actions, a.GetVerb()+" "+a.GetResource().Resource)
+		return true, nil, nil
+	})
+	dyn.PrependReactor("get", "jobs", func(a ktesting.Action) (bool, runtime.Object, error) {
+		return true, &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "batch/v1", "kind": "Job",
+			"metadata": map[string]any{"name": a.(ktesting.GetAction).GetName(), "namespace": "luncur-system"},
+			"status":   map[string]any{},
+		}}, nil
+	})
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	srv := newHTTPTest(t, Deps{Store: st, Kube: kube.NewFromDynamic(dyn), Sealer: sealer, ExternalIP: "1.2.3.4", DataDir: dataDir})
+
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("source", "src.tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw.Write([]byte("fake-tarball-bytes"))
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequest("POST", srv.URL+"/v1/projects/web/apps/api/deploy", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+admin)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("want 202, got %d", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out["status"] != "building" {
+		t.Fatalf("response status=%v want building", out["status"])
+	}
+	depID := int64(out["deployment_id"].(float64))
+
+	got, err := st.GetDeployment(depID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "building" {
+		t.Fatalf("row status=%q want building", got.Status)
+	}
+
+	src, err := build.NewSource(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(src.TarballPath(depID)); err != nil {
+		t.Fatalf("tarball not saved: %v", err)
+	}
+}
+
+// TestDeployLogsReturnsStoredBytes checks the logs endpoint reads back
+// whatever runBuild (or, here, the test directly) wrote to the deployment's
+// log path.
+func TestDeployLogsReturnsStoredBytes(t *testing.T) {
+	st := newTestStore(t)
+	dataDir := t.TempDir()
+	srv := newHTTPTest(t, Deps{Store: st, ExternalIP: "1.2.3.4", DataDir: dataDir})
+
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	id := appID(t, st, "web", "api")
+	d, err := st.CreateDeployment(id, "building", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	src, err := build.NewSource(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("line1\nline2\n")
+	if err := os.WriteFile(src.LogPath(d.ID), want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := doAuthed(t, "GET", fmt.Sprintf("%s/v1/projects/web/apps/api/deploys/%d/logs", srv.URL, d.ID), admin, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != string(want) {
+		t.Fatalf("logs=%q want %q", body, want)
 	}
 }

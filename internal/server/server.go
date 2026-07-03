@@ -2,8 +2,10 @@
 package server
 
 import (
+	"log"
 	"net/http"
 
+	"github.com/sutantodadang/luncur/internal/build"
 	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/store"
@@ -11,12 +13,19 @@ import (
 
 // Deps bundles server dependencies. Sealer and Kube may be nil (e.g. in
 // tests, or when kube is unavailable at boot); handlers that need them must
-// check via requireKube.
+// check via requireKube. DataDir enables source-build deploys: when set, a
+// build.Source is constructed and multipart tarball uploads are accepted.
 type Deps struct {
 	Store      *store.Store
 	Sealer     *secret.Sealer
 	Kube       *kube.Client
 	ExternalIP string
+
+	DataDir         string
+	BuilderImage    string
+	RegistryHost    string
+	SystemNamespace string
+	DataPVC         string
 }
 
 type server struct {
@@ -24,15 +33,65 @@ type server struct {
 	sealer     *secret.Sealer
 	kube       *kube.Client
 	externalIP string
+
+	src             *build.Source
+	builderImage    string
+	registryHost    string
+	systemNamespace string
+	dataPVC         string
 }
 
-// New builds the full API handler. Later plans add their routes here.
-func New(d Deps) http.Handler {
+// newServer wires all server fields (including build config defaults) but
+// does not build the route table — call handler() for that. Kept separate
+// so tests can obtain a *server and call unexported methods (e.g. runBuild)
+// directly.
+func newServer(d Deps) *server {
 	externalIP := d.ExternalIP
 	if externalIP == "" {
 		externalIP = "127.0.0.1"
 	}
-	s := &server{st: d.Store, sealer: d.Sealer, kube: d.Kube, externalIP: externalIP}
+	systemNamespace := d.SystemNamespace
+	if systemNamespace == "" {
+		systemNamespace = "luncur-system"
+	}
+	registryHost := d.RegistryHost
+	if registryHost == "" {
+		registryHost = "registry.luncur-system:5000"
+	}
+	builderImage := d.BuilderImage
+	if builderImage == "" {
+		builderImage = "luncur/builder:latest"
+	}
+	dataPVC := d.DataPVC
+	if dataPVC == "" {
+		dataPVC = "luncur-data"
+	}
+
+	s := &server{
+		st:              d.Store,
+		sealer:          d.Sealer,
+		kube:            d.Kube,
+		externalIP:      externalIP,
+		builderImage:    builderImage,
+		registryHost:    registryHost,
+		systemNamespace: systemNamespace,
+		dataPVC:         dataPVC,
+	}
+
+	if d.DataDir != "" {
+		src, err := build.NewSource(d.DataDir)
+		if err != nil {
+			log.Printf("build source init: %v", err)
+		} else {
+			s.src = src
+		}
+	}
+
+	return s
+}
+
+// handler builds the full API mux from an already-wired server.
+func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +108,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}", s.authed(s.handleGetApp))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}", s.authed(s.handleDeleteApp))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/deploy", s.authed(s.handleDeployApp))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/deploys/{id}", s.authed(s.handleGetDeploy))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/deploys/{id}/logs", s.authed(s.handleDeployLogs))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/scale", s.authed(s.handleScaleApp))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/env", s.authed(s.handleGetEnv))
 	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/env", s.authed(s.handleSetEnv))
@@ -64,6 +125,11 @@ func New(d Deps) http.Handler {
 	})
 
 	return mux
+}
+
+// New builds the full API handler. Later plans add their routes here.
+func New(d Deps) http.Handler {
+	return newServer(d).handler()
 }
 
 // requireKube writes a 503 and returns false when no kube client is
