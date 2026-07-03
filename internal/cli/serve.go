@@ -120,13 +120,14 @@ func serveCmd() *cobra.Command {
 
 			log.Printf("luncur serve listening on %s (db %s)", listen, dbPath)
 			handler, pushBackend, startCerts := server.NewWithBackend(server.Deps{
-				Store:        st,
-				Sealer:       sealer,
-				Kube:         kubeClient,
-				ExternalIP:   externalIP,
-				DataDir:      dataDir,
-				BuilderImage: builderImage,
-				RegistryHost: registryHost,
+				Store:         st,
+				Sealer:        sealer,
+				Kube:          kubeClient,
+				ExternalIP:    externalIP,
+				DataDir:       dataDir,
+				BuilderImage:  builderImage,
+				RegistryHost:  registryHost,
+				SecretKeyPath: keyFile,
 			})
 			srv := &http.Server{
 				Addr:              listen,
