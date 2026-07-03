@@ -3,9 +3,35 @@
 Tiny self-hosted PaaS on K3s. One Go binary, SQLite, deploys as simple as
 Heroku — with an escape hatch to the real Kubernetes objects.
 
-Status: Phase 1 done (Plan A); Phase 2 done (Plan B2); Phase 3 in progress (Plan C). Working today:
+Status: Phase 1 complete (Plans A-D). Working today:
 
-**Server:**
+## Install
+
+On a fresh Linux VPS:
+
+```sh
+curl -sfLo luncur https://github.com/sutantodadang/luncur/releases/latest/download/luncur-linux-amd64
+chmod +x luncur
+sudo ./luncur up
+```
+
+`luncur up` is a one-command installer: it installs K3s (pinned version),
+writes the containerd `registries.yaml` mirror for the in-cluster registry,
+applies luncur's own system infrastructure (namespace, registry, PVCs) and
+its own Deployment/Service/Ingress, waits for the rollout, and logs the CLI
+in. On first run it prints the generated admin email + password — **this is
+shown once, store it now**. Re-running `luncur up` is safe: every step is
+skip-or-repair (server-side apply), so it's also how you upgrade or repair
+an install.
+
+Flags:
+- `--ip` — public IP to advertise (default: detected from the node's
+  `ExternalIP`, falling back to `InternalIP`)
+- `--image` — luncur server image (default: `ghcr.io/sutantodadang/luncur:<version>`)
+- `--kubeconfig` — point at an existing cluster instead of installing K3s
+  (skips the K3s/registries host steps)
+
+**Server (manual, e.g. for local dev):**
 ```sh
 luncur serve --db luncur.db \
   --listen :8080 \
@@ -57,8 +83,11 @@ luncur app create myapp --project myproj --port 8080 \
   --git-url https://github.com/user/repo.git --branch main
 luncur deploy myapp --project myproj
 
-# View build logs for a specific deploy
-luncur logs myapp --project myproj --deploy 1
+# Follow build logs for a specific deploy
+luncur logs myapp --project myproj --deploy 1 -f
+
+# Stream runtime (pod) logs — omit --deploy
+luncur logs myapp --project myproj -f
 ```
 
 **Environment & editing:**
@@ -69,6 +98,23 @@ luncur env list myapp --project myproj
 luncur edit myapp Deployment --project myproj
 ```
 
+**Status:**
+```sh
+# List apps in a project (name + URL)
+luncur status --project myproj
+
+# Show one app's status (replicas, image, URL)
+luncur status myapp --project myproj
+```
+
+## Web UI
+
+After `luncur up`, the panel is served at `http://panel.<ip>.sslip.io/ui/`
+(login with the admin credentials printed by `luncur up`, or any user added
+via `luncur user add`). From there you can browse projects and apps, scale
+and edit env vars, trigger a deploy, and watch build/runtime logs stream
+live via Server-Sent Events — no CLI required.
+
 ## Build Pipeline
 
 When you run `luncur deploy` on a local source or git repository, the following happens: source is uploaded (tarball from local cwd or cloned from git URL) → a BuildKit Job runs in the `luncur-system` namespace, applying Nixpacks if no Dockerfile exists or using the Dockerfile if present → the resulting image is pushed to the in-cluster registry (default `registry.luncur-system:5000`) → app manifests are rendered and applied to Kubernetes → the app becomes live at `http://<app>.<ip>.sslip.io`. Build logs are streamed on demand via `luncur logs`.
@@ -76,6 +122,13 @@ When you run `luncur deploy` on a local source or git repository, the following 
 **Serve flags for build infrastructure:**
 - `--data-dir` — path where build sources and logs are persisted; becomes a Kubernetes PVC in production (default `./data`)
 - `--builder-image` — OCI image for the build environment (default `luncur/builder:latest`); built by the release pipeline
-- `--registry-host` — in-cluster registry address (default `registry.luncur-system:5000`); K3s requires an insecure-registry entry for this host (configured by `luncur up` in Plan D)
+- `--registry-host` — in-cluster registry address (default `registry.luncur-system:5000`); K3s requires an insecure-registry entry for this host, written to `/etc/rancher/k3s/registries.yaml` by `luncur up`
+
+## Approved deviations from the design spec
+
+- Web UI uses stdlib `html/template` + one vanilla-JS `EventSource` block instead of templ + HTMX. Zero codegen, zero vendored JS; same server-rendered pages + SSE behavior.
+- In-cluster registry is reachable from containerd via a NodePort (30500) + `registries.yaml` mirror to `http://127.0.0.1:30500`, since containerd on the node cannot resolve cluster-DNS names like `registry.luncur-system`.
+- Public-IP detection: node `ExternalIP` → node `InternalIP` → `--ip` flag. No outbound HTTP probe.
+- API tokens expire after 90 days (enforcement only; `luncur token list/revoke` is a future addition).
 
 Design docs: `docs/superpowers/specs/`. Plans: `docs/superpowers/plans/`.

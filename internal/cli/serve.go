@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -101,7 +102,7 @@ func serveCmd() *cobra.Command {
 
 			errCh := make(chan error, 1)
 			go func() {
-				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 					errCh <- err
 				} else {
 					errCh <- nil
