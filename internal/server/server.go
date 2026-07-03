@@ -2,11 +2,13 @@
 package server
 
 import (
+	"context"
 	"embed"
 	"html/template"
 	"log"
 	"net/http"
 
+	"github.com/sutantodadang/luncur/internal/acme"
 	"github.com/sutantodadang/luncur/internal/build"
 	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/secret"
@@ -31,6 +33,7 @@ type Deps struct {
 	RegistryHost    string
 	SystemNamespace string
 	DataPVC         string
+	ACMEDirectory   string // override ACME directory URL ("" = setting/Let's Encrypt)
 }
 
 type server struct {
@@ -98,6 +101,10 @@ func newServer(d Deps) *server {
 
 	s.tmpl = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 
+	if d.Store != nil {
+		s.certs = newCertManager(s, d.ACMEDirectory)
+	}
+
 	return s
 }
 
@@ -137,6 +144,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/domains/{hostname}", s.authed(s.handleDeleteDomain))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/domains/{hostname}/retry", s.authed(s.handleRetryDomain))
 
+	// ACME HTTP-01 challenge path: served by luncur itself, no auth (the
+	// ACME CA fetches it directly). Nil-guarded: tests may build a server
+	// without a store/manager.
+	if s.certs != nil {
+		mux.Handle("GET "+acme.ChallengePath+"{token}", s.certs.Challenges())
+	}
+
 	s.uiRoutes(mux)
 
 	// Fallback for unmatched paths keeps every response envelope-compliant
@@ -155,7 +169,7 @@ func (s *server) handler() http.Handler {
 
 // New builds the full API handler. Later plans add their routes here.
 func New(d Deps) http.Handler {
-	h, _ := NewWithBackend(d)
+	h, _, _ := NewWithBackend(d)
 	return h
 }
 
@@ -167,4 +181,13 @@ func (s *server) requireKube(w http.ResponseWriter) bool {
 		return false
 	}
 	return true
+}
+
+// StartCerts launches the builtin cert manager loop when the provider is
+// builtin; call in a goroutine-managing context (serve.go).
+func (s *server) StartCerts(ctx context.Context) {
+	if s.certProviderName() != "builtin" || s.kube == nil {
+		return
+	}
+	go s.certs.Run(ctx)
 }

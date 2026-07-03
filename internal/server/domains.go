@@ -177,10 +177,3 @@ func (s *server) kickCerts(p store.Project, a store.App, d store.Domain) {
 		s.certs.Kick(p, a, d)
 	}
 }
-
-// certManager is a Task-6 placeholder: the builtin provider's real cert
-// manager (issuance + renewal) replaces this type. A nil *server.certs
-// means "no manager wired" and kickCerts above is a no-op.
-type certManager struct{}
-
-func (c *certManager) Kick(store.Project, store.App, store.Domain) {}

@@ -60,6 +60,23 @@ func TestAppCRUD(t *testing.T) {
 	}
 }
 
+func TestGetAppByID(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	a, err := s.CreateApp(p.ID, "api", 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetAppByID(a.ID)
+	if err != nil || got.Name != "api" || got.ProjectID != p.ID {
+		t.Fatalf("get by id: %+v %v", got, err)
+	}
+	if _, err := s.GetAppByID(999999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
 func TestCreateGitApp(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)

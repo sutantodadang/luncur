@@ -34,6 +34,22 @@ func TestProjectCRUD(t *testing.T) {
 	}
 }
 
+func TestGetProjectByID(t *testing.T) {
+	s := openTest(t)
+	p, err := s.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetProjectByID(p.ID)
+	if err != nil || got.Name != "web" || got.Namespace != p.Namespace {
+		t.Fatalf("get by id: %+v %v", got, err)
+	}
+	if _, err := s.GetProjectByID(999999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
 func TestCreateProjectValidatesName(t *testing.T) {
 	s := openTest(t)
 	for _, bad := range []string{"", "-x", "x-", "UPPER", "has_underscore", "waaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaytoolong"} {

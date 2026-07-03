@@ -89,6 +89,27 @@ func (s *Store) GetApp(projectID int64, name string) (App, error) {
 	return a, nil
 }
 
+// GetAppByID looks up an app by its primary key, for code that only has a
+// foreign key reference (e.g. a Domain row) and not the owning project's
+// name.
+func (s *Store) GetAppByID(id int64) (App, error) {
+	var a App
+	var gitURL, gitBranch sql.NullString
+	err := s.db.QueryRow(
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch FROM apps WHERE id = ?`,
+		id,
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch)
+	if errors.Is(err, sql.ErrNoRows) {
+		return App{}, ErrNotFound
+	}
+	if err != nil {
+		return App{}, err
+	}
+	a.GitURL = gitURL.String
+	a.GitBranch = gitBranch.String
+	return a, nil
+}
+
 func (s *Store) ListApps(projectID int64) ([]App, error) {
 	rows, err := s.db.Query(
 		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch FROM apps WHERE project_id = ? ORDER BY name`,
