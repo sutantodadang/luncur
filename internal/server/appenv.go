@@ -79,7 +79,13 @@ func (s *server) handleSetEnv(w http.ResponseWriter, r *http.Request, u store.Us
 	}
 
 	if err := s.st.SetEnv(a.ID, req.Key, sealed); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		var ve *store.ValidationError
+		if errors.As(err, &ve) {
+			writeError(w, http.StatusBadRequest, "bad_request", ve.Error())
+			return
+		}
+		log.Printf("set env: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 
@@ -134,7 +140,13 @@ func (s *server) handleSetOverride(w http.ResponseWriter, r *http.Request, u sto
 	}
 
 	if err := s.st.SetOverride(a.ID, kind, string(body)); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		var ve *store.ValidationError
+		if errors.As(err, &ve) {
+			writeError(w, http.StatusBadRequest, "bad_request", ve.Error())
+			return
+		}
+		log.Printf("set override: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 

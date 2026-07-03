@@ -1,7 +1,6 @@
 package store
 
 import (
-	"fmt"
 	"regexp"
 )
 
@@ -11,7 +10,7 @@ var envKeyRe = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 // never sees plaintext.
 func (s *Store) SetEnv(appID int64, key string, sealed []byte) error {
 	if !envKeyRe.MatchString(key) {
-		return fmt.Errorf("invalid env key %q (must match [A-Z_][A-Z0-9_]*)", key)
+		return validationErrorf("invalid env key %q (must match [A-Z_][A-Z0-9_]*)", key)
 	}
 	_, err := s.db.Exec(
 		`INSERT INTO env_vars (app_id, key, value_enc) VALUES (?, ?, ?)
