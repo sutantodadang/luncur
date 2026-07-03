@@ -331,6 +331,20 @@ func (s *server) handleDeployLogs(w http.ResponseWriter, r *http.Request, u stor
 		writeError(w, http.StatusServiceUnavailable, "build_unavailable", "no build logs available")
 		return
 	}
+	if r.URL.Query().Get("follow") == "1" {
+		fl, ok := sseStart(w)
+		if !ok {
+			return
+		}
+		s.followFile(w, fl, r, s.src.LogPath(d.ID), func() (bool, string) {
+			cur, err := s.st.GetDeployment(d.ID)
+			if err != nil {
+				return true, "unknown"
+			}
+			return cur.Status == "live" || cur.Status == "failed", cur.Status
+		})
+		return
+	}
 	logBytes, err := s.src.ReadLog(d.ID)
 	if err != nil {
 		log.Printf("read log: %v", err)
