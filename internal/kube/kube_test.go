@@ -6,13 +6,28 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	ktesting "k8s.io/client-go/testing"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 
 	"github.com/sutantodadang/luncur/internal/render"
 )
+
+// newFakeDyn builds a fake dynamic client seeded with objs, following the
+// same empty-scheme construction the rest of this file uses (see
+// fakeClient / TestDeleteAppObjectsIgnoresNotFound). Unstructured objects
+// carry their own GVK, and the fake dynamic client infers the plural
+// resource name from Kind, so no extra scheme registration is needed for
+// regularly-pluralized kinds like Deployment.
+func newFakeDyn(t *testing.T, objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	return dynamicfake.NewSimpleDynamicClient(scheme, objs...)
+}
 
 type recorded struct {
 	verb      string
@@ -145,5 +160,57 @@ func TestWaitJobSucceeded(t *testing.T) {
 	ok, err := c.WaitJob(context.Background(), "luncur-system", "build-1", time.Millisecond)
 	if err != nil || !ok {
 		t.Fatalf("WaitJob = (%v, %v), want (true, nil)", ok, err)
+	}
+}
+
+func TestAppPodsAndNodeIP(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: "web-1", Namespace: "proj",
+			Labels: map[string]string{"app.kubernetes.io/name": "web"},
+		}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: "other-1", Namespace: "proj",
+			Labels: map[string]string{"app.kubernetes.io/name": "other"},
+		}},
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: "10.0.0.5"},
+				{Type: corev1.NodeExternalIP, Address: "203.0.113.9"},
+			}},
+		},
+	)
+	c := NewForTest(nil, cs)
+
+	pods, err := c.AppPods(context.Background(), "proj", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pods) != 1 || pods[0] != "web-1" {
+		t.Fatalf("pods = %v, want [web-1]", pods)
+	}
+
+	ip, err := c.NodeIP(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ip != "203.0.113.9" {
+		t.Fatalf("ip = %q, want ExternalIP preferred", ip)
+	}
+}
+
+func TestWaitDeployment(t *testing.T) {
+	dep := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "Deployment",
+		"metadata": map[string]any{"name": "luncur", "namespace": "luncur-system"},
+		"status":   map[string]any{"readyReplicas": int64(1)},
+	}}
+	dyn := newFakeDyn(t, dep)
+	c := NewForTest(dyn, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := c.WaitDeployment(ctx, "luncur-system", "luncur", 10*time.Millisecond); err != nil {
+		t.Fatal(err)
 	}
 }
