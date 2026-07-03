@@ -28,7 +28,7 @@ func defaultImage() string {
 }
 
 func upCmd() *cobra.Command {
-	var ip, image, builderImage, kubeconfig string
+	var ip, image, builderImage, kubeconfig, certProvider, acmeEmail string
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Install (or repair) luncur on this machine's K3s",
@@ -84,12 +84,50 @@ func upCmd() *cobra.Command {
 			}
 
 			cmd.Println("==> deploying luncur")
-			objs, err := up.LuncurObjects(up.Params{Image: image, ExternalIP: ip, BuilderImage: builderImage})
+			objs, err := up.LuncurObjects(up.Params{
+				Image: image, ExternalIP: ip, BuilderImage: builderImage,
+				CertProvider: certProvider, ACMEEmail: acmeEmail,
+			})
 			if err != nil {
 				return err
 			}
 			if err := kc.Apply(ctx, "luncur-system", objs); err != nil {
 				return err
+			}
+
+			switch certProvider {
+			case "traefik":
+				ok, err := kc.HasGroupVersion(ctx, "helm.cattle.io/v1")
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return fmt.Errorf("--cert-provider traefik requires K3s's bundled Traefik (helm.cattle.io/v1 not found) — this isn't available on a generic cluster targeted with --kubeconfig")
+				}
+				cmd.Println("==> configuring traefik ACME resolver")
+				obj, err := up.TraefikACMEConfig(acmeEmail)
+				if err != nil {
+					return err
+				}
+				if err := kc.Apply(ctx, "kube-system", []render.Object{obj}); err != nil {
+					return err
+				}
+			case "cert-manager":
+				ok, err := kc.HasGroupVersion(ctx, "cert-manager.io/v1")
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return fmt.Errorf("--cert-provider cert-manager requires cert-manager to be installed on the cluster first (cert-manager.io/v1 not found)")
+				}
+				cmd.Println("==> configuring cert-manager ClusterIssuer")
+				obj, err := up.ClusterIssuer(acmeEmail)
+				if err != nil {
+					return err
+				}
+				if err := kc.Apply(ctx, "", []render.Object{obj}); err != nil {
+					return err
+				}
 			}
 
 			cmd.Println("==> waiting for rollout")
@@ -116,6 +154,8 @@ func upCmd() *cobra.Command {
 	cmd.Flags().StringVar(&image, "image", defaultImage(), "luncur server image")
 	cmd.Flags().StringVar(&builderImage, "builder-image", "luncur/builder:latest", "builder image")
 	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "target an existing cluster (skips K3s install)")
+	cmd.Flags().StringVar(&certProvider, "cert-provider", "builtin", "TLS cert provider: builtin, traefik, or cert-manager")
+	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "email for Let's Encrypt account registration")
 	return cmd
 }
 

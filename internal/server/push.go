@@ -128,8 +128,11 @@ func tailFile(done <-chan struct{}, path string, w io.Writer) {
 }
 
 // NewWithBackend builds the HTTP handler plus the push backend bound to the
-// same server instance, so `luncur serve` can wire both from one Deps.
-func NewWithBackend(d Deps) (http.Handler, *PushBackend) {
+// same server instance, so `luncur serve` can wire both from one Deps. The
+// third return starts the builtin cert manager (no-op unless the provider
+// is builtin and kube is configured) — callers that don't need it may
+// discard it.
+func NewWithBackend(d Deps) (http.Handler, *PushBackend, func(ctx context.Context)) {
 	s := newServer(d)
-	return s.handler(), &PushBackend{s: s}
+	return s.handler(), &PushBackend{s: s}, s.StartCerts
 }

@@ -38,6 +38,23 @@
 </tr>{{end}}
 </table>
 
+<h2>Domains</h2>
+{{if .DNSWarning}}<p class="err">{{.DNSWarning}}</p>{{end}}
+<table><tr><th>Hostname</th><th>Cert</th><th>Expires</th><th></th></tr>
+{{range .Domains}}<tr>
+  <td>{{.Hostname}}</td>
+  <td class="status-{{.CertStatus}}">{{.CertStatus}}{{if .CertError}} — {{.CertError}}{{end}}</td>
+  <td>{{.CertExpiresAt}}</td>
+  <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/domains/delete">
+    <input type="hidden" name="hostname" value="{{.Hostname}}"><button type="submit">remove</button>
+  </form></td>
+</tr>{{end}}
+</table>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/domains">
+  <input name="hostname" placeholder="www.example.com" required>
+  <button type="submit">add domain</button>
+</form>
+
 <h2>Logs</h2>
 <pre class="logs" id="logs" data-project="{{.Project.Name}}" data-app="{{.App.Name}}"></pre>
 <script>

@@ -48,6 +48,19 @@ func (s *Store) GetProject(name string) (Project, error) {
 	return p, err
 }
 
+// GetProjectByID looks up a project by its primary key, for code that only
+// has a foreign key reference (e.g. an App row) and not the project's name.
+func (s *Store) GetProjectByID(id int64) (Project, error) {
+	var p Project
+	err := s.db.QueryRow(
+		`SELECT id, name, k8s_namespace FROM projects WHERE id = ?`, id,
+	).Scan(&p.ID, &p.Name, &p.Namespace)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Project{}, ErrNotFound
+	}
+	return p, err
+}
+
 func (s *Store) ListProjects() ([]Project, error) {
 	rows, err := s.db.Query(`SELECT id, name, k8s_namespace FROM projects ORDER BY name`)
 	if err != nil {

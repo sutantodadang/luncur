@@ -241,3 +241,43 @@ func TestWaitDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestHasGroupVersion(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset()
+	cs.Resources = []*metav1.APIResourceList{
+		{GroupVersion: "helm.cattle.io/v1", APIResources: []metav1.APIResource{{Name: "helmchartconfigs"}}},
+	}
+	c := NewForTest(nil, cs)
+	ok, err := c.HasGroupVersion(context.Background(), "helm.cattle.io/v1")
+	if err != nil || !ok {
+		t.Fatalf("helm gv: ok=%v err=%v", ok, err)
+	}
+	ok, err = c.HasGroupVersion(context.Background(), "cert-manager.io/v1")
+	if err != nil || ok {
+		t.Fatalf("absent gv: ok=%v err=%v, want false nil", ok, err)
+	}
+}
+
+// TestApplyClusterIssuerIsClusterScoped mirrors
+// TestApplyClusterRoleBindingSkipsNamespace: ClusterIssuer (cluster-scoped,
+// per gvrByKind) must also be patched without a namespace.
+func TestApplyClusterIssuerIsClusterScoped(t *testing.T) {
+	c, log := fakeClient(t)
+	ci := []render.Object{{
+		Kind: "ClusterIssuer",
+		JSON: json.RawMessage(`{"apiVersion":"cert-manager.io/v1","kind":"ClusterIssuer","metadata":{"name":"luncur-le"}}`),
+	}}
+	if err := c.Apply(context.Background(), "luncur-web", ci); err != nil {
+		t.Fatal(err)
+	}
+	if len(*log) != 1 {
+		t.Fatalf("want 1 action, got %d: %+v", len(*log), *log)
+	}
+	rec := (*log)[0]
+	if rec.resource != "clusterissuers" || rec.name != "luncur-le" {
+		t.Fatalf("bad action: %+v", rec)
+	}
+	if rec.namespace != "" {
+		t.Fatalf("want no namespace on cluster-scoped patch, got %q", rec.namespace)
+	}
+}

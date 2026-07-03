@@ -51,3 +51,14 @@ func TestServeSSHFlags(t *testing.T) {
 		t.Fatalf("ssh-hostkey-file flag missing: %v", err)
 	}
 }
+
+func TestServeCertFlags(t *testing.T) {
+	cmd := serveCmd()
+	certProvider, err := cmd.Flags().GetString("cert-provider")
+	if err != nil || certProvider != "" {
+		t.Fatalf("cert-provider default = %q err=%v, want \"\"", certProvider, err)
+	}
+	if _, err := cmd.Flags().GetString("acme-email"); err != nil {
+		t.Fatalf("acme-email flag missing: %v", err)
+	}
+}

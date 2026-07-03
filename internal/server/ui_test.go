@@ -473,3 +473,87 @@ func TestUIAppDetailContainsEventSourceScript(t *testing.T) {
 		t.Fatalf("app detail page: body missing 'id=\"logs\"', got: %s", bodyStr)
 	}
 }
+
+// TestUIDomainAddAndDelete exercises the Domains section end to end: a
+// logged-in admin adds a domain via the UI form (303 back to the app page),
+// the app page then lists it, and removing it via the delete form makes it
+// disappear again.
+func TestUIDomainAddAndDelete(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":3000}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+
+	addForm := url.Values{"hostname": {"www.example.com"}}
+	addReq, err := http.NewRequest("POST", srv.URL+"/ui/projects/proj/apps/web/domains", strings.NewReader(addForm.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	addReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	addReq.AddCookie(ck)
+	addResp, err := client.Do(addReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addResp.Body.Close()
+	if addResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST domains: want 303, got %d", addResp.StatusCode)
+	}
+
+	appPage := func(t *testing.T) string {
+		t.Helper()
+		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(ck)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET app page: want 200, got %d", resp.StatusCode)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	// Look for the hostname inside a table cell rather than as a bare
+	// substring: the add-domain form's placeholder text is also
+	// "www.example.com" and is present on the page regardless of whether
+	// any domain row exists.
+	if body := appPage(t); !strings.Contains(body, "<td>www.example.com</td>") {
+		t.Fatalf("app page after add: want www.example.com listed, got: %s", body)
+	}
+
+	delForm := url.Values{"hostname": {"www.example.com"}}
+	delReq, err := http.NewRequest("POST", srv.URL+"/ui/projects/proj/apps/web/domains/delete", strings.NewReader(delForm.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	delReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	delReq.AddCookie(ck)
+	delResp, err := client.Do(delReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delResp.Body.Close()
+	if delResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST domains/delete: want 303, got %d", delResp.StatusCode)
+	}
+
+	if body := appPage(t); strings.Contains(body, "<td>www.example.com</td>") {
+		t.Fatalf("app page after delete: want www.example.com removed, got: %s", body)
+	}
+}

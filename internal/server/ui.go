@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"time"
@@ -23,6 +24,8 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/scale", s.uiPage(s.handleUIScale))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env", s.uiPage(s.handleUIEnvSet))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/delete", s.uiPage(s.handleUIEnvUnset))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains", s.uiPage(s.handleUIDomainAdd))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/delete", s.uiPage(s.handleUIDomainDelete))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/deploy", s.uiPage(s.handleUIDeploy))
 }
 
@@ -220,11 +223,19 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 	}
 	sort.Strings(envKeys)
 
+	domains, err := s.st.ListDomains(a.ID)
+	if err != nil {
+		log.Printf("ui app domains: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	s.renderPage(w, "app.html", map[string]any{
 		"User": u, "Project": p, "App": a,
 		"Status": status, "LatestID": latestID, "URL": "http://" + hostFor(a.Name, s.externalIP),
 		"History": history, "EnvKeys": envKeys,
-		"IsGit": a.SourceType == "git",
+		"IsGit":   a.SourceType == "git",
+		"Domains": domains, "DNSWarning": r.URL.Query().Get("warn"),
 	})
 }
 
@@ -322,6 +333,65 @@ func (s *server) handleUIEnvUnset(w http.ResponseWriter, r *http.Request, u stor
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIDomainAdd is handleAddDomain's UI twin: same shared addDomain
+// core, but redirects back to the app page instead of returning JSON. A
+// non-empty DNS warning rides along as a ?warn= query param so the page can
+// show it once, on the redirect target, without persisting it anywhere.
+func (s *server) handleUIDomainAdd(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	_, warning, err := s.addDomain(r.Context(), p, a, r.PostFormValue("hostname"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if warning != "" {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?warn="+url.QueryEscape(warning), http.StatusSeeOther)
+		return
+	}
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIDomainDelete is handleDeleteDomain's UI twin: same store+sync
+// calls, redirect instead of a 204.
+func (s *server) handleUIDomainDelete(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.st.DeleteDomain(a.ID, r.PostFormValue("hostname")); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "no such domain", http.StatusNotFound)
+			return
+		}
+		log.Printf("ui delete domain: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.syncIfLive(r.Context(), p, a)
 	uiRedirect(w, r, p, a)
 }
 

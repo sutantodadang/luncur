@@ -2,11 +2,13 @@
 package server
 
 import (
+	"context"
 	"embed"
 	"html/template"
 	"log"
 	"net/http"
 
+	"github.com/sutantodadang/luncur/internal/acme"
 	"github.com/sutantodadang/luncur/internal/build"
 	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/secret"
@@ -31,6 +33,7 @@ type Deps struct {
 	RegistryHost    string
 	SystemNamespace string
 	DataPVC         string
+	ACMEDirectory   string // override ACME directory URL ("" = setting/Let's Encrypt)
 }
 
 type server struct {
@@ -44,6 +47,8 @@ type server struct {
 	registryHost    string
 	systemNamespace string
 	dataPVC         string
+
+	certs *certManager
 
 	tmpl *template.Template
 }
@@ -96,6 +101,10 @@ func newServer(d Deps) *server {
 
 	s.tmpl = template.Must(template.ParseFS(templateFS, "templates/*.html"))
 
+	if d.Store != nil {
+		s.certs = newCertManager(s, d.ACMEDirectory)
+	}
+
 	return s
 }
 
@@ -130,6 +139,19 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/overrides/{kind}", s.authed(s.handleDeleteOverride))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/raw", s.authed(s.handleRawManifest))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/logs", s.authed(s.handleRuntimeLogs))
+	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/domains", s.authed(s.handleAddDomain))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/domains", s.authed(s.handleListDomains))
+	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/domains/{hostname}", s.authed(s.handleDeleteDomain))
+	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/domains/{hostname}/retry", s.authed(s.handleRetryDomain))
+	mux.HandleFunc("GET /v1/settings/{key}", s.adminOnly(s.handleGetSetting))
+	mux.HandleFunc("PUT /v1/settings/{key}", s.adminOnly(s.handleSetSetting))
+
+	// ACME HTTP-01 challenge path: served by luncur itself, no auth (the
+	// ACME CA fetches it directly). Nil-guarded: tests may build a server
+	// without a store/manager.
+	if s.certs != nil {
+		mux.Handle("GET "+acme.ChallengePath+"{token}", s.certs.Challenges())
+	}
 
 	s.uiRoutes(mux)
 
@@ -149,7 +171,7 @@ func (s *server) handler() http.Handler {
 
 // New builds the full API handler. Later plans add their routes here.
 func New(d Deps) http.Handler {
-	h, _ := NewWithBackend(d)
+	h, _, _ := NewWithBackend(d)
 	return h
 }
 
@@ -161,4 +183,13 @@ func (s *server) requireKube(w http.ResponseWriter) bool {
 		return false
 	}
 	return true
+}
+
+// StartCerts launches the builtin cert manager loop when the provider is
+// builtin; call in a goroutine-managing context (serve.go).
+func (s *server) StartCerts(ctx context.Context) {
+	if s.certProviderName() != "builtin" || s.kube == nil {
+		return
+	}
+	go s.certs.Run(ctx)
 }
