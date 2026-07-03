@@ -52,6 +52,14 @@ func rejectDangerousOverride(kind string, patch map[string]any) error {
 		}
 	}
 
+	if kind == "Service" {
+		for _, key := range collectKeys(patch) {
+			if key == "externalIPs" || key == "loadBalancerIP" {
+				return validationErrorf("override may not set %q", key)
+			}
+		}
+	}
+
 	return nil
 }
 

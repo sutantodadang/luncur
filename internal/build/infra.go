@@ -1,6 +1,7 @@
 package build
 
 import (
+	"context"
 	"encoding/json"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -9,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/render"
 )
 
@@ -106,6 +108,16 @@ func SystemObjects(dataPVC, registryPVC, registryImage string) ([]render.Object,
 	}
 
 	return objs, nil
+}
+
+// EnsureSystem provisions luncur's system namespace + registry infra. Applies
+// SystemObjects (namespace, registry Deployment/Service, data+registry PVCs).
+func EnsureSystem(ctx context.Context, k *kube.Client, systemNS, dataPVC, registryPVC, registryImage string) error {
+	objs, err := SystemObjects(dataPVC, registryPVC, registryImage)
+	if err != nil {
+		return err
+	}
+	return k.Apply(ctx, systemNS, objs)
 }
 
 // ponytail: ReadWriteOnce assumes single-node K3s (Phase 1 target). If

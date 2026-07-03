@@ -1,15 +1,20 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/sutantodadang/luncur/internal/build"
 	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/server"
@@ -36,6 +41,7 @@ func bootstrapAdmin(st *store.Store, spec string) error {
 
 func serveCmd() *cobra.Command {
 	var dbPath, listen, bootstrap, kubeconfig, secretKeyFile, externalIP string
+	var dataDir, builderImage, registryHost string
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the luncur API server",
@@ -68,21 +74,52 @@ func serveCmd() *cobra.Command {
 				kubeClient = kc
 			}
 
+			if kubeClient != nil {
+				if err := build.EnsureSystem(context.Background(), kubeClient,
+					"luncur-system", "luncur-data", "luncur-registry", "registry:2"); err != nil {
+					log.Printf("warning: ensure system infra: %v", err)
+				}
+			}
+
 			log.Printf("luncur serve listening on %s (db %s)", listen, dbPath)
 			srv := &http.Server{
 				Addr: listen,
 				Handler: server.New(server.Deps{
-					Store:      st,
-					Sealer:     sealer,
-					Kube:       kubeClient,
-					ExternalIP: externalIP,
+					Store:        st,
+					Sealer:       sealer,
+					Kube:         kubeClient,
+					ExternalIP:   externalIP,
+					DataDir:      dataDir,
+					BuilderImage: builderImage,
+					RegistryHost: registryHost,
 				}),
 				ReadHeaderTimeout: 5 * time.Second,
 				ReadTimeout:       30 * time.Second,
 				WriteTimeout:      30 * time.Second,
 				IdleTimeout:       120 * time.Second,
 			}
-			return srv.ListenAndServe()
+
+			errCh := make(chan error, 1)
+			go func() {
+				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					errCh <- err
+				} else {
+					errCh <- nil
+				}
+			}()
+
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			select {
+			case err := <-errCh:
+				return err
+			case <-ctx.Done():
+				log.Printf("luncur serve shutting down")
+				shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				return srv.Shutdown(shutCtx)
+			}
 		},
 	}
 	cmd.Flags().StringVar(&dbPath, "db", "luncur.db", "path to SQLite database")
@@ -94,5 +131,8 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&secretKeyFile, "secret-key-file", "",
 		"path to secret sealing key (default luncur.key beside --db)")
 	cmd.Flags().StringVar(&externalIP, "external-ip", "", "external IP advertised to clients")
+	cmd.Flags().StringVar(&dataDir, "data-dir", "./data", "directory for source-build uploads/state")
+	cmd.Flags().StringVar(&builderImage, "builder-image", "luncur/builder:latest", "buildkit builder image")
+	cmd.Flags().StringVar(&registryHost, "registry-host", "registry.luncur-system:5000", "in-cluster registry host:port")
 	return cmd
 }

@@ -98,9 +98,16 @@ func (c *Client) Apply(ctx context.Context, namespace string, objs []render.Obje
 		if err != nil {
 			return fmt.Errorf("%s: %w", o.Kind, err)
 		}
-		_, err = c.dyn.Resource(gvr).Namespace(namespace).Patch(
-			ctx, name, types.ApplyPatchType, o.JSON, applyOpts(),
-		)
+		// Namespace is cluster-scoped: never namespace the patch call itself.
+		if o.Kind == "Namespace" {
+			_, err = c.dyn.Resource(gvr).Patch(
+				ctx, name, types.ApplyPatchType, o.JSON, applyOpts(),
+			)
+		} else {
+			_, err = c.dyn.Resource(gvr).Namespace(namespace).Patch(
+				ctx, name, types.ApplyPatchType, o.JSON, applyOpts(),
+			)
+		}
 		if err != nil {
 			return fmt.Errorf("apply %s/%s: %w", o.Kind, name, err)
 		}

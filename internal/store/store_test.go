@@ -31,6 +31,12 @@ func TestOpenMigratesSchema(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsPathWithQuestionMark(t *testing.T) {
+	if _, err := Open("foo?bar"); err == nil {
+		t.Fatal("want error for path containing '?'")
+	}
+}
+
 func TestOpenIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	for i := 0; i < 2; i++ {

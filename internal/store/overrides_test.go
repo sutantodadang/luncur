@@ -67,6 +67,33 @@ func TestSetOverrideRejectsMetadataNameNamespaceOnAnyKind(t *testing.T) {
 	}
 }
 
+func TestSetOverrideRejectsServiceExternalIPHijack(t *testing.T) {
+	s := openTest(t)
+	p, err := s.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.CreateApp(p.ID, "api", 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dangerous := []string{
+		`{"spec":{"externalIPs":["1.2.3.4"]}}`,
+		`{"spec":{"loadBalancerIP":"1.2.3.4"}}`,
+	}
+	for _, patch := range dangerous {
+		if err := s.SetOverride(a.ID, "Service", patch); err == nil {
+			t.Errorf("patch %s: want error, got nil", patch)
+		}
+	}
+
+	benign := `{"spec":{"ports":[{"port":80}]}}`
+	if err := s.SetOverride(a.ID, "Service", benign); err != nil {
+		t.Errorf("benign service patch: want success, got %v", err)
+	}
+}
+
 func TestSetOverrideAllowsBenignPatches(t *testing.T) {
 	s := openTest(t)
 	p, err := s.CreateProject("web")

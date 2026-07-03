@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -21,6 +22,12 @@ type Store struct {
 // Open opens (creating if needed) the SQLite DB at path and applies the
 // schema. Safe to call repeatedly on the same file.
 func Open(path string) (*Store, error) {
+	// ponytail: real filesystem paths never contain '?'; a full URL-escape
+	// of path is unnecessary — reject the one character that would break
+	// the DSN query string below.
+	if strings.Contains(path, "?") {
+		return nil, fmt.Errorf("db path may not contain '?'")
+	}
 	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
