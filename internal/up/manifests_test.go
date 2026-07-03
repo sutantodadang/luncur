@@ -17,7 +17,7 @@ func TestLuncurObjects(t *testing.T) {
 	for _, o := range objs {
 		kinds[o.Kind] = true
 	}
-	for _, k := range []string{"ServiceAccount", "ClusterRoleBinding", "Deployment", "Service", "Ingress"} {
+	for _, k := range []string{"ServiceAccount", "ClusterRole", "ClusterRoleBinding", "Deployment", "Service", "Ingress"} {
 		if !kinds[k] {
 			t.Fatalf("missing kind %s", k)
 		}
@@ -31,9 +31,16 @@ func TestLuncurObjects(t *testing.T) {
 		"ghcr.io/sutantodadang/luncur:v1",
 		"$(BOOTSTRAP_ADMIN)",
 		"luncur-bootstrap",
-		"cluster-admin",
 		"/v1/health",
 	} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("manifests missing %q", want)
+		}
+	}
+	if strings.Contains(all, "cluster-admin") {
+		t.Fatal("cluster-admin binding must be gone")
+	}
+	for _, want := range []string{`"ClusterRole"`, "pods/log", "helmchartconfigs", "clusterissuers"} {
 		if !strings.Contains(all, want) {
 			t.Fatalf("manifests missing %q", want)
 		}

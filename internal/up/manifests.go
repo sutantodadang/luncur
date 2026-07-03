@@ -71,12 +71,36 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 		return nil, err
 	}
 
-	// ponytail: cluster-admin — luncur manages arbitrary namespaces/CRDs;
-	// a scoped ClusterRole is the Phase 2 hardening path.
+	rule := func(groups []string, resources []string, verbs ...string) rbacv1.PolicyRule {
+		return rbacv1.PolicyRule{APIGroups: groups, Resources: resources, Verbs: verbs}
+	}
+	full := []string{"get", "list", "watch", "create", "update", "patch", "delete"}
+	read := []string{"get", "list", "watch"}
+	manage := []string{"get", "list", "watch", "create", "update", "patch"}
+	cr := &rbacv1.ClusterRole{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole"},
+		ObjectMeta: metav1.ObjectMeta{Name: "luncur", Labels: labels},
+		Rules: []rbacv1.PolicyRule{
+			rule([]string{""}, []string{"namespaces", "services", "secrets", "configmaps", "serviceaccounts", "persistentvolumeclaims"}, full...),
+			rule([]string{""}, []string{"pods", "pods/log", "events", "nodes"}, read...),
+			rule([]string{"apps"}, []string{"deployments"}, full...),
+			rule([]string{"apps"}, []string{"replicasets"}, read...),
+			rule([]string{"batch"}, []string{"jobs"}, full...),
+			rule([]string{"networking.k8s.io"}, []string{"ingresses"}, full...),
+			rule([]string{"helm.cattle.io"}, []string{"helmchartconfigs"}, manage...),
+			rule([]string{"cert-manager.io"}, []string{"clusterissuers"}, manage...),
+		},
+	}
+	if err := add("ClusterRole", cr); err != nil {
+		return nil, err
+	}
+
+	// Scoped role: rules enumerate exactly what serve touches; extend here
+	// when a new kind is applied.
 	crb := &rbacv1.ClusterRoleBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRoleBinding"},
 		ObjectMeta: metav1.ObjectMeta{Name: "luncur-admin", Labels: labels},
-		RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "cluster-admin"},
+		RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "luncur"},
 		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "luncur", Namespace: systemNamespace}},
 	}
 	if err := add("ClusterRoleBinding", crb); err != nil {

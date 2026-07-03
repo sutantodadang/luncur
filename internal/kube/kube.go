@@ -34,6 +34,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"Job":                   {Group: "batch", Version: "v1", Resource: "jobs"},
 	"PersistentVolumeClaim": {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
 	"ServiceAccount":        {Group: "", Version: "v1", Resource: "serviceaccounts"},
+	"ClusterRole":           {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"},
 	"ClusterRoleBinding":    {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"},
 	"HelmChartConfig":       {Group: "helm.cattle.io", Version: "v1", Resource: "helmchartconfigs"},
 	"ClusterIssuer":         {Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"},
@@ -42,6 +43,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 // clusterScoped marks kinds Apply must patch without a namespace.
 var clusterScoped = map[string]bool{
 	"Namespace":          true,
+	"ClusterRole":        true,
 	"ClusterRoleBinding": true,
 	"ClusterIssuer":      true,
 }
