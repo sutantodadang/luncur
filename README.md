@@ -74,7 +74,7 @@ luncur edit myapp Deployment --project myproj
 When you run `luncur deploy` on a local source or git repository, the following happens: source is uploaded (tarball from local cwd or cloned from git URL) → a BuildKit Job runs in the `luncur-system` namespace, applying Nixpacks if no Dockerfile exists or using the Dockerfile if present → the resulting image is pushed to the in-cluster registry (default `registry.luncur-system:5000`) → app manifests are rendered and applied to Kubernetes → the app becomes live at `http://<app>.<ip>.sslip.io`. Build logs are streamed on demand via `luncur logs`.
 
 **Serve flags for build infrastructure:**
-- `--data-dir` — path where build sources and logs are persisted; becomes a Kubernetes PVC in production (default `./luncur-data`)
+- `--data-dir` — path where build sources and logs are persisted; becomes a Kubernetes PVC in production (default `./data`)
 - `--builder-image` — OCI image for the build environment (default `luncur/builder:latest`); built by the release pipeline
 - `--registry-host` — in-cluster registry address (default `registry.luncur-system:5000`); K3s requires an insecure-registry entry for this host (configured by `luncur up` in Plan D)
 
