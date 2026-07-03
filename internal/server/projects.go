@@ -66,16 +66,18 @@ func (s *server) handleCreateProject(w http.ResponseWriter, r *http.Request, _ s
 	writeJSON(w, http.StatusCreated, projectJSON(p))
 }
 
-func (s *server) handleListProjects(w http.ResponseWriter, r *http.Request, u store.User) {
-	var (
-		list []store.Project
-		err  error
-	)
+// visibleProjects returns the projects u may see: admins see every project,
+// members see only those they belong to. Shared by the API and UI project
+// listings so the visibility rule can't drift between the two.
+func (s *server) visibleProjects(u store.User) ([]store.Project, error) {
 	if u.Role == "admin" {
-		list, err = s.st.ListProjects()
-	} else {
-		list, err = s.st.ListProjectsFor(u.ID)
+		return s.st.ListProjects()
 	}
+	return s.st.ListProjectsFor(u.ID)
+}
+
+func (s *server) handleListProjects(w http.ResponseWriter, r *http.Request, u store.User) {
+	list, err := s.visibleProjects(u)
 	if err != nil {
 		log.Printf("list projects: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")

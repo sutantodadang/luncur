@@ -1,0 +1,14 @@
+{{define "apps.html"}}
+{{template "head" .}}{{template "nav" .}}
+<p><a href="/ui/">&larr; Projects</a></p>
+<h1>{{.Project.Name}}</h1>
+{{if not .Apps}}<p>No apps yet. Create one with <code>luncur app create</code>.</p>{{end}}
+<table><tr><th>App</th><th>Replicas</th><th>URL</th></tr>
+{{range .Apps}}<tr>
+  <td><a href="/ui/projects/{{$.Project.Name}}/apps/{{.Name}}">{{.Name}}</a></td>
+  <td>{{.Replicas}}</td>
+  <td><a href="{{.URL}}">{{.URL}}</a></td>
+</tr>{{end}}
+</table>
+{{template "foot" .}}
+{{end}}

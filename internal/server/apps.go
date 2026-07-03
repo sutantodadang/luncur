@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -10,6 +11,19 @@ import (
 
 	"github.com/sutantodadang/luncur/internal/store"
 )
+
+// errKubeUnavailable is scaleApp's sentinel for "this scale can't be
+// applied because no kube client is configured". Callers (the JSON API and
+// the UI) each translate it into their own response shape.
+var errKubeUnavailable = errors.New("kubernetes is not configured")
+
+// scaleReplicasError wraps a SetReplicas validation failure so callers can
+// tell it apart from scaleApp's other (internal) failure modes and answer
+// with a caller-fault status code.
+type scaleReplicasError struct{ err error }
+
+func (e *scaleReplicasError) Error() string { return e.err.Error() }
+func (e *scaleReplicasError) Unwrap() error { return e.err }
 
 func (s *server) appJSON(a store.App) map[string]any {
 	return map[string]any{
@@ -356,6 +370,37 @@ func (s *server) handleDeployLogs(w http.ResponseWriter, r *http.Request, u stor
 	w.Write(logBytes)
 }
 
+// scaleApp is the shared core of handleScaleApp and its UI twin
+// (handleUIScale): check whether the app is live BEFORE persisting the
+// replica change (a live app with no kube client can't apply a scale, so it
+// must not record a DB state it can't honor), then persist and, if live,
+// sync. Returns errKubeUnavailable when a live app's scale can't be
+// applied, or a *scaleReplicasError when the requested replica count is
+// invalid; any other error is an internal failure.
+func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, replicas int) (store.App, error) {
+	d, err := s.st.LatestDeployment(a.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return store.App{}, err
+	}
+	live := err == nil && d.Status == "live"
+	if live && s.kube == nil {
+		return store.App{}, errKubeUnavailable
+	}
+
+	if err := s.st.SetReplicas(a.ID, replicas); err != nil {
+		return store.App{}, &scaleReplicasError{err}
+	}
+	a.Replicas = replicas
+
+	if live {
+		if err := s.syncApp(ctx, p, a); err != nil {
+			return store.App{}, err
+		}
+	}
+
+	return a, nil
+}
+
 func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.requireProject(w, u, r.PathValue("project"))
 	if !ok {
@@ -374,33 +419,20 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	// Check whether the app is live BEFORE persisting the replica change:
-	// a live app with no kube client can't apply a scale, so it must not
-	// record a DB state it can't honor.
-	d, err := s.st.LatestDeployment(a.ID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		log.Printf("latest deployment: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-	live := err == nil && d.Status == "live"
-	if live && !s.requireKube(w) {
-		return
-	}
-
-	if err := s.st.SetReplicas(a.ID, req.Replicas); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	a.Replicas = req.Replicas
-
-	if live {
-		if err := s.syncApp(r.Context(), p, a); err != nil {
-			log.Printf("sync app: %v", err)
+	updated, err := s.scaleApp(r.Context(), p, a, req.Replicas)
+	if err != nil {
+		var re *scaleReplicasError
+		switch {
+		case errors.Is(err, errKubeUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "kubernetes_unavailable", "kubernetes is not configured")
+		case errors.As(err, &re):
+			writeError(w, http.StatusBadRequest, "bad_request", re.Error())
+		default:
+			log.Printf("scale app: %v", err)
 			writeError(w, http.StatusInternalServerError, "internal", "internal error")
-			return
 		}
+		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"replicas": a.Replicas})
+	writeJSON(w, http.StatusOK, map[string]any{"replicas": updated.Replicas})
 }

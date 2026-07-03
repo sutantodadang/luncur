@@ -1,0 +1,44 @@
+{{define "app.html"}}
+{{template "head" .}}{{template "nav" .}}
+<p><a href="/ui/projects/{{.Project.Name}}">&larr; {{.Project.Name}}</a></p>
+<h1>{{.App.Name}} <span class="status-{{.Status}}">{{.Status}}</span></h1>
+<p><a href="{{.URL}}">{{.URL}}</a> &middot;
+   <a href="/v1/projects/{{.Project.Name}}/apps/{{.App.Name}}/raw">raw YAML</a></p>
+
+<h2>Scale</h2>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/scale">
+  <input type="number" name="replicas" min="0" value="{{.App.Replicas}}">
+  <button type="submit">scale</button>
+</form>
+
+{{if .IsGit}}
+<h2>Deploy</h2>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/deploy">
+  <button type="submit">Deploy from git</button>
+</form>
+{{end}}
+
+<h2>Environment</h2>
+<table>{{range .EnvKeys}}<tr><td><code>{{.}}</code></td><td>
+  <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/env/delete">
+    <input type="hidden" name="key" value="{{.}}"><button type="submit">unset</button>
+  </form></td></tr>{{end}}
+</table>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/env">
+  <input name="key" placeholder="KEY" required>
+  <input name="value" placeholder="value" required>
+  <button type="submit">set</button>
+</form>
+
+<h2>Deploys</h2>
+<table><tr><th>ID</th><th>Status</th><th>Image</th><th>When</th></tr>
+{{range .History}}<tr>
+  <td>{{.ID}}</td><td class="status-{{.Status}}">{{.Status}}</td>
+  <td><code>{{.ImageRef}}</code></td><td>{{.CreatedAt}}</td>
+</tr>{{end}}
+</table>
+
+<h2>Logs</h2>
+<pre class="logs" id="logs" data-project="{{.Project.Name}}" data-app="{{.App.Name}}"></pre>
+{{template "foot" .}}
+{{end}}

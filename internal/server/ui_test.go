@@ -185,3 +185,208 @@ func TestBearerWinsOverCookie(t *testing.T) {
 		t.Fatalf("bearer must win over cookie: got %q", me.Email)
 	}
 }
+
+// uiSessionCookie mints a session token for a user directly against the
+// store (bypassing the /ui/login HTTP round trip) and wraps it as the
+// cookie uiPage expects.
+func uiSessionCookie(t *testing.T, st interface {
+	CreateSessionToken(int64, string) (string, error)
+}, userID int64) *http.Cookie {
+	t.Helper()
+	tok, err := st.CreateSessionToken(userID, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Cookie{Name: sessionCookie, Value: tok}
+}
+
+func noRedirectClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func TestUIProjectVisibleOnList(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+
+	client := noRedirectClient()
+	req, err := http.NewRequest("GET", srv.URL+"/ui/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ui/: want 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `/ui/projects/web`) {
+		t.Fatalf("GET /ui/: body missing project link, got: %s", body)
+	}
+}
+
+func TestUIAppVisibleOnProjectPage(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+
+	client := noRedirectClient()
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ui/projects/web: want 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `/ui/projects/web/apps/api`) {
+		t.Fatalf("GET /ui/projects/web: body missing app link, got: %s", body)
+	}
+}
+
+func TestUIAppDetailShowsStatus(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+	id := appID(t, st, "web", "api")
+	if _, err := st.CreateDeployment(id, "live", "nginx:1", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+
+	client := noRedirectClient()
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web/apps/api", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ui/projects/web/apps/api: want 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// class="status-live" (the rendered attribute) is distinct from the
+	// base stylesheet's ".status-live{...}" CSS rule, which is present on
+	// every page regardless of this app's actual status.
+	if !strings.Contains(string(body), `class="status-live"`) {
+		t.Fatalf("GET /ui/projects/web/apps/api: body missing live status, got: %s", body)
+	}
+}
+
+// TestUIScalePersists mirrors TestScaleLiveAppWithoutKube503LeavesReplicasUnchanged's
+// setup but with a non-live app, so the nil-kube deps in testServer never
+// need a live kube client: POST scale should succeed, persist, and redirect
+// with 303.
+func TestUIScalePersists(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+
+	client := noRedirectClient()
+	form := url.Values{"replicas": {"5"}}
+	req, err := http.NewRequest("POST", srv.URL+"/ui/projects/web/apps/api/scale", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(ck)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST scale: want 303, got %d", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/web/apps/api" {
+		t.Fatalf("POST scale: want Location /ui/projects/web/apps/api, got %q", loc)
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Replicas != 5 {
+		t.Fatalf("replicas: want 5, got %d", a.Replicas)
+	}
+}
+
+func TestUIMemberCannotSeeForeignProject(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+
+	member, err := st.CreateUser("m@b.co", "password123", "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, member.ID)
+
+	client := noRedirectClient()
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /ui/projects/web as non-member: want 404, got %d", resp.StatusCode)
+	}
+}
