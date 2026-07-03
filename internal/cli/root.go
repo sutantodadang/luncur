@@ -43,6 +43,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(tokenCmd())
 	root.AddCommand(inviteCmd())
 	root.AddCommand(addonCmd())
+	root.AddCommand(backupCmd())
 	return root
 }
 

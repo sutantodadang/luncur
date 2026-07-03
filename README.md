@@ -3,7 +3,7 @@
 Tiny self-hosted PaaS on K3s. One Go binary, SQLite, deploys as simple as
 Heroku — with an escape hatch to the real Kubernetes objects.
 
-Status: Phase 3 in progress — addons + metrics shipped (Plans I-J), on top of Phase 2
+Status: Phase 3 in progress — addons, metrics, backups shipped (Plans I-K), on top of Phase 2
 (Plans E-H: git push deploys, custom domains + TLS, rollback + hardening,
 invites + user admin + the web YAML editor) and Phase 1's PaaS core (Plans
 A-D). Working today:
@@ -273,6 +273,67 @@ The web UI mirrors all of this: each project page has an Addons table
 (create form + per-row remove-with-force) and each app page has an attached-
 addons list (detach buttons) plus an attach form listing the project's
 addons.
+
+## Backups
+
+`luncur backup create` (admin) snapshots luncur's whole state into a
+tar.gz under `backups/` on the data PVC: a consistent SQLite snapshot
+(`VACUUM INTO`), the sealer key, and one logical dump per addon
+(`pg_dump -Fc` / redis `SAVE`, taken via pods/exec — credentials never
+leave the pod's environment). A failing addon dump becomes a warning; the
+backup still completes.
+
+```sh
+luncur backup create [--no-upload]
+luncur backup list
+luncur backup prune            # keep newest backup_keep (default 7)
+```
+
+Off-box uploads go to any S3-compatible bucket (AWS/R2/minio/B2) — a
+built-in SigV4 client, no SDK:
+
+```sh
+luncur config set backup_s3_endpoint https://<s3-endpoint>
+luncur config set backup_s3_bucket   my-backups
+luncur config set backup_s3_access_key AKIA...
+luncur config set backup_s3_secret_key ...   # write-only: reads show "(set)"
+luncur config set backup_s3_prefix   luncur  # optional
+luncur config set backup_schedule    daily   # or off (default)
+luncur config set backup_keep        7
+```
+
+With `backup_schedule daily`, the server takes and prunes backups
+automatically. An upload failure keeps the local archive and surfaces a
+warning.
+
+**Security note:** archives contain the sealer key — whoever can read a
+backup can unseal your env vars and addon credentials. The S3 bucket is
+the trust boundary; scope its access accordingly.
+
+### Restore runbook
+
+Restore is deliberately a documented procedure, not a command:
+
+1. Provision the new VPS: `luncur up` (fresh install, any admin password —
+   it will be replaced by the restored DB).
+2. Stop the server so SQLite is quiescent:
+   `kubectl -n luncur-system scale deploy/luncur --replicas=0`.
+3. Copy the backup archive onto the node and untar it. The data PVC is a
+   `local-path` volume on the node — find it with
+   `kubectl -n luncur-system get pvc luncur-data -o jsonpath='{.spec.volumeName}'`
+   and look under `/var/lib/rancher/k3s/storage/<volume>/`.
+4. Replace `luncur.db` and `luncur.key` on the PVC with the archive's
+   copies.
+5. Start the server: `kubectl -n luncur-system scale deploy/luncur --replicas=1`,
+   then `luncur login` with the restored credentials.
+6. Re-create each addon (`luncur addon create ...` with the same names) so
+   the StatefulSets exist, then restore data into them:
+   - Postgres: `kubectl -n <project-ns> exec -i addon-<name>-0 -- sh -c
+     'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean' < addons/<project>-<name>.pgdump`
+   - Redis: scale the addon StatefulSet to 0, copy the `.rdb` onto its PVC
+     as `dump.rdb`, scale back to 1.
+7. Redeploy apps (`luncur deploy` / `git push`) and verify with
+   `luncur status`.
 
 ## Build Pipeline
 
