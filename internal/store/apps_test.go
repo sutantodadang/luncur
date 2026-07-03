@@ -164,3 +164,30 @@ func TestDeployments(t *testing.T) {
 		t.Fatal("want CHECK violation for bogus status")
 	}
 }
+
+func TestAppEjected(t *testing.T) {
+	s := openTest(t)
+	p, _ := s.CreateProject("proj")
+	a, _ := s.CreateApp(p.ID, "web", 8080)
+	if a.Ejected {
+		t.Fatal("new app born ejected")
+	}
+	if err := s.SetAppEjected(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetApp(p.ID, "web")
+	if err != nil || !got.Ejected {
+		t.Fatalf("ejected not persisted: %+v err=%v", got, err)
+	}
+	byID, err := s.GetAppByID(a.ID)
+	if err != nil || !byID.Ejected {
+		t.Fatalf("GetAppByID: %+v err=%v", byID, err)
+	}
+	list, err := s.ListApps(p.ID)
+	if err != nil || len(list) != 1 || !list[0].Ejected {
+		t.Fatalf("ListApps: %+v err=%v", list, err)
+	}
+	if err := s.SetAppEjected(a.ID + 99); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing app: %v", err)
+	}
+}
