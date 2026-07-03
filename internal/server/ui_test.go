@@ -37,12 +37,12 @@ func TestUILoginFlow(t *testing.T) {
 		t.Fatalf("GET /ui/ no cookie: want Location /ui/login, got %q", loc)
 	}
 
-	// 2. POST /ui/login with form email/password -> 303 Location /ui/, Set-Cookie
+	// csrf cookie, obtained the way a browser would: load the login page.
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	// 2. POST /ui/login with form email/password + csrf -> 303 Location /ui/, Set-Cookie
 	form := url.Values{"email": {"u@example.com"}, "password": {"password123"}}
-	resp2, err := client.Post(srv.URL+"/ui/login", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp2 := uiPost(t, client, srv.URL+"/ui/login", csrfCk, nil, form)
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusSeeOther {
 		t.Fatalf("POST /ui/login: want 303, got %d", resp2.StatusCode)
@@ -116,11 +116,9 @@ func TestUILoginBadPassword(t *testing.T) {
 		},
 	}
 
+	csrfCk := uiCSRF(t, client, srv.URL)
 	form := url.Values{"email": {"u2@example.com"}, "password": {"wrongpass"}}
-	resp, err := client.Post(srv.URL+"/ui/login", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := uiPost(t, client, srv.URL+"/ui/login", csrfCk, nil, form)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("bad password: want 200, got %d", resp.StatusCode)
@@ -209,6 +207,47 @@ func noRedirectClient() *http.Client {
 			return http.ErrUseLastResponse
 		},
 	}
+}
+
+// uiCSRF fetches GET /ui/login the way a browser would before submitting any
+// /ui/ form, and returns the luncur_csrf cookie it sets. The cookie isn't
+// session-bound, so the same value works before and after login.
+func uiCSRF(t *testing.T, client *http.Client, base string) *http.Cookie {
+	t.Helper()
+	resp, err := client.Get(base + "/ui/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	for _, c := range resp.Cookies() {
+		if c.Name == csrfCookie {
+			return c
+		}
+	}
+	t.Fatalf("GET /ui/login: expected Set-Cookie %s", csrfCookie)
+	return nil
+}
+
+// uiPost POSTs a url-encoded form carrying the csrf cookie plus a matching
+// _csrf field, and the session cookie if given, mirroring a real browser
+// submission of a page loaded with uiCSRF's cookie.
+func uiPost(t *testing.T, client *http.Client, target string, csrfCk, sessionCk *http.Cookie, form url.Values) *http.Response {
+	t.Helper()
+	form.Set("_csrf", csrfCk.Value)
+	req, err := http.NewRequest("POST", target, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(csrfCk)
+	if sessionCk != nil {
+		req.AddCookie(sessionCk)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
 }
 
 func TestUIProjectVisibleOnList(t *testing.T) {
@@ -339,17 +378,9 @@ func TestUIScalePersists(t *testing.T) {
 	ck := uiSessionCookie(t, st, u.ID)
 
 	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
 	form := url.Values{"replicas": {"5"}}
-	req, err := http.NewRequest("POST", srv.URL+"/ui/projects/web/apps/api/scale", strings.NewReader(form.Encode()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(ck)
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/web/apps/api/scale", csrfCk, ck, form)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("POST scale: want 303, got %d", resp.StatusCode)
@@ -384,16 +415,8 @@ func TestUIDeployGitAppWithoutKube503(t *testing.T) {
 	ck := uiSessionCookie(t, st, u.ID)
 
 	client := noRedirectClient()
-	req, err := http.NewRequest("POST", srv.URL+"/ui/projects/web/apps/g/deploy", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(ck)
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	csrfCk := uiCSRF(t, client, srv.URL)
+	resp := uiPost(t, client, srv.URL+"/ui/projects/web/apps/g/deploy", csrfCk, ck, url.Values{})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("POST deploy without kube: want 503, got %d", resp.StatusCode)
@@ -490,18 +513,10 @@ func TestUIDomainAddAndDelete(t *testing.T) {
 	}
 	ck := uiSessionCookie(t, st, u.ID)
 	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
 
 	addForm := url.Values{"hostname": {"www.example.com"}}
-	addReq, err := http.NewRequest("POST", srv.URL+"/ui/projects/proj/apps/web/domains", strings.NewReader(addForm.Encode()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	addReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	addReq.AddCookie(ck)
-	addResp, err := client.Do(addReq)
-	if err != nil {
-		t.Fatal(err)
-	}
+	addResp := uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/domains", csrfCk, ck, addForm)
 	addResp.Body.Close()
 	if addResp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("POST domains: want 303, got %d", addResp.StatusCode)
@@ -538,16 +553,7 @@ func TestUIDomainAddAndDelete(t *testing.T) {
 	}
 
 	delForm := url.Values{"hostname": {"www.example.com"}}
-	delReq, err := http.NewRequest("POST", srv.URL+"/ui/projects/proj/apps/web/domains/delete", strings.NewReader(delForm.Encode()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	delReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	delReq.AddCookie(ck)
-	delResp, err := client.Do(delReq)
-	if err != nil {
-		t.Fatal(err)
-	}
+	delResp := uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/domains/delete", csrfCk, ck, delForm)
 	delResp.Body.Close()
 	if delResp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("POST domains/delete: want 303, got %d", delResp.StatusCode)
@@ -555,5 +561,78 @@ func TestUIDomainAddAndDelete(t *testing.T) {
 
 	if body := appPage(t); strings.Contains(body, "<td>www.example.com</td>") {
 		t.Fatalf("app page after delete: want www.example.com removed, got: %s", body)
+	}
+}
+
+// TestUIPostRequiresCSRF exercises the double-submit CSRF check on both a
+// uiPage-wrapped POST (scale) and the standalone login POST.
+func TestUIPostRequiresCSRF(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionCk := uiSessionCookie(t, st, u.ID)
+
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	scaleURL := srv.URL + "/ui/projects/web/apps/api/scale"
+	scalePost := func(csrfField string) *http.Response {
+		t.Helper()
+		form := url.Values{"replicas": {"3"}}
+		if csrfField != "" {
+			form.Set("_csrf", csrfField)
+		}
+		req, err := http.NewRequest("POST", scaleURL, strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(sessionCk)
+		req.AddCookie(csrfCk)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+
+	// 1. No _csrf field -> 403.
+	if resp := scalePost(""); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("scale without _csrf: want 403, got %d", resp.StatusCode)
+	}
+
+	// 2. Wrong _csrf -> 403.
+	if resp := scalePost("wrong"); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("scale with wrong _csrf: want 403, got %d", resp.StatusCode)
+	}
+
+	// 3. Correct _csrf -> not 403.
+	if resp := scalePost(csrfCk.Value); resp.StatusCode == http.StatusForbidden {
+		t.Fatalf("scale with correct _csrf: want not 403, got %d", resp.StatusCode)
+	}
+
+	// 4. POST /ui/login without _csrf, after GETting /ui/login for the
+	// cookie -> 403.
+	loginForm := url.Values{"email": {"root@b.co"}, "password": {"pw123456"}}
+	loginReq, err := http.NewRequest("POST", srv.URL+"/ui/login", strings.NewReader(loginForm.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginReq.AddCookie(csrfCk)
+	loginResp, err := client.Do(loginReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer loginResp.Body.Close()
+	if loginResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("login without _csrf: want 403, got %d", loginResp.StatusCode)
 	}
 }
