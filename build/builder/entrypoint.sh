@@ -1,0 +1,79 @@
+#!/bin/bash
+# Entrypoint for luncur builder image.
+# Fetches source, detects/generates Dockerfile, builds image, pushes to registry.
+# Logs all output to /data/logs/${LUNCUR_DEPLOY_ID}.log via tee.
+
+set -euo pipefail
+
+# ===== Logging Setup =====
+# Ensure log directory exists and redirect all output (stdout + stderr) through tee.
+# This allows the server to tail the log file in real-time while we also see it on stderr.
+LOG="/data/logs/${LUNCUR_DEPLOY_ID}.log"
+mkdir -p "$(dirname "$LOG")"
+
+# Redirect both stdout and stderr to tee -a (append mode).
+# The tee command copies to the log file and also to the original stdout.
+exec > >(tee -a "$LOG")
+exec 2>&1
+
+# ===== Banner =====
+echo "==== luncur builder ===="
+echo "Deploy ID: $LUNCUR_DEPLOY_ID"
+echo "Image Ref: $LUNCUR_IMAGE_REF"
+echo "Source Type: $LUNCUR_SOURCE_TYPE"
+echo "Registry Host: $LUNCUR_REGISTRY_HOST"
+echo "Log: $LOG"
+echo ""
+
+# ===== Prepare Workspace =====
+echo "Preparing workspace..."
+
+if [ "$LUNCUR_SOURCE_TYPE" = "git" ]; then
+  # Clone from git repository (shallow clone of the specified branch).
+  echo "Cloning from: $LUNCUR_GIT_URL (branch: ${LUNCUR_GIT_BRANCH:-main})"
+  git clone --depth 1 --branch "${LUNCUR_GIT_BRANCH:-main}" "$LUNCUR_GIT_URL" /workspace
+else
+  # Extract from tarball (assumes sources are at /data/sources/${LUNCUR_DEPLOY_ID}.tar.gz).
+  echo "Extracting tarball: /data/sources/${LUNCUR_DEPLOY_ID}.tar.gz"
+  mkdir -p /workspace
+  tar -xzf "/data/sources/${LUNCUR_DEPLOY_ID}.tar.gz" -C /workspace
+fi
+
+echo "Workspace ready at /workspace"
+echo ""
+
+# ===== Build Logic =====
+echo "Detecting build configuration..."
+
+if [ -f /workspace/Dockerfile ]; then
+  echo "Found Dockerfile in workspace. Using it."
+  DOCKERFILE_DIR="/workspace"
+else
+  echo "No Dockerfile found. Generating with nixpacks..."
+  nixpacks build /workspace --out /workspace/.nixpacks
+  DOCKERFILE_DIR="/workspace/.nixpacks"
+fi
+
+echo ""
+echo "Building and pushing image..."
+
+# Use buildctl-daemonless.sh wrapper to run buildkitd + buildctl in rootless mode.
+# The wrapper is provided by the moby/buildkit:rootless base image.
+#
+# Output flags:
+#   type=image: build a container image (not just export to tar)
+#   name=${LUNCUR_IMAGE_REF}: tag the image with the specified ref
+#   push=true: push immediately after building
+#   registry.insecure=true: allow unencrypted (http://) pushes to in-cluster registries.
+#     This pairs with the K3s registries.yaml config that luncur up writes (Plan D).
+#     Without it, buildkit refuses to push to registries without valid HTTPS certs.
+#
+buildctl-daemonless.sh buildctl build \
+  --frontend dockerfile.v0 \
+  --local context=/workspace \
+  --local dockerfile="${DOCKERFILE_DIR}" \
+  --output type=image,name="${LUNCUR_IMAGE_REF}",push=true,registry.insecure=true
+
+echo ""
+echo "==== build complete ===="
+echo "Image pushed: $LUNCUR_IMAGE_REF"

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ktesting "k8s.io/client-go/testing"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -125,5 +127,23 @@ func TestApplyRejectsObjectWithoutName(t *testing.T) {
 	bad := []render.Object{{Kind: "Service", JSON: json.RawMessage(`{"metadata":{}}`)}}
 	if err := c.Apply(context.Background(), "ns", bad); err == nil {
 		t.Fatal("want error for object without metadata.name")
+	}
+}
+
+func TestWaitJobSucceeded(t *testing.T) {
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	dyn.PrependReactor("get", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		u := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "batch/v1", "kind": "Job",
+			"metadata": map[string]any{"name": "build-1", "namespace": "luncur-system"},
+			"status":   map[string]any{"succeeded": int64(1)},
+		}}
+		return true, u, nil
+	})
+	c := NewFromDynamic(dyn)
+	ok, err := c.WaitJob(context.Background(), "luncur-system", "build-1", time.Millisecond)
+	if err != nil || !ok {
+		t.Fatalf("WaitJob = (%v, %v), want (true, nil)", ok, err)
 	}
 }

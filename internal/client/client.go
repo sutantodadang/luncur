@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -126,6 +128,40 @@ func (c *Client) doRaw(method, path string, body []byte) ([]byte, error) {
 	return respBody, nil
 }
 
+// doMultipart sends a request with a pre-built multipart body and decodes a
+// JSON response, mirroring do's error-envelope handling.
+func (c *Client) doMultipart(method, path, contentType string, body io.Reader, out any) error {
+	req, err := http.NewRequest(method, c.base+path, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", contentType)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		var env struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&env) == nil && env.Error.Code != "" {
+			return fmt.Errorf("%s (%s)", env.Error.Message, env.Error.Code)
+		}
+		return fmt.Errorf("server returned %s", resp.Status)
+	}
+	if out != nil {
+		return json.NewDecoder(resp.Body).Decode(out)
+	}
+	return nil
+}
+
 type ProjectInfo struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
@@ -193,6 +229,51 @@ func (c *Client) Deploy(project, app, image string) (DeployResult, error) {
 	var out DeployResult
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/deploy",
 		map[string]string{"image": image}, &out)
+	return out, err
+}
+
+// DeploySource uploads a source tarball as a multipart form and returns the
+// resulting (async) deployment status.
+func (c *Client) DeploySource(project, app string, tarball io.Reader) (DeployResult, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, err := w.CreateFormFile("source", "source.tar.gz")
+	if err != nil {
+		return DeployResult{}, err
+	}
+	if _, err := io.Copy(part, tarball); err != nil {
+		return DeployResult{}, err
+	}
+	if err := w.Close(); err != nil {
+		return DeployResult{}, err
+	}
+
+	var out DeployResult
+	err = c.doMultipart("POST",
+		"/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/deploy",
+		w.FormDataContentType(), &buf, &out)
+	return out, err
+}
+
+// GetDeploy fetches the current status of a deployment.
+func (c *Client) GetDeploy(project, app string, id int64) (DeployResult, error) {
+	var out DeployResult
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+
+		"/deploys/"+strconv.FormatInt(id, 10), nil, &out)
+	return out, err
+}
+
+// DeployLogs fetches the build log text for a deployment.
+func (c *Client) DeployLogs(project, app string, id int64) ([]byte, error) {
+	return c.doRaw("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+
+		"/deploys/"+strconv.FormatInt(id, 10)+"/logs", nil)
+}
+
+// CreateGitApp registers an app whose source is a git repo, built at deploy time.
+func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch string) (AppInfo, error) {
+	var out AppInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
+		map[string]any{"name": name, "port": port, "git_url": gitURL, "git_branch": branch}, &out)
 	return out, err
 }
 

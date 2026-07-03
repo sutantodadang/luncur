@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/sutantodadang/luncur/internal/store"
@@ -42,14 +43,22 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
-		Port int    `json:"port"`
+		Name      string `json:"name"`
+		Port      int    `json:"port"`
+		GitURL    string `json:"git_url"`
+		GitBranch string `json:"git_branch"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	a, err := s.st.CreateApp(p.ID, req.Name, req.Port)
+	var a store.App
+	var err error
+	if req.GitURL != "" {
+		a, err = s.st.CreateGitApp(p.ID, req.Name, req.Port, req.GitURL, req.GitBranch)
+	} else {
+		a, err = s.st.CreateApp(p.ID, req.Name, req.Port)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			writeError(w, http.StatusConflict, "app_exists", "app already exists")
@@ -137,6 +146,12 @@ func (s *server) handleDeleteApp(w http.ResponseWriter, r *http.Request, u store
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleDeployApp dispatches on the request shape: a multipart body carries
+// a source tarball for an async build (Job -> wait -> apply); a JSON body
+// with a non-empty "image" is the synchronous prebuilt-image path (kept
+// byte-for-byte compatible with the pre-build-pipeline behavior); a git-source
+// app (App.SourceType == "git") with neither triggers an async build cloning
+// from its configured repo; anything else is a bad request.
 func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.requireProject(w, u, r.PathValue("project"))
 	if !ok {
@@ -146,27 +161,90 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 	if !ok {
 		return
 	}
-
-	var req struct {
-		Image string `json:"image"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Image == "" {
-		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
-		return
-	}
-
 	if !s.requireKube(w) {
 		return
 	}
 
-	d, err := s.st.CreateDeployment(a.ID, "deploying", req.Image)
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		if s.src == nil {
+			writeError(w, http.StatusServiceUnavailable, "build_unavailable", "server has no data directory configured")
+			return
+		}
+
+		if err := r.ParseMultipartForm(64 << 20); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "invalid multipart body")
+			return
+		}
+		part, _, err := r.FormFile("source")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "missing source file")
+			return
+		}
+		defer part.Close()
+
+		d, err := s.st.CreateDeployment(a.ID, "building", "", u.ID)
+		if err != nil {
+			log.Printf("create deployment: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		if _, err := s.src.Save(d.ID, part); err != nil {
+			log.Printf("save source tarball: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+
+		s.startBuild(p, a, d)
+
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"deployment_id": d.ID,
+			"status":        "building",
+		})
+		return
+	}
+
+	var req struct {
+		Image string `json:"image"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+
+	if req.Image != "" {
+		s.deployImage(w, r, p, a, req.Image)
+		return
+	}
+
+	if a.SourceType == "git" {
+		if s.src == nil {
+			writeError(w, http.StatusServiceUnavailable, "build_unavailable", "server has no data directory configured")
+			return
+		}
+		d, err := s.st.CreateDeployment(a.ID, "building", "", u.ID)
+		if err != nil {
+			log.Printf("create deployment: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		s.startBuild(p, a, d)
+		writeJSON(w, http.StatusAccepted, map[string]any{"deployment_id": d.ID, "status": "building"})
+		return
+	}
+	writeError(w, http.StatusBadRequest, "bad_request", "provide a source tarball or an image")
+}
+
+// deployImage is the synchronous prebuilt-image deploy path: render, apply,
+// mark live. Unchanged from the pre-build-pipeline behavior.
+func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Project, a store.App, image string) {
+	d, err := s.st.CreateDeployment(a.ID, "deploying", image, 0)
 	if err != nil {
 		log.Printf("create deployment: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 
-	rendered, err := s.renderApp(p, a, req.Image, true)
+	rendered, err := s.renderApp(p, a, image, true)
 	if err == nil {
 		if err = s.kube.EnsureNamespace(r.Context(), p.Namespace); err == nil {
 			err = s.kube.Apply(r.Context(), p.Namespace, rendered.Objects)
@@ -176,7 +254,8 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 		if setErr := s.st.SetDeploymentStatus(d.ID, "failed"); setErr != nil {
 			log.Printf("set deployment failed: %v", setErr)
 		}
-		writeError(w, http.StatusBadGateway, "deploy_failed", err.Error())
+		log.Printf("deploy image %s: %v", image, err)
+		writeError(w, http.StatusBadGateway, "deploy_failed", "deploy failed")
 		return
 	}
 
@@ -191,6 +270,76 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 		"status":        "live",
 		"url":           "http://" + hostFor(a.Name, s.externalIP),
 	})
+}
+
+// requireDeploy loads a deployment by id and verifies it belongs to app a.
+// Writes the error response and returns ok=false on failure.
+func (s *server) requireDeploy(w http.ResponseWriter, a store.App, idStr string) (store.Deployment, bool) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid deploy id")
+		return store.Deployment{}, false
+	}
+	d, err := s.st.GetDeployment(id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && d.AppID != a.ID) {
+		writeError(w, http.StatusNotFound, "not_found", "no such deploy")
+		return store.Deployment{}, false
+	}
+	if err != nil {
+		log.Printf("get deploy: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return store.Deployment{}, false
+	}
+	return d, true
+}
+
+func (s *server) handleGetDeploy(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	if !ok {
+		return
+	}
+	d, ok := s.requireDeploy(w, a, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deployment_id": d.ID,
+		"status":        d.Status,
+		"image":         d.ImageRef,
+		"url":           "http://" + hostFor(a.Name, s.externalIP),
+	})
+}
+
+func (s *server) handleDeployLogs(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	if !ok {
+		return
+	}
+	d, ok := s.requireDeploy(w, a, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	if s.src == nil {
+		writeError(w, http.StatusServiceUnavailable, "build_unavailable", "no build logs available")
+		return
+	}
+	logBytes, err := s.src.ReadLog(d.ID)
+	if err != nil {
+		log.Printf("read log: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(logBytes)
 }
 
 func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.User) {

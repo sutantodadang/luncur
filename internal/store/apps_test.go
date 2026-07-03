@@ -60,6 +60,60 @@ func TestAppCRUD(t *testing.T) {
 	}
 }
 
+func TestCreateGitApp(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+
+	a, err := s.CreateGitApp(p.ID, "web", 8080, "https://example.com/repo.git", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SourceType != "git" || a.GitURL != "https://example.com/repo.git" || a.GitBranch != "main" {
+		t.Fatalf("bad git app: %+v", a)
+	}
+
+	got, err := s.GetApp(p.ID, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SourceType != "git" || got.GitURL != "https://example.com/repo.git" || got.GitBranch != "main" {
+		t.Fatalf("get after create: %+v", got)
+	}
+
+	if _, err := s.CreateGitApp(p.ID, "web2", 8080, "", "main"); err == nil {
+		t.Fatal("want error for empty git url")
+	}
+
+	explicit, err := s.CreateGitApp(p.ID, "web3", 8080, "https://example.com/repo2.git", "develop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicit.GitBranch != "develop" {
+		t.Fatalf("want explicit branch preserved, got %+v", explicit)
+	}
+}
+
+func TestCreateAppSourceType(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+
+	a, err := s.CreateApp(p.ID, "api", 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.SourceType != "tarball" {
+		t.Fatalf("want SourceType=tarball, got %+v", a)
+	}
+
+	got, err := s.GetApp(p.ID, "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SourceType != "tarball" || got.GitURL != "" || got.GitBranch != "" {
+		t.Fatalf("get after create: %+v", got)
+	}
+}
+
 func TestDeployments(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)
@@ -72,11 +126,11 @@ func TestDeployments(t *testing.T) {
 		t.Fatalf("want ErrNotFound with no deployments, got %v", err)
 	}
 
-	d1, err := s.CreateDeployment(a.ID, "deploying", "registry/x:1")
+	d1, err := s.CreateDeployment(a.ID, "deploying", "registry/x:1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d2, err := s.CreateDeployment(a.ID, "deploying", "registry/x:2")
+	d2, err := s.CreateDeployment(a.ID, "deploying", "registry/x:2", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +143,7 @@ func TestDeployments(t *testing.T) {
 		t.Fatalf("latest: %+v %v (d1=%d d2=%d)", latest, err, d1.ID, d2.ID)
 	}
 
-	if _, err := s.CreateDeployment(a.ID, "bogus", "x"); err == nil {
+	if _, err := s.CreateDeployment(a.ID, "bogus", "x", 0); err == nil {
 		t.Fatal("want CHECK violation for bogus status")
 	}
 }
