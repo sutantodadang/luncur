@@ -1,0 +1,18 @@
+{{define "register.html"}}
+{{template "head" .}}
+<h1>Join luncur</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+{{if .Valid}}
+<p>You've been invited as <strong>{{.Role}}</strong>.</p>
+<form method="post" action="/ui/register">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input type="hidden" name="token" value="{{.Token}}">
+  <p><label>email <input type="email" name="email" required autofocus></label></p>
+  <p><label>password <input type="password" name="password" required minlength="8"></label></p>
+  <p><button type="submit">create account</button></p>
+</form>
+{{else}}
+<p class="err">This invite is invalid or expired. Ask your admin for a new one.</p>
+{{end}}
+{{template "foot" .}}
+{{end}}

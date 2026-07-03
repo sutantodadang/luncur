@@ -699,3 +699,204 @@ func TestUIRollback(t *testing.T) {
 		t.Fatalf("app page after rollback: want rollback marker, got: %s", body)
 	}
 }
+
+// TestUIRegisterFlow exercises the session-less invite-based registration
+// flow: a valid token renders the form, a bogus one shows the error page, a
+// successful POST logs the new user straight in and burns the invite, and
+// the created user carries the invite's role.
+func TestUIRegisterFlow(t *testing.T) {
+	srv, st := testServer(t)
+	admin, err := st.CreateUser("root@b.co", "password123", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := st.CreateInvite("member", admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := noRedirectClient()
+
+	// 1. GET /ui/register?token=<tok> -> 200, body contains the email field.
+	resp1, err := client.Get(srv.URL + "/ui/register?token=" + inv.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ui/register valid token: want 200, got %d", resp1.StatusCode)
+	}
+	body1, err := io.ReadAll(resp1.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body1), `name="email"`) {
+		t.Fatalf("GET /ui/register valid token: body missing email field, got: %s", body1)
+	}
+
+	// 2. GET /ui/register?token=bogus -> 200, body contains "invalid or
+	// expired", no email field.
+	resp2, err := client.Get(srv.URL + "/ui/register?token=bogus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ui/register bogus token: want 200, got %d", resp2.StatusCode)
+	}
+	body2, err := io.ReadAll(resp2.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body2), "invalid or expired") {
+		t.Fatalf("GET /ui/register bogus token: body missing error, got: %s", body2)
+	}
+	if strings.Contains(string(body2), `name="email"`) {
+		t.Fatalf("GET /ui/register bogus token: unexpected email field, got: %s", body2)
+	}
+
+	// 3. POST /ui/register (csrf-correct) -> 303 to /ui/, Set-Cookie
+	// luncur_session.
+	csrfCk := uiCSRF(t, client, srv.URL)
+	form := url.Values{
+		"email":    {"new@x.com"},
+		"password": {"secret123"},
+		"token":    {inv.Token},
+	}
+	resp3 := uiPost(t, client, srv.URL+"/ui/register", csrfCk, nil, form)
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST /ui/register: want 303, got %d", resp3.StatusCode)
+	}
+	if loc := resp3.Header.Get("Location"); loc != "/ui/" {
+		t.Fatalf("POST /ui/register: want Location /ui/, got %q", loc)
+	}
+	var sessionCk *http.Cookie
+	for _, c := range resp3.Cookies() {
+		if c.Name == sessionCookie {
+			sessionCk = c
+		}
+	}
+	if sessionCk == nil {
+		t.Fatal("POST /ui/register: expected Set-Cookie luncur_session")
+	}
+
+	// 4. The invite is burned: GET /ui/register?token=<tok> -> invalid page.
+	resp4, err := client.Get(srv.URL + "/ui/register?token=" + inv.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp4.Body.Close()
+	body4, err := io.ReadAll(resp4.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body4), "invalid or expired") {
+		t.Fatalf("GET /ui/register burned token: want invalid page, got: %s", body4)
+	}
+
+	// 5. New user exists with role member.
+	newUser, err := st.GetUserByEmail("new@x.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newUser.Role != "member" {
+		t.Fatalf("new user role: want member, got %q", newUser.Role)
+	}
+}
+
+// TestUIUsersPageAdminOnly exercises the admin-only users page: a member
+// gets a plain 404 (leak-nothing, mirroring uiProject), an admin sees both
+// users, can create an invite (which then shows up as a registration link),
+// and can delete another user but not themselves.
+func TestUIUsersPageAdminOnly(t *testing.T) {
+	srv, st := testServer(t)
+	admin, err := st.CreateUser("root@b.co", "password123", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := st.CreateUser("m@b.co", "password123", "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := noRedirectClient()
+
+	// Member GETs /ui/users -> 404.
+	memberCk := uiSessionCookie(t, st, member.ID)
+	req, err := http.NewRequest("GET", srv.URL+"/ui/users", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(memberCk)
+	memberResp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer memberResp.Body.Close()
+	if memberResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /ui/users as member: want 404, got %d", memberResp.StatusCode)
+	}
+
+	// Admin GETs -> 200 with both users' emails.
+	adminCk := uiSessionCookie(t, st, admin.ID)
+	usersPage := func(t *testing.T) string {
+		t.Helper()
+		req, err := http.NewRequest("GET", srv.URL+"/ui/users", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(adminCk)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /ui/users as admin: want 200, got %d", resp.StatusCode)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	adminBody := usersPage(t)
+	if !strings.Contains(adminBody, "root@b.co") || !strings.Contains(adminBody, "m@b.co") {
+		t.Fatalf("GET /ui/users as admin: want both emails listed, got: %s", adminBody)
+	}
+
+	// Admin posts /ui/users/invite (role member) -> 303; page now shows
+	// /ui/register?token=.
+	csrfCk := uiCSRF(t, client, srv.URL)
+	inviteForm := url.Values{"role": {"member"}}
+	inviteResp := uiPost(t, client, srv.URL+"/ui/users/invite", csrfCk, adminCk, inviteForm)
+	inviteResp.Body.Close()
+	if inviteResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST /ui/users/invite: want 303, got %d", inviteResp.StatusCode)
+	}
+	if body := usersPage(t); !strings.Contains(body, "/ui/register?token=") {
+		t.Fatalf("GET /ui/users after invite: want registration link, got: %s", body)
+	}
+
+	// Admin posts /ui/users/delete with the member's id -> 303; page no
+	// longer lists the member.
+	delForm := url.Values{"id": {fmt.Sprintf("%d", member.ID)}}
+	delResp := uiPost(t, client, srv.URL+"/ui/users/delete", csrfCk, adminCk, delForm)
+	delResp.Body.Close()
+	if delResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST /ui/users/delete: want 303, got %d", delResp.StatusCode)
+	}
+	if body := usersPage(t); strings.Contains(body, "m@b.co") {
+		t.Fatalf("GET /ui/users after delete: want member removed, got: %s", body)
+	}
+
+	// Admin posting its own id -> 400.
+	selfDelForm := url.Values{"id": {fmt.Sprintf("%d", admin.ID)}}
+	selfDelResp := uiPost(t, client, srv.URL+"/ui/users/delete", csrfCk, adminCk, selfDelForm)
+	defer selfDelResp.Body.Close()
+	if selfDelResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("POST /ui/users/delete self: want 400, got %d", selfDelResp.StatusCode)
+	}
+}
