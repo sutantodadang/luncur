@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/sutantodadang/luncur/internal/client"
 	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/server"
 	"github.com/sutantodadang/luncur/internal/store"
@@ -250,5 +251,85 @@ func TestSSHKeyCommands(t *testing.T) {
 	}
 	if strings.Contains(out, "laptop") {
 		t.Fatalf("key not removed: %s", out)
+	}
+}
+
+// tokenIDs extracts the ID column from `token list`'s tabwriter output.
+func tokenIDs(out string) map[string]bool {
+	ids := map[string]bool{}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for _, line := range lines[1:] { // skip header
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			ids[fields[0]] = true
+		}
+	}
+	return ids
+}
+
+func TestTokenAndRollbackCommands(t *testing.T) {
+	srv := testEnv(t)
+
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "token", "list")
+	if err != nil {
+		t.Fatalf("token list: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "login") {
+		t.Fatalf("want login-created token name, got %q", out)
+	}
+	before := tokenIDs(out)
+
+	// Create a second token directly via the API (not through the CLI's
+	// saved config), so the CLI's active session survives untouched.
+	if _, err := client.New(srv.URL, "").Login("root@b.co", "pw123456"); err != nil {
+		t.Fatalf("second login: %v", err)
+	}
+
+	out, err = run(t, "token", "list")
+	if err != nil {
+		t.Fatalf("token list after second login: %v (%s)", err, out)
+	}
+	after := tokenIDs(out)
+	var newID string
+	for id := range after {
+		if !before[id] {
+			newID = id
+			break
+		}
+	}
+	if newID == "" {
+		t.Fatalf("did not find new token id; before=%v after=%v", before, after)
+	}
+
+	if _, err := run(t, "token", "revoke", newID); err != nil {
+		t.Fatalf("token revoke: %v", err)
+	}
+
+	out, err = run(t, "token", "list")
+	if err != nil {
+		t.Fatalf("token list after revoke: %v (%s)", err, out)
+	}
+	if tokenIDs(out)[newID] {
+		t.Fatalf("revoked token still listed: %s", out)
+	}
+	if !strings.Contains(out, "login") {
+		t.Fatalf("session token should survive revoke of the other token: %s", out)
+	}
+
+	// rollback requires kube; testEnv has none, so it should surface the
+	// server's kubernetes_unavailable error.
+	if _, err := run(t, "project", "create", "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "app", "create", "web", "--project", "p", "--port", "8080"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = run(t, "rollback", "web", "--project", "p")
+	if err == nil || !strings.Contains(err.Error(), "kubernetes") {
+		t.Fatalf("want kubernetes error, got %v", err)
 	}
 }

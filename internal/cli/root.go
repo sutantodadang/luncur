@@ -39,6 +39,8 @@ func newRoot() *cobra.Command {
 	root.AddCommand(pushHookCmd())
 	root.AddCommand(domainCmd())
 	root.AddCommand(configCmd())
+	root.AddCommand(rollbackCmd())
+	root.AddCommand(tokenCmd())
 	return root
 }
 
