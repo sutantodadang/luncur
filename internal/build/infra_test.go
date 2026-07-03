@@ -31,7 +31,7 @@ func TestSystemObjects(t *testing.T) {
 	for _, o := range objs {
 		all += string(o.JSON)
 	}
-	for _, want := range []string{`"type":"NodePort"`, `"nodePort":30500`} {
+	for _, want := range []string{`"type":"NodePort"`, `"nodePort":30500`, "REGISTRY_STORAGE_DELETE_ENABLED"} {
 		if !strings.Contains(all, want) {
 			t.Fatalf("registry Service missing %q:\n%s", want, all)
 		}
