@@ -6,13 +6,28 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	ktesting "k8s.io/client-go/testing"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 
 	"github.com/sutantodadang/luncur/internal/render"
 )
+
+// newFakeDyn builds a fake dynamic client seeded with objs, following the
+// same empty-scheme construction the rest of this file uses (see
+// fakeClient / TestDeleteAppObjectsIgnoresNotFound). Unstructured objects
+// carry their own GVK, and the fake dynamic client infers the plural
+// resource name from Kind, so no extra scheme registration is needed for
+// regularly-pluralized kinds like Deployment.
+func newFakeDyn(t *testing.T, objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	return dynamicfake.NewSimpleDynamicClient(scheme, objs...)
+}
 
 type recorded struct {
 	verb      string
@@ -86,6 +101,33 @@ func TestApplyUsesSSAForEveryObject(t *testing.T) {
 	}
 }
 
+// TestApplyClusterRoleBindingSkipsNamespace guards against Apply treating
+// ClusterRoleBinding (cluster-scoped, per gvrByKind) as namespaced. Using
+// the recorded-action fakeClient is the simplest reliable path: the fake
+// dynamic client's short-circuit reactor never round-trips through a real
+// ObjectTracker, so asserting on the recorded namespace is sufficient
+// without needing a Get-based round trip.
+func TestApplyClusterRoleBindingSkipsNamespace(t *testing.T) {
+	c, log := fakeClient(t)
+	crb := []render.Object{{
+		Kind: "ClusterRoleBinding",
+		JSON: json.RawMessage(`{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"luncur-crb"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"cluster-admin"},"subjects":[{"kind":"ServiceAccount","name":"luncur","namespace":"luncur-system"}]}`),
+	}}
+	if err := c.Apply(context.Background(), "luncur-web", crb); err != nil {
+		t.Fatal(err)
+	}
+	if len(*log) != 1 {
+		t.Fatalf("want 1 action, got %d: %+v", len(*log), *log)
+	}
+	rec := (*log)[0]
+	if rec.resource != "clusterrolebindings" || rec.name != "luncur-crb" {
+		t.Fatalf("bad action: %+v", rec)
+	}
+	if rec.namespace != "" {
+		t.Fatalf("want no namespace on cluster-scoped patch, got %q", rec.namespace)
+	}
+}
+
 func TestEnsureNamespace(t *testing.T) {
 	c, log := fakeClient(t)
 	if err := c.EnsureNamespace(context.Background(), "luncur-web"); err != nil {
@@ -145,5 +187,57 @@ func TestWaitJobSucceeded(t *testing.T) {
 	ok, err := c.WaitJob(context.Background(), "luncur-system", "build-1", time.Millisecond)
 	if err != nil || !ok {
 		t.Fatalf("WaitJob = (%v, %v), want (true, nil)", ok, err)
+	}
+}
+
+func TestAppPodsAndNodeIP(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: "web-1", Namespace: "proj",
+			Labels: map[string]string{"app.kubernetes.io/name": "web"},
+		}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: "other-1", Namespace: "proj",
+			Labels: map[string]string{"app.kubernetes.io/name": "other"},
+		}},
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: "10.0.0.5"},
+				{Type: corev1.NodeExternalIP, Address: "203.0.113.9"},
+			}},
+		},
+	)
+	c := NewForTest(nil, cs)
+
+	pods, err := c.AppPods(context.Background(), "proj", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pods) != 1 || pods[0] != "web-1" {
+		t.Fatalf("pods = %v, want [web-1]", pods)
+	}
+
+	ip, err := c.NodeIP(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ip != "203.0.113.9" {
+		t.Fatalf("ip = %q, want ExternalIP preferred", ip)
+	}
+}
+
+func TestWaitDeployment(t *testing.T) {
+	dep := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "Deployment",
+		"metadata": map[string]any{"name": "luncur", "namespace": "luncur-system"},
+		"status":   map[string]any{"readyReplicas": int64(1)},
+	}}
+	dyn := newFakeDyn(t, dep)
+	c := NewForTest(dyn, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := c.WaitDeployment(ctx, "luncur-system", "luncur", 10*time.Millisecond); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -39,6 +39,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -46,3 +50,20 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // DB exposes the raw handle for queries owned by sibling files/plans.
 func (s *Store) DB() *sql.DB { return s.db }
+
+// migrate adds columns introduced after a table first shipped; schema.sql
+// only creates missing tables, so pre-existing DBs need explicit ALTERs.
+func migrate(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(
+		`SELECT count(*) FROM pragma_table_info('api_tokens') WHERE name = 'expires_at'`,
+	).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := db.Exec(`ALTER TABLE api_tokens ADD COLUMN expires_at TEXT`); err != nil {
+			return err
+		}
+	}
+	return nil
+}

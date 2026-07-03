@@ -98,3 +98,26 @@ func (s *Store) LatestDeployment(appID int64) (Deployment, error) {
 	d.ImageRef, d.LogPath = img.String, logp.String
 	return d, err
 }
+
+// ListDeployments returns an app's deploy history, newest first.
+// ponytail: hard cap 50 — paging when someone actually has 51 deploys to read.
+func (s *Store) ListDeployments(appID int64) ([]Deployment, error) {
+	rows, err := s.db.Query(
+		`SELECT id, app_id, status, image_ref, log_path, created_by, created_at
+		 FROM deployments WHERE app_id = ? ORDER BY id DESC LIMIT 50`, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Deployment
+	for rows.Next() {
+		var d Deployment
+		var img, logp sql.NullString
+		if err := rows.Scan(&d.ID, &d.AppID, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		d.ImageRef, d.LogPath = img.String, logp.String
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}

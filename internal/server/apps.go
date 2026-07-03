@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -10,6 +11,23 @@ import (
 
 	"github.com/sutantodadang/luncur/internal/store"
 )
+
+// errKubeUnavailable is the shared cores' sentinel for "this action can't
+// be applied because no kube client is configured". Callers (the JSON API
+// and the UI) each translate it into their own response shape.
+var errKubeUnavailable = errors.New("kubernetes is not configured")
+
+// errBuildUnavailable is deployGitApp's sentinel for "no build source is
+// configured" (the server was started without a data directory).
+var errBuildUnavailable = errors.New("server has no data directory configured")
+
+// scaleReplicasError wraps a SetReplicas validation failure so callers can
+// tell it apart from scaleApp's other (internal) failure modes and answer
+// with a caller-fault status code.
+type scaleReplicasError struct{ err error }
+
+func (e *scaleReplicasError) Error() string { return e.err.Error() }
+func (e *scaleReplicasError) Unwrap() error { return e.err }
 
 func (s *server) appJSON(a store.App) map[string]any {
 	return map[string]any{
@@ -217,21 +235,47 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 	}
 
 	if a.SourceType == "git" {
-		if s.src == nil {
-			writeError(w, http.StatusServiceUnavailable, "build_unavailable", "server has no data directory configured")
-			return
-		}
-		d, err := s.st.CreateDeployment(a.ID, "building", "", u.ID)
+		d, err := s.deployGitApp(p, a, u.ID)
 		if err != nil {
-			log.Printf("create deployment: %v", err)
-			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			switch {
+			case errors.Is(err, errKubeUnavailable):
+				// Unreachable today (requireKube already answered above),
+				// kept so the shared core stays complete for any caller.
+				writeError(w, http.StatusServiceUnavailable, "kubernetes_unavailable", "kubernetes is not configured")
+			case errors.Is(err, errBuildUnavailable):
+				writeError(w, http.StatusServiceUnavailable, "build_unavailable", "server has no data directory configured")
+			default:
+				log.Printf("git deploy: %v", err)
+				writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			}
 			return
 		}
-		s.startBuild(p, a, d)
 		writeJSON(w, http.StatusAccepted, map[string]any{"deployment_id": d.ID, "status": "building"})
 		return
 	}
 	writeError(w, http.StatusBadRequest, "bad_request", "provide a source tarball or an image")
+}
+
+// deployGitApp is the shared core behind API (handleDeployApp's git branch)
+// and UI (handleUIDeploy) git-triggered deploys: verify kube and the build
+// source are configured, record a "building" deployment, and kick off the
+// async build. Returns errKubeUnavailable / errBuildUnavailable when the
+// respective dependency is missing — checked BEFORE creating the deployment
+// row, so a row is never left stuck in "building" for a build that can't
+// start (and startBuild's goroutine never sees a nil kube/src).
+func (s *server) deployGitApp(p store.Project, a store.App, userID int64) (store.Deployment, error) {
+	if s.kube == nil {
+		return store.Deployment{}, errKubeUnavailable
+	}
+	if s.src == nil {
+		return store.Deployment{}, errBuildUnavailable
+	}
+	d, err := s.st.CreateDeployment(a.ID, "building", "", userID)
+	if err != nil {
+		return store.Deployment{}, err
+	}
+	s.startBuild(p, a, d)
+	return d, nil
 }
 
 // deployImage is the synchronous prebuilt-image deploy path: render, apply,
@@ -331,6 +375,20 @@ func (s *server) handleDeployLogs(w http.ResponseWriter, r *http.Request, u stor
 		writeError(w, http.StatusServiceUnavailable, "build_unavailable", "no build logs available")
 		return
 	}
+	if r.URL.Query().Get("follow") == "1" {
+		fl, ok := sseStart(w)
+		if !ok {
+			return
+		}
+		s.followFile(w, fl, r, s.src.LogPath(d.ID), func() (bool, string) {
+			cur, err := s.st.GetDeployment(d.ID)
+			if err != nil {
+				return true, "unknown"
+			}
+			return cur.Status == "live" || cur.Status == "failed", cur.Status
+		})
+		return
+	}
 	logBytes, err := s.src.ReadLog(d.ID)
 	if err != nil {
 		log.Printf("read log: %v", err)
@@ -340,6 +398,37 @@ func (s *server) handleDeployLogs(w http.ResponseWriter, r *http.Request, u stor
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write(logBytes)
+}
+
+// scaleApp is the shared core of handleScaleApp and its UI twin
+// (handleUIScale): check whether the app is live BEFORE persisting the
+// replica change (a live app with no kube client can't apply a scale, so it
+// must not record a DB state it can't honor), then persist and, if live,
+// sync. Returns errKubeUnavailable when a live app's scale can't be
+// applied, or a *scaleReplicasError when the requested replica count is
+// invalid; any other error is an internal failure.
+func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, replicas int) (store.App, error) {
+	d, err := s.st.LatestDeployment(a.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return store.App{}, err
+	}
+	live := err == nil && d.Status == "live"
+	if live && s.kube == nil {
+		return store.App{}, errKubeUnavailable
+	}
+
+	if err := s.st.SetReplicas(a.ID, replicas); err != nil {
+		return store.App{}, &scaleReplicasError{err}
+	}
+	a.Replicas = replicas
+
+	if live {
+		if err := s.syncApp(ctx, p, a); err != nil {
+			return store.App{}, err
+		}
+	}
+
+	return a, nil
 }
 
 func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -360,33 +449,20 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	// Check whether the app is live BEFORE persisting the replica change:
-	// a live app with no kube client can't apply a scale, so it must not
-	// record a DB state it can't honor.
-	d, err := s.st.LatestDeployment(a.ID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		log.Printf("latest deployment: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-	live := err == nil && d.Status == "live"
-	if live && !s.requireKube(w) {
-		return
-	}
-
-	if err := s.st.SetReplicas(a.ID, req.Replicas); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	a.Replicas = req.Replicas
-
-	if live {
-		if err := s.syncApp(r.Context(), p, a); err != nil {
-			log.Printf("sync app: %v", err)
+	updated, err := s.scaleApp(r.Context(), p, a, req.Replicas)
+	if err != nil {
+		var re *scaleReplicasError
+		switch {
+		case errors.Is(err, errKubeUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "kubernetes_unavailable", "kubernetes is not configured")
+		case errors.As(err, &re):
+			writeError(w, http.StatusBadRequest, "bad_request", re.Error())
+		default:
+			log.Printf("scale app: %v", err)
 			writeError(w, http.StatusInternalServerError, "internal", "internal error")
-			return
 		}
+		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"replicas": a.Replicas})
+	writeJSON(w, http.StatusOK, map[string]any{"replicas": updated.Replicas})
 }

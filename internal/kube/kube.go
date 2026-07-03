@@ -7,14 +7,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -29,10 +32,19 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"Namespace":             {Group: "", Version: "v1", Resource: "namespaces"},
 	"Job":                   {Group: "batch", Version: "v1", Resource: "jobs"},
 	"PersistentVolumeClaim": {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
+	"ServiceAccount":        {Group: "", Version: "v1", Resource: "serviceaccounts"},
+	"ClusterRoleBinding":    {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"},
+}
+
+// clusterScoped marks kinds Apply must patch without a namespace.
+var clusterScoped = map[string]bool{
+	"Namespace":          true,
+	"ClusterRoleBinding": true,
 }
 
 type Client struct {
 	dyn dynamic.Interface
+	cs  kubernetes.Interface
 }
 
 // New builds a client from a kubeconfig path, or in-cluster config when
@@ -52,10 +64,19 @@ func New(kubeconfig string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{dyn: dyn}, nil
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{dyn: dyn, cs: cs}, nil
 }
 
 func NewFromDynamic(dyn dynamic.Interface) *Client { return &Client{dyn: dyn} }
+
+// NewForTest wires both halves explicitly; either may be nil.
+func NewForTest(dyn dynamic.Interface, cs kubernetes.Interface) *Client {
+	return &Client{dyn: dyn, cs: cs}
+}
 
 func applyOpts() metav1.PatchOptions {
 	force := true
@@ -98,8 +119,8 @@ func (c *Client) Apply(ctx context.Context, namespace string, objs []render.Obje
 		if err != nil {
 			return fmt.Errorf("%s: %w", o.Kind, err)
 		}
-		// Namespace is cluster-scoped: never namespace the patch call itself.
-		if o.Kind == "Namespace" {
+		// Cluster-scoped kinds: never namespace the patch call itself.
+		if clusterScoped[o.Kind] {
 			_, err = c.dyn.Resource(gvr).Patch(
 				ctx, name, types.ApplyPatchType, o.JSON, applyOpts(),
 			)
@@ -154,4 +175,83 @@ func (c *Client) WaitJob(ctx context.Context, namespace, name string, poll time.
 		case <-time.After(poll):
 		}
 	}
+}
+
+// AppPods lists pod names carrying the app label Render stamps on
+// every workload (app.kubernetes.io/name=<app>).
+func (c *Client) AppPods(ctx context.Context, namespace, app string) ([]string, error) {
+	list, err := c.cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/name=" + app,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list pods: %w", err)
+	}
+	names := make([]string, 0, len(list.Items))
+	for _, p := range list.Items {
+		names = append(names, p.Name)
+	}
+	return names, nil
+}
+
+// PodLogStream streams a pod's logs, optionally following new output.
+func (c *Client) PodLogStream(ctx context.Context, namespace, pod string, follow bool) (io.ReadCloser, error) {
+	return c.cs.CoreV1().Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Follow: follow}).Stream(ctx)
+}
+
+// WaitDeployment polls until the Deployment has at least one ready replica
+// or ctx ends. Same shape as WaitJob.
+func (c *Client) WaitDeployment(ctx context.Context, namespace, name string, poll time.Duration) error {
+	for {
+		u, err := c.dyn.Resource(gvrByKind["Deployment"]).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err == nil {
+			if n, _, _ := unstructured.NestedInt64(u.Object, "status", "readyReplicas"); n >= 1 {
+				return nil
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("get deployment %s: %w", name, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(poll):
+		}
+	}
+}
+
+// NodeIP returns the first node's ExternalIP, falling back to InternalIP.
+// Single-node K3s is the Phase 1 target, so "first node" is the node.
+func (c *Client) NodeIP(ctx context.Context) (string, error) {
+	nodes, err := c.cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("list nodes: %w", err)
+	}
+	var internal string
+	for _, n := range nodes.Items {
+		for _, a := range n.Status.Addresses {
+			switch a.Type {
+			case corev1.NodeExternalIP:
+				return a.Address, nil
+			case corev1.NodeInternalIP:
+				if internal == "" {
+					internal = a.Address
+				}
+			}
+		}
+	}
+	if internal != "" {
+		return internal, nil
+	}
+	return "", fmt.Errorf("no node addresses found")
+}
+
+// GetSecretData reads a Secret's decoded data; nil map when it doesn't exist.
+func (c *Client) GetSecretData(ctx context.Context, namespace, name string) (map[string][]byte, error) {
+	sec, err := c.cs.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return sec.Data, nil
 }

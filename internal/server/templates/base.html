@@ -1,0 +1,35 @@
+{{define "head"}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>luncur</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem;color:#222}
+nav{display:flex;justify-content:space-between;border-bottom:1px solid #ddd;padding-bottom:.5rem;margin-bottom:1.5rem}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:.4rem .6rem;border-bottom:1px solid #eee}
+form.inline{display:inline}
+input,button{font:inherit;padding:.3rem .5rem}
+pre.logs{background:#111;color:#ddd;padding:1rem;overflow:auto;max-height:24rem;font-size:.85rem}
+.err{color:#b00}
+.status-live{color:#080}.status-failed{color:#b00}.status-building,.status-deploying{color:#a60}
+</style>
+</head>
+<body>
+{{end}}
+
+{{define "nav"}}
+<nav>
+  <strong><a href="/ui/">luncur</a></strong>
+  <form class="inline" method="post" action="/ui/logout">
+    <span>{{.User.Email}}</span> <button type="submit">log out</button>
+  </form>
+</nav>
+{{end}}
+
+{{define "foot"}}
+</body>
+</html>
+{{end}}

@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -10,6 +12,44 @@ import (
 	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
 )
+
+// errSealerUnavailable is setAppEnv's sentinel for "no sealer is
+// configured". Callers (the JSON API and the UI) each translate it into
+// their own response shape.
+var errSealerUnavailable = errors.New("sealer is not configured")
+
+// setAppEnv is the shared core of handleSetEnv and its UI twin
+// (handleUIEnvSet): seal the value, upsert it, then opportunistically sync
+// if the app is live. A *store.ValidationError means the key/value were
+// rejected by the store; any other error is an internal failure.
+func (s *server) setAppEnv(ctx context.Context, p store.Project, a store.App, key, value string) error {
+	if s.sealer == nil {
+		return errSealerUnavailable
+	}
+
+	sealed, err := s.sealer.Seal([]byte(value))
+	if err != nil {
+		return fmt.Errorf("seal env %q: %w", key, err)
+	}
+
+	if err := s.st.SetEnv(a.ID, key, sealed); err != nil {
+		return err
+	}
+
+	s.syncIfLive(ctx, p, a)
+	return nil
+}
+
+// unsetAppEnv is the shared core of handleUnsetEnv and its UI twin
+// (handleUIEnvUnset): delete the var, then opportunistically sync if the
+// app is live. Returns store.ErrNotFound when the key doesn't exist.
+func (s *server) unsetAppEnv(ctx context.Context, p store.Project, a store.App, key string) error {
+	if err := s.st.UnsetEnv(a.ID, key); err != nil {
+		return err
+	}
+	s.syncIfLive(ctx, p, a)
+	return nil
+}
 
 // handleGetEnv returns an app's env vars, unsealed to plaintext.
 func (s *server) handleGetEnv(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -66,30 +106,20 @@ func (s *server) handleSetEnv(w http.ResponseWriter, r *http.Request, u store.Us
 		return
 	}
 
-	if s.sealer == nil {
-		writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", "sealer is not configured")
-		return
-	}
-
-	sealed, err := s.sealer.Seal([]byte(req.Value))
-	if err != nil {
-		log.Printf("seal env %q: %v", req.Key, err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-
-	if err := s.st.SetEnv(a.ID, req.Key, sealed); err != nil {
+	if err := s.setAppEnv(r.Context(), p, a, req.Key, req.Value); err != nil {
 		var ve *store.ValidationError
-		if errors.As(err, &ve) {
+		switch {
+		case errors.Is(err, errSealerUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", "sealer is not configured")
+		case errors.As(err, &ve):
 			writeError(w, http.StatusBadRequest, "bad_request", ve.Error())
-			return
+		default:
+			log.Printf("set env: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		}
-		log.Printf("set env: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 
-	s.syncIfLive(r.Context(), p, a)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -105,7 +135,7 @@ func (s *server) handleUnsetEnv(w http.ResponseWriter, r *http.Request, u store.
 	}
 
 	key := r.PathValue("key")
-	if err := s.st.UnsetEnv(a.ID, key); err != nil {
+	if err := s.unsetAppEnv(r.Context(), p, a, key); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "no such env var")
 			return
@@ -115,7 +145,6 @@ func (s *server) handleUnsetEnv(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	s.syncIfLive(r.Context(), p, a)
 	w.WriteHeader(http.StatusNoContent)
 }
 

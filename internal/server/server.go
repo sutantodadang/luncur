@@ -2,6 +2,8 @@
 package server
 
 import (
+	"embed"
+	"html/template"
 	"log"
 	"net/http"
 
@@ -10,6 +12,9 @@ import (
 	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/store"
 )
+
+//go:embed templates/*.html
+var templateFS embed.FS
 
 // Deps bundles server dependencies. Sealer and Kube may be nil (e.g. in
 // tests, or when kube is unavailable at boot); handlers that need them must
@@ -39,6 +44,8 @@ type server struct {
 	registryHost    string
 	systemNamespace string
 	dataPVC         string
+
+	tmpl *template.Template
 }
 
 // newServer wires all server fields (including build config defaults) but
@@ -87,6 +94,8 @@ func newServer(d Deps) *server {
 		}
 	}
 
+	s.tmpl = template.Must(template.ParseFS(templateFS, "templates/*.html"))
+
 	return s
 }
 
@@ -117,10 +126,18 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/overrides/{kind}", s.authed(s.handleSetOverride))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/overrides/{kind}", s.authed(s.handleDeleteOverride))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/raw", s.authed(s.handleRawManifest))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/logs", s.authed(s.handleRuntimeLogs))
+
+	s.uiRoutes(mux)
 
 	// Fallback for unmatched paths keeps every response envelope-compliant
-	// instead of falling through to the stdlib's plain-text 404.
+	// instead of falling through to the stdlib's plain-text 404, except for
+	// the root path which redirects into the web UI.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+			return
+		}
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
 	})
 

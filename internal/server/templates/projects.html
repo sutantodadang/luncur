@@ -1,0 +1,9 @@
+{{define "projects.html"}}
+{{template "head" .}}{{template "nav" .}}
+<h1>Projects</h1>
+{{if not .Projects}}<p>No projects yet. Create one with <code>luncur project create</code>.</p>{{end}}
+<table><tr><th>Name</th><th>Namespace</th></tr>
+{{range .Projects}}<tr><td><a href="/ui/projects/{{.Name}}">{{.Name}}</a></td><td>{{.Namespace}}</td></tr>{{end}}
+</table>
+{{template "foot" .}}
+{{end}}

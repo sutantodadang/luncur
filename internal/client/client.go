@@ -2,6 +2,7 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -317,4 +318,68 @@ func (c *Client) DeleteOverride(project, app, kind string) error {
 		"/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/overrides/"+url.PathEscape(kind),
 		nil)
 	return err
+}
+
+// stream consumes an SSE endpoint, writing each data payload as one line.
+// A terminating "event: end" ends the stream cleanly; its data payload is
+// the final status and is not written.
+func (c *Client) stream(path string, w io.Writer) error {
+	req, err := http.NewRequest("GET", c.base+path, nil)
+	if err != nil {
+		return err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		var env struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(body, &env) == nil && env.Error.Code != "" {
+			return fmt.Errorf("%s (%s)", env.Error.Message, env.Error.Code)
+		}
+		return fmt.Errorf("server returned %s", resp.Status)
+	}
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	ending := false
+	for sc.Scan() {
+		line := sc.Text()
+		switch {
+		case line == "event: end":
+			ending = true
+		case strings.HasPrefix(line, "data: "):
+			if ending {
+				return nil
+			}
+			fmt.Fprintln(w, line[len("data: "):])
+		}
+	}
+	return sc.Err()
+}
+
+// FollowDeployLogs streams a build log's SSE endpoint until the deployment
+// finishes, writing each log line to w as it arrives.
+func (c *Client) FollowDeployLogs(project, app string, id int64, w io.Writer) error {
+	return c.stream(fmt.Sprintf("/v1/projects/%s/apps/%s/deploys/%d/logs?follow=1",
+		url.PathEscape(project), url.PathEscape(app), id), w)
+}
+
+// RuntimeLogs streams (or, with follow=false, fetches once via SSE) the
+// app's runtime pod logs.
+func (c *Client) RuntimeLogs(project, app string, follow bool, w io.Writer) error {
+	p := fmt.Sprintf("/v1/projects/%s/apps/%s/logs", url.PathEscape(project), url.PathEscape(app))
+	if follow {
+		p += "?follow=1"
+	}
+	return c.stream(p, w)
 }

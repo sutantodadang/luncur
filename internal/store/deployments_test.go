@@ -34,3 +34,18 @@ func TestCreateDeploymentAttribution(t *testing.T) {
 		t.Fatalf("created_by = %+v, want %d", got.CreatedBy, u.ID)
 	}
 }
+
+func TestListDeployments(t *testing.T) {
+	st := openTest(t)
+	p, _ := st.CreateProject("web")
+	a, _ := st.CreateApp(p.ID, "api", 8080)
+	d1, _ := st.CreateDeployment(a.ID, "failed", "img:1", 0)
+	d2, _ := st.CreateDeployment(a.ID, "live", "img:2", 0)
+	list, err := st.ListDeployments(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].ID != d2.ID || list[1].ID != d1.ID {
+		t.Fatalf("want [d2 d1] newest-first, got %+v", list)
+	}
+}

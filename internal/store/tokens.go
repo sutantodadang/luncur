@@ -9,9 +9,19 @@ import (
 	"fmt"
 )
 
-// CreateToken mints an opaque API token for a user. The plaintext is
+// CreateToken mints a 90-day API token (CLI/API use). The plaintext is
 // returned exactly once; the DB keeps only its SHA-256.
 func (s *Store) CreateToken(userID int64, name string) (string, error) {
+	return s.createToken(userID, name, "+90 days")
+}
+
+// CreateSessionToken mints a short-lived token backing a web session; its
+// server-side expiry matches the session cookie's 7-day lifetime.
+func (s *Store) CreateSessionToken(userID int64, name string) (string, error) {
+	return s.createToken(userID, name, "+7 days")
+}
+
+func (s *Store) createToken(userID int64, name, offset string) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -19,8 +29,9 @@ func (s *Store) CreateToken(userID int64, name string) (string, error) {
 	plaintext := "lcr_" + hex.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(plaintext))
 	_, err := s.db.Exec(
-		`INSERT INTO api_tokens (user_id, hash, name) VALUES (?, ?, ?)`,
-		userID, hex.EncodeToString(sum[:]), name,
+		`INSERT INTO api_tokens (user_id, hash, name, expires_at)
+		 VALUES (?, ?, ?, datetime('now', ?))`,
+		userID, hex.EncodeToString(sum[:]), name, offset,
 	)
 	if err != nil {
 		return "", fmt.Errorf("insert token: %w", err)
@@ -34,7 +45,8 @@ func (s *Store) UserForToken(plaintext string) (User, error) {
 	var u User
 	err := s.db.QueryRow(
 		`SELECT u.id, u.email, u.role FROM api_tokens t
-		 JOIN users u ON u.id = t.user_id WHERE t.hash = ?`, h,
+		 JOIN users u ON u.id = t.user_id
+		 WHERE t.hash = ? AND (t.expires_at IS NULL OR t.expires_at > datetime('now'))`, h,
 	).Scan(&u.ID, &u.Email, &u.Role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrAuthFailed
