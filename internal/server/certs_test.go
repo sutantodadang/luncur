@@ -2,11 +2,20 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
@@ -32,7 +41,7 @@ type recordedPatch struct {
 // recorded) and a fake typed clientset (so GetSecretData/accountKey work),
 // following the same fixture shape as apps_test.go's kubeServer and
 // build_test.go's buildServer.
-func certTestServer(t *testing.T) (*server, *store.Store, *[]recordedPatch) {
+func certTestServer(t *testing.T) (*server, *store.Store, *[]recordedPatch, *k8sfake.Clientset) {
 	t.Helper()
 	st := newTestStore(t)
 	scheme := runtime.NewScheme()
@@ -57,7 +66,7 @@ func certTestServer(t *testing.T) (*server, *store.Store, *[]recordedPatch) {
 	s := newServer(Deps{
 		Store: st, Sealer: sealer, Kube: kube.NewForTest(dyn, cs), ExternalIP: "1.2.3.4",
 	})
-	return s, st, &patches
+	return s, st, &patches, cs
 }
 
 func seedDomain(t *testing.T, st *store.Store, hostname string) (store.Project, store.App, store.Domain) {
@@ -123,7 +132,7 @@ func pollDomain(t *testing.T, st *store.Store, appID int64, deadline time.Durati
 }
 
 func TestCertManagerIssuesAndRenews(t *testing.T) {
-	srv, st, patches := certTestServer(t)
+	srv, st, patches, _ := certTestServer(t)
 	p, a, d := seedDomain(t, st, "www.example.com")
 
 	// Mount srv's own mux (it routes the challenge path through
@@ -160,7 +169,7 @@ func TestCertManagerIssuesAndRenews(t *testing.T) {
 }
 
 func TestCertManagerFailureMarksDomain(t *testing.T) {
-	srv, st, _ := certTestServer(t)
+	srv, st, _, _ := certTestServer(t)
 	p, a, d := seedDomain(t, st, "www.example.com")
 
 	// Point the fake ACME's challenge validation at an unreachable host so
@@ -181,5 +190,76 @@ func TestCertManagerFailureMarksDomain(t *testing.T) {
 	}
 	if got.CertError == "" {
 		t.Fatal("cert_error not set on failure")
+	}
+}
+
+// selfSignedCertPEM generates a minimal self-signed leaf certificate PEM for
+// hostname, expiring at notAfter — standalone rather than reusing
+// acmetest's fake CA since this test never talks to an ACME server.
+func selfSignedCertPEM(t *testing.T, hostname string, notAfter time.Time) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: hostname},
+		DNSNames:     []string{hostname},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+// TestCertSweepReadsBackCertManagerExpiry covers the cert-manager provider
+// path: sweep doesn't issue anything itself, it just reads the leaf cert
+// cert-manager already put in the TLS Secret and records its expiry.
+func TestCertSweepReadsBackCertManagerExpiry(t *testing.T) {
+	srv, st, _, cs := certTestServer(t)
+	p, a, d := seedDomain(t, st, "www.example.com")
+	if err := st.SetSetting("cert_provider", "cert-manager"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDomainCert(d.ID, "external", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	notAfter := time.Now().Add(90 * 24 * time.Hour)
+	certPEM := selfSignedCertPEM(t, d.Hostname, notAfter)
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: certSecretName(a.Name, d.Hostname), Namespace: p.Namespace},
+		Type:       corev1.SecretTypeTLS,
+		Data:       map[string][]byte{"tls.crt": certPEM, "tls.key": []byte("fake-key")},
+	}
+	if _, err := cs.CoreV1().Secrets(p.Namespace).Create(context.Background(), sec, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.certs.sweep(context.Background())
+
+	list, err := st.ListDomains(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("want 1 domain, got %d", len(list))
+	}
+	got := list[0]
+	if got.CertStatus != "external" {
+		t.Fatalf("cert_status = %q, want external", got.CertStatus)
+	}
+	gotExp, err := time.Parse(time.RFC3339, got.CertExpiresAt)
+	if err != nil {
+		t.Fatalf("cert_expires_at %q did not parse as RFC3339: %v", got.CertExpiresAt, err)
+	}
+	if want := notAfter.UTC().Truncate(time.Second); !gotExp.Equal(want) {
+		t.Fatalf("cert_expires_at = %v, want %v", gotExp, want)
 	}
 }
