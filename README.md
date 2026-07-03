@@ -3,10 +3,10 @@
 Tiny self-hosted PaaS on K3s. One Go binary, SQLite, deploys as simple as
 Heroku — with an escape hatch to the real Kubernetes objects.
 
-Status: Phase 3 in progress — addons, metrics, backups shipped (Plans I-K), on top of Phase 2
-(Plans E-H: git push deploys, custom domains + TLS, rollback + hardening,
-invites + user admin + the web YAML editor) and Phase 1's PaaS core (Plans
-A-D). Working today:
+Status: Phase 3 complete (Plans I-L) — addons, metrics, backups, eject +
+registry GC, on top of Phase 2 (Plans E-H: git push deploys, custom domains
++ TLS, rollback + hardening, invites + user admin + the web YAML editor)
+and Phase 1's PaaS core (Plans A-D). Working today:
 
 ## Install
 
@@ -335,6 +335,54 @@ Restore is deliberately a documented procedure, not a command:
 7. Redeploy apps (`luncur deploy` / `git push`) and verify with
    `luncur status`.
 
+## Ejecting an app
+
+```sh
+luncur app eject myapp --project myproj [--yes]
+```
+
+Ejecting detaches an app from luncur's management, one-way — there is no
+un-eject. luncur renders the app's final manifest (current overrides plus
+its latest image), prints the YAML to stdout, and archives a copy under
+`data/ejected/<project>-<app>.yaml` on the server. From then on every
+mutation — deploy, scale, env, domains, overrides, rollback, addon
+attach/detach, and further `git push` — is refused with `409 app_ejected`;
+reads (status, logs, metrics, raw YAML, the app page) keep working exactly
+as before. The Kubernetes objects luncur rendered keep running untouched:
+ejecting doesn't delete or modify anything in the cluster, it only stops
+luncur from touching it further. `luncur destroy` on an ejected app removes
+luncur's own records (DB rows) only, leaving the running objects in place.
+Ejected apps are marked `(ejected)` in `luncur app list` and with an
+"ejected" badge in the web UI, which also hides the now-inert
+scale/deploy/env/domains/rollback/edit forms in favor of a one-line note.
+
+Without `--yes`, `app eject` asks you to type the app's name back to
+confirm before doing anything irreversible.
+
+## Registry GC
+
+```sh
+luncur registry gc   # admin only
+```
+
+luncur's embedded registry accumulates one image per deploy; `registry gc`
+reclaims that storage with a retention sweep. For each app, the newest
+`registry_keep` images (default 10) are kept, plus whichever image is
+currently live and whichever is newest, regardless of position; everything
+else — including whole repositories with no matching app left in the DB —
+is deleted from the registry's manifest catalog. `registry
+garbage-collect` then runs inside the registry pod to reclaim the
+underlying blob storage. Change the retention count with:
+
+```sh
+luncur config set registry_keep 20
+```
+
+A sweep also runs automatically once a week. The registry container's
+`REGISTRY_STORAGE_DELETE_ENABLED` env var is set to `true` by luncur's own
+system manifests, since the registry's HTTP API rejects manifest DELETEs
+outright without it.
+
 ## Build Pipeline
 
 When you run `luncur deploy` on a local source or git repository, the following happens: source is uploaded (tarball from local cwd or cloned from git URL) → a BuildKit Job runs in the `luncur-system` namespace, applying Nixpacks if no Dockerfile exists or using the Dockerfile if present → the resulting image is pushed to the in-cluster registry (default `registry.luncur-system:5000`) → app manifests are rendered and applied to Kubernetes → the app becomes live at `http://<app>.<ip>.sslip.io`. Build logs are streamed on demand via `luncur logs`.
@@ -369,5 +417,6 @@ mirrored in a hidden `_csrf` field, checked on every POST before it runs.
 - Rollback's registry-presence check only applies to images hosted in the embedded registry (ref prefixed with the configured `--registry-host`); externally-hosted image refs are assumed present since luncur has no credentials to check them.
 - No email delivery for invites — the admin copies the `/ui/register?token=...` link and shares it out of band.
 - Registration marks the invite used *after* creating the user (two non-atomic statements against a single-instance SQLite server); a burned-but-unused invite can't happen, since validation failures abort before the user is created and a duplicate-email failure aborts before the invite is marked used.
+- Registry GC's "bytes reclaimed" figure is measured with `du -sk` inside the registry pod before/after `garbage-collect` (busybox `du`, KiB resolution) rather than precise blob accounting; the manifest-delete phase always runs and is counted accurately regardless, and when the exec phase itself fails (no kube, no pod, exec error) bytes reclaimed is reported as unknown (`-1`) rather than blocking the sweep.
 
 Design docs: `docs/superpowers/specs/`. Plans: `docs/superpowers/plans/`.

@@ -1,15 +1,18 @@
 {{define "app.html"}}
 {{template "head" .}}{{template "nav" .}}
 <p><a href="/ui/projects/{{.Project.Name}}">&larr; {{.Project.Name}}</a></p>
-<h1>{{.App.Name}} <span class="status-{{.Status}}">{{.Status}}</span></h1>
+<h1>{{.App.Name}} <span class="status-{{.Status}}">{{.Status}}</span>{{if .App.Ejected}} <span class="status-failed">ejected</span>{{end}}</h1>
 <p>{{if .Metrics.Available}}cpu {{.Metrics.CPUMillicores}}m &middot; mem {{.Metrics.MemoryMiB}}Mi &middot; {{end}}{{.Metrics.ReadyReplicas}}/{{.Metrics.DesiredReplicas}} ready &middot; {{.Metrics.DeployCount}} deploys</p>
 <p><a href="{{.URL}}">{{.URL}}</a> &middot;
-   <a href="/v1/projects/{{.Project.Name}}/apps/{{.App.Name}}/raw">raw YAML</a> &middot;
+   <a href="/v1/projects/{{.Project.Name}}/apps/{{.App.Name}}/raw">raw YAML</a>{{if not .App.Ejected}} &middot;
    edit: <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a> &middot;
    <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Service">Service</a> &middot;
-   <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Ingress">Ingress</a></p>
+   <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Ingress">Ingress</a>{{end}}</p>
 {{if .Warning}}<p class="err">{{.Warning}}</p>{{end}}
 
+{{if .App.Ejected}}
+<p>This app is ejected — luncur no longer manages it.</p>
+{{else}}
 <h2>Scale</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/scale">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
@@ -38,6 +41,7 @@
   <input name="value" placeholder="value" required>
   <button type="submit">set</button>
 </form>
+{{end}}
 
 <h2>Deploys</h2>
 <table><tr><th>ID</th><th>Status</th><th>Image</th><th>When</th><th></th></tr>
@@ -45,7 +49,7 @@
   <td>{{.ID}}</td><td class="status-{{.Status}}">{{.Status}}</td>
   <td><code>{{.ImageRef}}</code>{{if .RolledBackFrom}} <em>(rollback of {{.RolledBackFrom}})</em>{{end}}</td>
   <td>{{.CreatedAt}}</td>
-  <td>{{if and .ImageRef (ne .ID $.LatestID)}}
+  <td>{{if and .ImageRef (ne .ID $.LatestID) (not $.App.Ejected)}}
     <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollback">
       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
       <input type="hidden" name="deploy_id" value="{{.ID}}">
@@ -55,6 +59,7 @@
 </tr>{{end}}
 </table>
 
+{{if not .App.Ejected}}
 <h2>Domains</h2>
 <table><tr><th>Hostname</th><th>Cert</th><th>Expires</th><th></th></tr>
 {{range .Domains}}<tr>
@@ -72,6 +77,7 @@
   <input name="hostname" placeholder="www.example.com" required>
   <button type="submit">add domain</button>
 </form>
+{{end}}
 
 <h2>Addons</h2>
 {{if not .Addons}}<p>No addons attached.</p>{{end}}

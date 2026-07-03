@@ -255,6 +255,7 @@ type uiAppRow struct {
 	Name     string
 	Replicas int
 	URL      string
+	Ejected  bool
 }
 
 func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -270,7 +271,7 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	}
 	rows := make([]uiAppRow, 0, len(list))
 	for _, a := range list {
-		rows = append(rows, uiAppRow{Name: a.Name, Replicas: a.Replicas, URL: "http://" + hostFor(a.Name, s.externalIP)})
+		rows = append(rows, uiAppRow{Name: a.Name, Replicas: a.Replicas, URL: "http://" + hostFor(a.Name, s.externalIP), Ejected: a.Ejected})
 	}
 	addons, err := s.addonRows(r.Context(), p)
 	if err != nil {
