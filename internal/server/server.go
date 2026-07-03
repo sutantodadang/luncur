@@ -59,6 +59,10 @@ type server struct {
 
 	certs *certManager
 
+	// lastRegistryGC tracks the last completed weekly registry GC sweep,
+	// in memory only — StartRegistryGC uses it to decide when to run again.
+	lastRegistryGC time.Time
+
 	tmpl *template.Template
 }
 
@@ -148,6 +152,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps", s.authed(s.handleListApps))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}", s.authed(s.handleGetApp))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}", s.authed(s.handleDeleteApp))
+	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/eject", s.authed(s.handleEjectApp))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/deploy", s.authed(s.handleDeployApp))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/deploys/{id}", s.authed(s.handleGetDeploy))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/deploys/{id}/logs", s.authed(s.handleDeployLogs))
@@ -175,6 +180,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/backups/prune", s.adminOnly(s.handlePruneBackups))
 	mux.HandleFunc("GET /v1/settings/{key}", s.adminOnly(s.handleGetSetting))
 	mux.HandleFunc("PUT /v1/settings/{key}", s.adminOnly(s.handleSetSetting))
+	mux.HandleFunc("POST /v1/registry/gc", s.adminOnly(s.handleRegistryGC))
 	mux.HandleFunc("GET /v1/tokens", s.authed(s.handleListTokens))
 	mux.HandleFunc("DELETE /v1/tokens/{id}", s.authed(s.handleRevokeToken))
 

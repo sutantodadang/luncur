@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -401,6 +403,77 @@ func TestAddonCommands(t *testing.T) {
 	_, err = run(t, "addon", "create", "postgres", "--project", "p")
 	if err == nil || !strings.Contains(err.Error(), "kubernetes") {
 		t.Fatalf("want kubernetes error, got %v", err)
+	}
+}
+
+// registryTestEnv is testEnv plus a reachable (empty-catalog) fake registry
+// HTTP server wired in as RegistryHost, so `registry gc` can complete
+// against the default unreachable registry.luncur-system:5000 host that a
+// plain testEnv leaves in place.
+func registryTestEnv(t *testing.T) *httptest.Server {
+	t.Helper()
+	regMux := http.NewServeMux()
+	regMux.HandleFunc("/v2/_catalog", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"repositories":[]}`)
+	})
+	reg := httptest.NewServer(regMux)
+	t.Cleanup(reg.Close)
+
+	t.Setenv("LUNCUR_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUser("root@b.co", "pw123456", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(server.New(server.Deps{
+		Store: st, Sealer: sealer, DataDir: t.TempDir(),
+		RegistryHost: strings.TrimPrefix(reg.URL, "http://"),
+	}))
+	t.Cleanup(func() { srv.Close(); st.Close() })
+	return srv
+}
+
+// TestEjectAndRegistryCommands exercises `app eject` and `registry gc`'s
+// CLI wiring end to end against a real (in-process) server. Kube-dependent
+// behavior (guard matrix, blob reclamation) is covered by
+// internal/server/eject_test.go and registrygc_test.go.
+func TestEjectAndRegistryCommands(t *testing.T) {
+	srv := registryTestEnv(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "app", "create", "web", "--project", "p", "--port", "8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "app", "eject", "web", "--project", "p", "--yes")
+	if err != nil {
+		t.Fatalf("eject: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "kind:") {
+		t.Fatalf("want rendered YAML in output, got %q", out)
+	}
+
+	_, err = run(t, "app", "eject", "web", "--project", "p", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "ejected") {
+		t.Fatalf("want ejected error on second eject, got %v", err)
+	}
+
+	out, err = run(t, "registry", "gc")
+	if err != nil {
+		t.Fatalf("registry gc: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "deleted 0") {
+		t.Fatalf("want deleted count in output, got %q", out)
 	}
 }
 

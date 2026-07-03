@@ -1129,3 +1129,48 @@ func TestUIAddons(t *testing.T) {
 		t.Fatalf("project page after delete: want postgres1 removed, got: %s", body)
 	}
 }
+
+// TestUIAppPageShowsEjected ejects an app directly through the store (the
+// HTTP eject flow is covered by eject_test.go) and checks the app page's
+// template guards: an "ejected" badge appears, and the scale form — a
+// stand-in for every mutation form the template hides — is gone.
+func TestUIAppPageShowsEjected(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/p/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+	if err := st.SetAppEjected(appID(t, st, "p", "web")); err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+
+	client := noRedirectClient()
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/p/apps/web", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET app page: want 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "ejected") {
+		t.Fatalf("app page: want ejected badge, got: %s", body)
+	}
+	if strings.Contains(string(body), `action="/ui/projects/p/apps/web/scale"`) {
+		t.Fatalf("app page: want scale form hidden for an ejected app, got: %s", body)
+	}
+}

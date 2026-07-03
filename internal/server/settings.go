@@ -32,6 +32,10 @@ var settableKeys = map[string]func(string) bool{
 		n, err := strconv.Atoi(v)
 		return err == nil && n > 0
 	},
+	"registry_keep": func(v string) bool {
+		n, err := strconv.Atoi(v)
+		return err == nil && n > 0
+	},
 }
 
 func (s *server) handleGetSetting(w http.ResponseWriter, r *http.Request, _ store.User) {

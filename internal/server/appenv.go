@@ -23,6 +23,9 @@ var errSealerUnavailable = errors.New("sealer is not configured")
 // if the app is live. A *store.ValidationError means the key/value were
 // rejected by the store; any other error is an internal failure.
 func (s *server) setAppEnv(ctx context.Context, p store.Project, a store.App, key, value string) error {
+	if a.Ejected {
+		return errAppEjected
+	}
 	if s.sealer == nil {
 		return errSealerUnavailable
 	}
@@ -44,6 +47,9 @@ func (s *server) setAppEnv(ctx context.Context, p store.Project, a store.App, ke
 // (handleUIEnvUnset): delete the var, then opportunistically sync if the
 // app is live. Returns store.ErrNotFound when the key doesn't exist.
 func (s *server) unsetAppEnv(ctx context.Context, p store.Project, a store.App, key string) error {
+	if a.Ejected {
+		return errAppEjected
+	}
 	if err := s.st.UnsetEnv(a.ID, key); err != nil {
 		return err
 	}
@@ -109,6 +115,8 @@ func (s *server) handleSetEnv(w http.ResponseWriter, r *http.Request, u store.Us
 	if err := s.setAppEnv(r.Context(), p, a, req.Key, req.Value); err != nil {
 		var ve *store.ValidationError
 		switch {
+		case errors.Is(err, errAppEjected):
+			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
 		case errors.Is(err, errSealerUnavailable):
 			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", "sealer is not configured")
 		case errors.As(err, &ve):
@@ -136,12 +144,15 @@ func (s *server) handleUnsetEnv(w http.ResponseWriter, r *http.Request, u store.
 
 	key := r.PathValue("key")
 	if err := s.unsetAppEnv(r.Context(), p, a, key); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		switch {
+		case errors.Is(err, errAppEjected):
+			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
+		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, "not_found", "no such env var")
-			return
+		default:
+			log.Printf("unset env: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		}
-		log.Printf("unset env: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 
@@ -153,6 +164,9 @@ func (s *server) handleUnsetEnv(w http.ResponseWriter, r *http.Request, u store.
 // A *store.ValidationError means the patch was rejected by the store; any
 // other error is an internal failure.
 func (s *server) setOverride(ctx context.Context, p store.Project, a store.App, kind, patch string) error {
+	if a.Ejected {
+		return errAppEjected
+	}
 	if err := s.st.SetOverride(a.ID, kind, patch); err != nil {
 		return err
 	}
@@ -182,12 +196,15 @@ func (s *server) handleSetOverride(w http.ResponseWriter, r *http.Request, u sto
 
 	if err := s.setOverride(r.Context(), p, a, kind, string(body)); err != nil {
 		var ve *store.ValidationError
-		if errors.As(err, &ve) {
+		switch {
+		case errors.Is(err, errAppEjected):
+			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
+		case errors.As(err, &ve):
 			writeError(w, http.StatusBadRequest, "bad_request", ve.Error())
-			return
+		default:
+			log.Printf("set override: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		}
-		log.Printf("set override: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 
@@ -203,6 +220,9 @@ func (s *server) handleDeleteOverride(w http.ResponseWriter, r *http.Request, u 
 	}
 	a, ok := s.requireApp(w, p, r.PathValue("app"))
 	if !ok {
+		return
+	}
+	if s.refuseEjected(w, a) {
 		return
 	}
 

@@ -298,6 +298,9 @@ func (s *server) attachAddon(ctx context.Context, p store.Project, ad store.Addo
 	if err != nil {
 		return "", err
 	}
+	if app.Ejected {
+		return "", errAppEjected
+	}
 	if err := s.st.AttachAddon(ad.ID, app.ID); err != nil {
 		return "", err
 	}
@@ -339,11 +342,14 @@ func (s *server) handleAttachAddon(w http.ResponseWriter, r *http.Request, u sto
 
 	warning, err := s.attachAddon(r.Context(), p, ad, req.App)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		switch {
+		case errors.Is(err, errAppEjected):
+			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
+		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, "not_found", "no such app")
-			return
+		default:
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		}
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
 
@@ -373,6 +379,9 @@ func (s *server) handleDetachAddon(w http.ResponseWriter, r *http.Request, u sto
 	}
 	app, ok := s.requireApp(w, p, req.App)
 	if !ok {
+		return
+	}
+	if s.refuseEjected(w, app) {
 		return
 	}
 

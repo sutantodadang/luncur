@@ -147,14 +147,19 @@ func (s *server) handleDeleteApp(w http.ResponseWriter, r *http.Request, u store
 	if !ok {
 		return
 	}
-	if !s.requireKube(w) {
-		return
-	}
 
-	if err := s.kube.DeleteAppObjects(r.Context(), p.Namespace, a.Name); err != nil {
-		log.Printf("delete app objects: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
+	// An ejected app's kube objects are no longer luncur's to touch — only
+	// the DB rows come out. Non-ejected apps keep the original behavior
+	// (kube required, objects deleted before the row).
+	if !a.Ejected {
+		if !s.requireKube(w) {
+			return
+		}
+		if err := s.kube.DeleteAppObjects(r.Context(), p.Namespace, a.Name); err != nil {
+			log.Printf("delete app objects: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
 	}
 	if err := s.st.DeleteApp(a.ID); err != nil {
 		log.Printf("delete app: %v", err)
@@ -177,6 +182,9 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 	}
 	a, ok := s.requireApp(w, p, r.PathValue("app"))
 	if !ok {
+		return
+	}
+	if s.refuseEjected(w, a) {
 		return
 	}
 	if !s.requireKube(w) {
@@ -417,6 +425,9 @@ func (s *server) handleDeployLogs(w http.ResponseWriter, r *http.Request, u stor
 // applied, or a *scaleReplicasError when the requested replica count is
 // invalid; any other error is an internal failure.
 func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, replicas int) (store.App, error) {
+	if a.Ejected {
+		return store.App{}, errAppEjected
+	}
 	d, err := s.st.LatestDeployment(a.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return store.App{}, err
@@ -462,6 +473,8 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 	if err != nil {
 		var re *scaleReplicasError
 		switch {
+		case errors.Is(err, errAppEjected):
+			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
 		case errors.Is(err, errKubeUnavailable):
 			writeError(w, http.StatusServiceUnavailable, "kubernetes_unavailable", "kubernetes is not configured")
 		case errors.As(err, &re):

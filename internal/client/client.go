@@ -635,3 +635,30 @@ func (c *Client) PruneBackups() (int, error) {
 	err := c.do("POST", "/v1/backups/prune", nil, &out)
 	return out.Removed, err
 }
+
+// EjectApp detaches project/app from luncur's management, one-way: the
+// server renders and archives the app's final manifest and refuses every
+// mutation on it from then on. yaml is the rendered manifest; savedTo is
+// the server-side archive path (empty when the server has no data dir).
+func (c *Client) EjectApp(project, app string) (yaml, savedTo string, err error) {
+	var out struct {
+		YAML    string `json:"yaml"`
+		SavedTo string `json:"saved_to"`
+	}
+	err = c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/eject", nil, &out)
+	return out.YAML, out.SavedTo, err
+}
+
+// RegistryGCReport is one registry GC sweep's result, as returned by POST
+// /v1/registry/gc.
+type RegistryGCReport struct {
+	DeletedManifests int      `json:"deleted_manifests"`
+	BytesReclaimed   int64    `json:"bytes_reclaimed"`
+	Warnings         []string `json:"warnings"`
+}
+
+func (c *Client) RegistryGC() (RegistryGCReport, error) {
+	var out RegistryGCReport
+	err := c.do("POST", "/v1/registry/gc", nil, &out)
+	return out, err
+}

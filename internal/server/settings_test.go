@@ -125,6 +125,23 @@ func TestSettingsBackupKeep(t *testing.T) {
 // TestSettingsBackupS3SecretKey exercises the write-only sealed setting:
 // no sealer configured -> 503; with a sealer, PUT persists a sealed value
 // (never the plaintext) and GET echoes "(set)" instead of the secret.
+func TestSettingsRegistryKeep(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/registry_keep", admin, `{"value":"0"}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("put 0: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/registry_keep", admin, `{"value":"10"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("put 10: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
 func TestSettingsBackupS3SecretKey(t *testing.T) {
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")

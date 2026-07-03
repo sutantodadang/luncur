@@ -69,6 +69,12 @@ func SystemObjects(dataPVC, registryPVC, registryImage string) ([]render.Object,
 						Name:  "registry",
 						Image: registryImage,
 						Ports: []corev1.ContainerPort{{ContainerPort: 5000}},
+						// Registry GC (Plan L) deletes manifests via the v2 API, which
+						// the registry refuses unless delete support is explicitly
+						// enabled.
+						Env: []corev1.EnvVar{
+							{Name: "REGISTRY_STORAGE_DELETE_ENABLED", Value: "true"},
+						},
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "registry-data", MountPath: "/var/lib/registry"},
 						},

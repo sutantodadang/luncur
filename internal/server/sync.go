@@ -125,6 +125,9 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 // isn't live, there is nothing running to sync — that's a no-op, not an
 // error.
 func (s *server) syncApp(ctx context.Context, p store.Project, a store.App) error {
+	if a.Ejected {
+		return nil
+	}
 	d, err := s.st.LatestDeployment(a.ID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -151,6 +154,9 @@ func (s *server) syncApp(ctx context.Context, p store.Project, a store.App) erro
 // running apps pick up the change without requiring an explicit deploy.
 // Any error is logged, never surfaced — these are opportunistic syncs.
 func (s *server) syncIfLive(ctx context.Context, p store.Project, a store.App) {
+	if a.Ejected {
+		return
+	}
 	if s.kube == nil {
 		return
 	}
