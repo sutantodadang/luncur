@@ -95,3 +95,21 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS addons (
+  id         INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  type       TEXT NOT NULL CHECK (type IN ('postgres','redis')),
+  name       TEXT NOT NULL,
+  version    TEXT NOT NULL,
+  size_gb    INTEGER NOT NULL DEFAULT 1,
+  creds_enc  BLOB,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (project_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS addon_attachments (
+  addon_id INTEGER NOT NULL REFERENCES addons(id) ON DELETE CASCADE,
+  app_id   INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  PRIMARY KEY (addon_id, app_id)
+);
