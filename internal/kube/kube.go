@@ -38,6 +38,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"ClusterRoleBinding":    {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"},
 	"HelmChartConfig":       {Group: "helm.cattle.io", Version: "v1", Resource: "helmchartconfigs"},
 	"ClusterIssuer":         {Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"},
+	"StatefulSet":           {Group: "apps", Version: "v1", Resource: "statefulsets"},
 }
 
 // clusterScoped marks kinds Apply must patch without a namespace.
@@ -260,6 +261,20 @@ func (c *Client) GetSecretData(ctx context.Context, namespace, name string) (map
 		return nil, err
 	}
 	return sec.Data, nil
+}
+
+// StatefulSetReady reports whether a StatefulSet has at least one ready
+// replica. Absent → (false, nil): callers poll during provisioning.
+func (c *Client) StatefulSetReady(ctx context.Context, namespace, name string) (bool, error) {
+	u, err := c.dyn.Resource(gvrByKind["StatefulSet"]).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	n, _, _ := unstructured.NestedInt64(u.Object, "status", "readyReplicas")
+	return n >= 1, nil
 }
 
 // HasGroupVersion reports whether the cluster serves the given

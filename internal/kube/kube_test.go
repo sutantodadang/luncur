@@ -258,6 +258,24 @@ func TestHasGroupVersion(t *testing.T) {
 	}
 }
 
+func TestStatefulSetReady(t *testing.T) {
+	sts := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "StatefulSet",
+		"metadata": map[string]any{"name": "addon-db1", "namespace": "proj"},
+		"status":   map[string]any{"readyReplicas": int64(1)},
+	}}
+	dyn := newFakeDyn(t, sts) // reuse the file's existing fake-dynamic constructor
+	c := NewForTest(dyn, nil)
+	ok, err := c.StatefulSetReady(context.Background(), "proj", "addon-db1")
+	if err != nil || !ok {
+		t.Fatalf("ready = %v err=%v", ok, err)
+	}
+	ok, err = c.StatefulSetReady(context.Background(), "proj", "absent")
+	if err != nil || ok {
+		t.Fatalf("absent: ready=%v err=%v, want false nil", ok, err)
+	}
+}
+
 // TestApplyClusterIssuerIsClusterScoped mirrors
 // TestApplyClusterRoleBindingSkipsNamespace: ClusterIssuer (cluster-scoped,
 // per gvrByKind) must also be patched without a namespace.
