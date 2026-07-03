@@ -41,12 +41,17 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *server) authed(next func(http.ResponseWriter, *http.Request, store.User)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		const prefix = "Bearer "
-		h := r.Header.Get("Authorization")
-		if len(h) <= len(prefix) || h[:len(prefix)] != prefix {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+		var tok string
+		if h := r.Header.Get("Authorization"); len(h) > len(prefix) && h[:len(prefix)] == prefix {
+			tok = h[len(prefix):]
+		} else if ck, err := r.Cookie("luncur_session"); err == nil {
+			tok = ck.Value
+		}
+		if tok == "" {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token or session")
 			return
 		}
-		u, err := s.st.UserForToken(h[len(prefix):])
+		u, err := s.st.UserForToken(tok)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid token")
 			return

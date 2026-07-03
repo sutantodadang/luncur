@@ -1,0 +1,11 @@
+{{define "login.html"}}
+{{template "head" .}}
+<h1>luncur</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<form method="post" action="/ui/login">
+  <p><label>email <input type="email" name="email" required autofocus></label></p>
+  <p><label>password <input type="password" name="password" required></label></p>
+  <p><button type="submit">log in</button></p>
+</form>
+{{template "foot" .}}
+{{end}}
