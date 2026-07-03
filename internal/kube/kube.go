@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -34,12 +35,15 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"PersistentVolumeClaim": {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
 	"ServiceAccount":        {Group: "", Version: "v1", Resource: "serviceaccounts"},
 	"ClusterRoleBinding":    {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"},
+	"HelmChartConfig":       {Group: "helm.cattle.io", Version: "v1", Resource: "helmchartconfigs"},
+	"ClusterIssuer":         {Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"},
 }
 
 // clusterScoped marks kinds Apply must patch without a namespace.
 var clusterScoped = map[string]bool{
 	"Namespace":          true,
 	"ClusterRoleBinding": true,
+	"ClusterIssuer":      true,
 }
 
 type Client struct {
@@ -254,4 +258,18 @@ func (c *Client) GetSecretData(ctx context.Context, namespace, name string) (map
 		return nil, err
 	}
 	return sec.Data, nil
+}
+
+// HasGroupVersion reports whether the cluster serves the given
+// group/version (e.g. "cert-manager.io/v1") — used to detect optional
+// provider CRDs before selecting them.
+func (c *Client) HasGroupVersion(ctx context.Context, gv string) (bool, error) {
+	_, err := c.cs.Discovery().ServerResourcesForGroupVersion(gv)
+	if err != nil {
+		if apierrors.IsNotFound(err) || strings.Contains(err.Error(), "not found") {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
