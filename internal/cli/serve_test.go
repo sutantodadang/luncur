@@ -40,3 +40,14 @@ func TestBootstrapAdminRejectsBadSpec(t *testing.T) {
 		t.Fatal("want error for spec without colon")
 	}
 }
+
+func TestServeSSHFlags(t *testing.T) {
+	cmd := serveCmd()
+	sshListen, err := cmd.Flags().GetString("ssh-listen")
+	if err != nil || sshListen != ":2222" {
+		t.Fatalf("ssh-listen default = %q err=%v, want :2222", sshListen, err)
+	}
+	if _, err := cmd.Flags().GetString("ssh-hostkey-file"); err != nil {
+		t.Fatalf("ssh-hostkey-file flag missing: %v", err)
+	}
+}

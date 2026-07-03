@@ -22,6 +22,10 @@ const systemNamespace = "luncur-system"
 // admin bootstrap token from (key "admin").
 const BootstrapSecretName = "luncur-bootstrap"
 
+// SSHNodePort is where git push reaches the in-cluster SSH receiver:
+// ssh://git@<ip>:30022/<project>/<app>.git
+const SSHNodePort = 30022
+
 // Params configures luncur's own self-deploy manifests.
 type Params struct {
 	Image        string // luncur server image
@@ -103,6 +107,7 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 							"--external-ip", p.ExternalIP,
 							"--builder-image", p.BuilderImage,
 							"--bootstrap-admin", "$(BOOTSTRAP_ADMIN)",
+							"--ssh-listen", ":2222",
 						},
 						Env: []corev1.EnvVar{{
 							Name: "BOOTSTRAP_ADMIN",
@@ -111,7 +116,7 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 								Key:                  "admin",
 							}},
 						}},
-						Ports: []corev1.ContainerPort{{ContainerPort: 8080}},
+						Ports: []corev1.ContainerPort{{ContainerPort: 8080}, {ContainerPort: 2222}},
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "luncur-data", MountPath: "/var/lib/luncur"},
 						},
@@ -156,6 +161,27 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 		},
 	}
 	if err := add("Service", svc); err != nil {
+		return nil, err
+	}
+
+	sshSvc := &corev1.Service{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "luncur-ssh",
+			Namespace: systemNamespace,
+			Labels:    labels,
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeNodePort,
+			Selector: map[string]string{"app.kubernetes.io/name": "luncur"},
+			Ports: []corev1.ServicePort{{
+				Port:       2222,
+				TargetPort: intstr.FromInt32(2222),
+				NodePort:   SSHNodePort,
+			}},
+		},
+	}
+	if err := add("Service", sshSvc); err != nil {
 		return nil, err
 	}
 

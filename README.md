@@ -3,7 +3,8 @@
 Tiny self-hosted PaaS on K3s. One Go binary, SQLite, deploys as simple as
 Heroku — with an escape hatch to the real Kubernetes objects.
 
-Status: Phase 1 complete (Plans A-D). Working today:
+Status: Phase 1 complete (Plans A-D); Phase 2 in progress — git push deploys
+shipped (Plan E). Working today:
 
 ## Install
 
@@ -90,6 +91,27 @@ luncur logs myapp --project myproj --deploy 1 -f
 luncur logs myapp --project myproj -f
 ```
 
+**Deploy with git push:**
+```sh
+# Once per machine: register your SSH public key
+luncur ssh-key add            # picks up ~/.ssh/id_*.pub; or pass a path
+luncur ssh-key list
+luncur ssh-key remove <id>
+
+# Once per repo: add the luncur remote
+git remote add luncur ssh://git@<ip>:30022/myproj/myapp.git
+
+# Deploy
+git push luncur main
+```
+
+The push streams the whole build into your `git push` output (as
+`remote:` lines) and prints the app URL when it goes live. Only a push to
+the app's configured branch (default `main`) triggers a deploy; the
+receiver is push-only (`git pull`/`clone` from luncur is rejected) and no
+repository is stored server-side — each push is archived straight into the
+same build pipeline `luncur deploy` uses.
+
 **Environment & editing:**
 ```sh
 luncur env set myapp KEY=value --project myproj
@@ -130,5 +152,7 @@ When you run `luncur deploy` on a local source or git repository, the following 
 - In-cluster registry is reachable from containerd via a NodePort (30500) + `registries.yaml` mirror to `http://127.0.0.1:30500`, since containerd on the node cannot resolve cluster-DNS names like `registry.luncur-system`.
 - Public-IP detection: node `ExternalIP` → node `InternalIP` → `--ip` flag. No outbound HTTP probe.
 - API tokens expire after 90 days (enforcement only; `luncur token list/revoke` is a future addition).
+- The git-push SSH host key persists as a file on the data PVC (beside the DB), not a K8s Secret — same durability, no kube dependency at SSH boot.
+- Push progress streams via a `post-receive` hook, so the `git push` exit code cannot reflect a build failure (refs land before the hook runs). The client still sees the full build log and a final `BUILD FAILED`/`app live` line.
 
 Design docs: `docs/superpowers/specs/`. Plans: `docs/superpowers/plans/`.

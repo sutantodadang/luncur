@@ -81,3 +81,12 @@ CREATE TABLE IF NOT EXISTS invites (
   role       TEXT NOT NULL CHECK (role IN ('admin','member')),
   expires_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ssh_keys (
+  id          INTEGER PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  public_key  TEXT NOT NULL,
+  fingerprint TEXT NOT NULL UNIQUE,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -27,6 +27,7 @@ func initCmd() *cobra.Command {
 			fmt.Fprintf(f, "project = %q\n", project)
 			fmt.Fprintf(f, "port = %d\n", port)
 			cmd.Println("wrote luncur.toml")
+			cmd.Printf("tip: deploy with git push — git remote add luncur ssh://git@<server-ip>:30022/%s/%s.git\n", project, appName)
 			return nil
 		},
 	}

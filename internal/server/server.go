@@ -108,6 +108,9 @@ func (s *server) handler() http.Handler {
 	})
 	mux.HandleFunc("POST /v1/login", s.handleLogin)
 	mux.HandleFunc("GET /v1/me", s.authed(s.handleMe))
+	mux.HandleFunc("POST /v1/ssh-keys", s.authed(s.handleAddSSHKey))
+	mux.HandleFunc("GET /v1/ssh-keys", s.authed(s.handleListSSHKeys))
+	mux.HandleFunc("DELETE /v1/ssh-keys/{id}", s.authed(s.handleDeleteSSHKey))
 	mux.HandleFunc("POST /v1/users", s.adminOnly(s.handleCreateUser))
 	mux.HandleFunc("POST /v1/projects", s.adminOnly(s.handleCreateProject))
 	mux.HandleFunc("GET /v1/projects", s.authed(s.handleListProjects))
@@ -146,7 +149,8 @@ func (s *server) handler() http.Handler {
 
 // New builds the full API handler. Later plans add their routes here.
 func New(d Deps) http.Handler {
-	return newServer(d).handler()
+	h, _ := NewWithBackend(d)
+	return h
 }
 
 // requireKube writes a 503 and returns false when no kube client is
