@@ -441,6 +441,86 @@ func (c *Client) RetryDomain(project, app, hostname string) error {
 	return c.do("POST", fmt.Sprintf("/v1/projects/%s/apps/%s/domains/%s/retry", project, app, hostname), nil, nil)
 }
 
+// AddonCreate is CreateAddon's request body: Name/Version/SizeGB default on
+// the server when empty/zero. App optionally attaches the new addon to an
+// app in the same call (the CLI's `addon add` sugar).
+type AddonCreate struct {
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	SizeGB  int    `json:"size_gb"`
+	App     string `json:"app"`
+}
+
+type AddonInfo struct {
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	Version    string   `json:"version"`
+	Status     string   `json:"status,omitempty"`
+	Ready      bool     `json:"ready"`
+	AttachedTo []string `json:"attached_to"`
+	Warning    string   `json:"warning,omitempty"`
+}
+
+func (c *Client) CreateAddon(project string, req AddonCreate) (AddonInfo, error) {
+	var out AddonInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/addons", req, &out)
+	return out, err
+}
+
+func (c *Client) ListAddons(project string) ([]AddonInfo, error) {
+	var out []AddonInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/addons", nil, &out)
+	return out, err
+}
+
+// AttachAddon attaches an existing addon to an app, returning the collision
+// warning ("" when none — the injected env key was already user-set). The
+// server answers 204 (no body) when there's no warning and 200 with a JSON
+// body when there is, so this uses doRaw rather than do to avoid decoding
+// an empty 204 body as JSON.
+func (c *Client) AttachAddon(project, name, app string) (string, error) {
+	body, err := json.Marshal(map[string]string{"app": app})
+	if err != nil {
+		return "", err
+	}
+	respBody, err := c.doRaw("POST",
+		"/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/attach", body)
+	if err != nil {
+		return "", err
+	}
+	if len(respBody) == 0 {
+		return "", nil
+	}
+	var out struct {
+		Warning string `json:"warning"`
+	}
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return "", err
+	}
+	return out.Warning, nil
+}
+
+func (c *Client) DetachAddon(project, name, app string) error {
+	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/detach",
+		map[string]string{"app": app}, nil)
+}
+
+func (c *Client) RemoveAddon(project, name string, force, keepData bool) error {
+	path := "/v1/projects/" + url.PathEscape(project) + "/addons/" + url.PathEscape(name)
+	q := url.Values{}
+	if force {
+		q.Set("force", "1")
+	}
+	if keepData {
+		q.Set("keep_data", "1")
+	}
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return c.do("DELETE", path, nil, nil)
+}
+
 func (c *Client) GetSetting(key string) (string, error) {
 	var out struct {
 		Value string `json:"value"`
