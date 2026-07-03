@@ -7,6 +7,8 @@ import (
 	"log"
 	"strings"
 
+	netv1 "k8s.io/api/networking/v1"
+
 	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -45,14 +47,53 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 		}
 	}
 
+	domains, err := s.st.ListDomains(a.ID)
+	if err != nil {
+		return render.Rendered{}, fmt.Errorf("list domains: %w", err)
+	}
+	var extraHosts []string
+	var tls []netv1.IngressTLS
+	annotations := map[string]string{}
+	provider := s.certProviderName()
+	for _, d := range domains {
+		extraHosts = append(extraHosts, d.Hostname)
+		switch provider {
+		case "builtin":
+			if d.CertStatus == "issued" {
+				tls = append(tls, netv1.IngressTLS{
+					Hosts: []string{d.Hostname}, SecretName: certSecretName(a.Name, d.Hostname),
+				})
+			}
+		case "cert-manager":
+			tls = append(tls, netv1.IngressTLS{
+				Hosts: []string{d.Hostname}, SecretName: certSecretName(a.Name, d.Hostname),
+			})
+		}
+	}
+	if len(domains) > 0 {
+		switch provider {
+		case "traefik":
+			annotations["traefik.ingress.kubernetes.io/router.tls"] = "true"
+			annotations["traefik.ingress.kubernetes.io/router.tls.certresolver"] = "le"
+		case "cert-manager":
+			annotations["cert-manager.io/cluster-issuer"] = "luncur-le"
+		}
+	}
+	if len(annotations) == 0 {
+		annotations = nil
+	}
+
 	in := render.Input{
-		AppName:   a.Name,
-		Namespace: p.Namespace,
-		Image:     imageRef,
-		Host:      hostFor(a.Name, s.externalIP),
-		Port:      int32(a.Port),
-		Replicas:  int32(a.Replicas),
-		Overrides: overrides,
+		AppName:            a.Name,
+		Namespace:          p.Namespace,
+		Image:              imageRef,
+		Host:               hostFor(a.Name, s.externalIP),
+		Port:               int32(a.Port),
+		Replicas:           int32(a.Replicas),
+		Overrides:          overrides,
+		ExtraHosts:         extraHosts,
+		IngressAnnotations: annotations,
+		TLS:                tls,
 	}
 	return render.Render(in, env)
 }
