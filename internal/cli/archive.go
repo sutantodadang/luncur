@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -20,7 +22,11 @@ func packSource(dir string) (io.Reader, error) {
 		cmd := exec.Command("git", "-C", dir, "archive", "--format=tar.gz", "HEAD")
 		out, err := cmd.Output()
 		if err != nil {
-			return nil, err
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				return nil, fmt.Errorf("git archive: %w: %s", err, ee.Stderr)
+			}
+			return nil, fmt.Errorf("git archive: %w", err)
 		}
 		return bytes.NewReader(out), nil
 	}

@@ -7,6 +7,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/sutantodadang/luncur/internal/render"
@@ -49,6 +50,15 @@ func RenderBuildJob(p BuildParams) (render.Object, error) {
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "data", MountPath: "/data"},
 		},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("2Gi"),
+			},
+		},
 	}
 
 	job := &batchv1.Job{
@@ -64,7 +74,9 @@ func RenderBuildJob(p BuildParams) (render.Object, error) {
 			},
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit: &backoffLimit,
+			BackoffLimit:            &backoffLimit,
+			TTLSecondsAfterFinished: ptr(int32(3600)),
+			ActiveDeadlineSeconds:   ptr(int64(900)),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: restartPolicy,

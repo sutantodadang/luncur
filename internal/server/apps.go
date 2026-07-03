@@ -189,6 +189,8 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 			return
 		}
 
+		// 256 MiB: a source tarball larger than that is a mistake, not an app.
+		r.Body = http.MaxBytesReader(w, r.Body, 256<<20)
 		if err := r.ParseMultipartForm(64 << 20); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid multipart body")
 			return

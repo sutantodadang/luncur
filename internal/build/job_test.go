@@ -24,20 +24,26 @@ func TestRenderBuildJob(t *testing.T) {
 		t.Fatalf("Kind=%q", obj.Kind)
 	}
 	var j struct {
-		APIVersion string `json:"apiVersion"`
+		APIVersion string                           `json:"apiVersion"`
 		Metadata   struct{ Name, Namespace string } `json:"metadata"`
 		Spec       struct {
-			BackoffLimit *int32 `json:"backoffLimit"`
-			Template     struct {
+			BackoffLimit            *int32 `json:"backoffLimit"`
+			TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished"`
+			ActiveDeadlineSeconds   *int64 `json:"activeDeadlineSeconds"`
+			Template                struct {
 				Spec struct {
 					RestartPolicy string `json:"restartPolicy"`
 					Containers    []struct {
-						Image        string `json:"image"`
-						Env          []struct{ Name, Value string } `json:"env"`
+						Image        string                             `json:"image"`
+						Env          []struct{ Name, Value string }     `json:"env"`
 						VolumeMounts []struct{ Name, MountPath string } `json:"volumeMounts"`
+						Resources    struct {
+							Requests map[string]string `json:"requests"`
+							Limits   map[string]string `json:"limits"`
+						} `json:"resources"`
 					} `json:"containers"`
 					Volumes []struct {
-						Name                  string `json:"name"`
+						Name                  string                     `json:"name"`
 						PersistentVolumeClaim struct{ ClaimName string } `json:"persistentVolumeClaim"`
 					} `json:"volumes"`
 				} `json:"spec"`
@@ -53,9 +59,21 @@ func TestRenderBuildJob(t *testing.T) {
 	if j.Spec.BackoffLimit == nil || *j.Spec.BackoffLimit != 0 {
 		t.Fatalf("backoffLimit not 0")
 	}
+	if j.Spec.TTLSecondsAfterFinished == nil || *j.Spec.TTLSecondsAfterFinished != 3600 {
+		t.Fatalf("ttlSecondsAfterFinished not 3600")
+	}
+	if j.Spec.ActiveDeadlineSeconds == nil || *j.Spec.ActiveDeadlineSeconds != 900 {
+		t.Fatalf("activeDeadlineSeconds not 900")
+	}
 	c := j.Spec.Template.Spec.Containers[0]
 	if c.Image != "luncur/builder:latest" {
 		t.Fatalf("image=%q", c.Image)
+	}
+	if c.Resources.Requests["cpu"] != "100m" || c.Resources.Requests["memory"] != "256Mi" {
+		t.Fatalf("resource requests: %+v", c.Resources.Requests)
+	}
+	if c.Resources.Limits["memory"] != "2Gi" {
+		t.Fatalf("resource limits: %+v", c.Resources.Limits)
 	}
 	env := map[string]string{}
 	for _, e := range c.Env {

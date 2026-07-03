@@ -81,7 +81,9 @@ func (s *Store) GetDeployment(id int64) (Deployment, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return Deployment{}, ErrNotFound
 	}
-	d.ImageRef, d.LogPath = img.String, logp.String
+	if err == nil {
+		d.ImageRef, d.LogPath = img.String, logp.String
+	}
 	return d, err
 }
 
@@ -95,7 +97,9 @@ func (s *Store) LatestDeployment(appID int64) (Deployment, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return Deployment{}, ErrNotFound
 	}
-	d.ImageRef, d.LogPath = img.String, logp.String
+	if err == nil {
+		d.ImageRef, d.LogPath = img.String, logp.String
+	}
 	return d, err
 }
 
