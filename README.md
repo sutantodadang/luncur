@@ -3,9 +3,10 @@
 Tiny self-hosted PaaS on K3s. One Go binary, SQLite, deploys as simple as
 Heroku — with an escape hatch to the real Kubernetes objects.
 
-Status: Phase 1 complete (Plans A-D); Phase 2 in progress — git push deploys
-(Plan E), custom domains + TLS (Plan F), and rollback + hardening (Plan G)
-shipped. Working today:
+Status: Phase 2 complete (Plans E-H) — git push deploys (Plan E), custom
+domains + TLS (Plan F), rollback + hardening (Plan G), and invites + user
+admin + the web YAML editor (Plan H) shipped, on top of Phase 1's PaaS core
+(Plans A-D). Working today:
 
 ## Install
 
@@ -51,6 +52,11 @@ luncur serve --db luncur.db \
 luncur login http://localhost:8080
 luncur whoami
 luncur user add teammate@example.com --password ... [--role admin|member]
+
+# Invite teammates instead of setting a password for them (admin only)
+luncur invite create [--role admin|member]   # prints a one-time /ui/register link
+luncur invite list                           # TOKEN, ROLE, EXPIRES, USED
+luncur invite revoke <token>
 ```
 
 **API tokens:**
@@ -156,10 +162,24 @@ luncur status myapp --project myproj
 
 After `luncur up`, the panel is served at `http://panel.<ip>.sslip.io/ui/`
 (login with the admin credentials printed by `luncur up`, or any user added
-via `luncur user add`). From there you can browse projects and apps, scale
-and edit env vars, trigger a deploy, roll back to a previous deploy, and
-watch build/runtime logs stream live via Server-Sent Events — no CLI
-required.
+via `luncur user add` or an invite). From there you can browse projects and
+apps, scale and edit env vars, trigger a deploy, roll back to a previous
+deploy, and watch build/runtime logs stream live via Server-Sent Events — no
+CLI required.
+
+Admins get a **users page** (`/ui/users`) to list every user (email, role,
+created, active token count), delete a user, and mint invites — each invite
+is a single-use, 7-day link (`/ui/register?token=...`) shown as a copyable
+field; anyone who opens it registers their own email/password and is logged
+straight in with the invite's role, no email delivery involved.
+
+Every app page also has a **YAML override editor**: `edit: Deployment ·
+Service · Ingress` links open the currently-rendered manifest for that kind
+in a textarea. Saving diffs your edit against a fresh base render and stores
+the result as the same strategic-merge-patch override `luncur edit` writes
+— so the change survives every future redeploy, and re-syncs a live app
+immediately. Invalid YAML re-shows the editor with the error and your text
+intact, never discarding the edit.
 
 ## Custom domains & TLS
 
@@ -234,5 +254,7 @@ mirrored in a hidden `_csrf` field, checked on every POST before it runs.
 - `cert-manager` mode reports domain status as `external` rather than reading the issued Secret back for its real expiry date — a nice-to-have deferred to a future Phase 2 pass.
 - CSRF is the stateless double-submit-cookie pattern (a random `luncur_csrf` cookie plus a matching `_csrf` hidden form field, compared with `crypto/subtle`) rather than a server-stored per-session token — same protection for this threat model (browser forms, no JS API), zero schema.
 - Rollback's registry-presence check only applies to images hosted in the embedded registry (ref prefixed with the configured `--registry-host`); externally-hosted image refs are assumed present since luncur has no credentials to check them.
+- No email delivery for invites — the admin copies the `/ui/register?token=...` link and shares it out of band.
+- Registration marks the invite used *after* creating the user (two non-atomic statements against a single-instance SQLite server); a burned-but-unused invite can't happen, since validation failures abort before the user is created and a duplicate-email failure aborts before the invite is marked used.
 
 Design docs: `docs/superpowers/specs/`. Plans: `docs/superpowers/plans/`.
