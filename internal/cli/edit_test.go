@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/sutantodadang/luncur/internal/render"
 )
 
 const twoDocYAML = `apiVersion: apps/v1
@@ -18,12 +20,14 @@ metadata:
   name: api
 `
 
+// The helpers themselves live in internal/render (shared with the web UI
+// editor); these tests pin the CLI's usage of them.
 func TestExtractDoc(t *testing.T) {
-	doc, err := extractDoc([]byte(twoDocYAML), "Service")
+	doc, err := render.ExtractDoc([]byte(twoDocYAML), "Service")
 	if err != nil || !strings.Contains(string(doc), "kind: Service") {
 		t.Fatalf("extract: %v\n%s", err, doc)
 	}
-	if _, err := extractDoc([]byte(twoDocYAML), "Ingress"); err == nil {
+	if _, err := render.ExtractDoc([]byte(twoDocYAML), "Ingress"); err == nil {
 		t.Fatal("want error for missing kind")
 	}
 }
@@ -45,7 +49,7 @@ metadata:
 spec:
   replicas: 1
 `
-	patch, err := computeOverride("Deployment", []byte(base), []byte(edited))
+	patch, err := render.ComputeOverride("Deployment", []byte(base), []byte(edited))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +57,7 @@ spec:
 		t.Fatalf("patch: %s", patch)
 	}
 	// No edit → empty patch.
-	same, err := computeOverride("Deployment", []byte(base), []byte(base))
+	same, err := render.ComputeOverride("Deployment", []byte(base), []byte(base))
 	if err != nil {
 		t.Fatal(err)
 	}

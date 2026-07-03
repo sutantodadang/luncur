@@ -245,6 +245,50 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 	return Rendered{Objects: objs}, nil
 }
 
+// ExtractDoc splits a multi-document YAML stream on "---" boundaries and
+// returns the document whose top-level `kind:` matches, erroring if none do.
+func ExtractDoc(yamlMulti []byte, kind string) ([]byte, error) {
+	docs := bytes.Split(yamlMulti, []byte("\n---"))
+	for _, doc := range docs {
+		doc = bytes.TrimSpace(doc)
+		if len(doc) == 0 {
+			continue
+		}
+		var meta struct {
+			Kind string `json:"kind"`
+		}
+		if err := yaml.Unmarshal(doc, &meta); err != nil {
+			continue
+		}
+		if meta.Kind == kind {
+			return doc, nil
+		}
+	}
+	return nil, fmt.Errorf("no document with kind %q found", kind)
+}
+
+// ComputeOverride diffs baseYAML against editedYAML and returns a strategic
+// merge patch JSON string ("{}" if there is no difference). Pure function.
+func ComputeOverride(kind string, baseYAML, editedYAML []byte) (string, error) {
+	ds, err := dataStructFor(kind)
+	if err != nil {
+		return "", err
+	}
+	baseJSON, err := yaml.YAMLToJSON(baseYAML)
+	if err != nil {
+		return "", fmt.Errorf("base yaml: %w", err)
+	}
+	editedJSON, err := yaml.YAMLToJSON(editedYAML)
+	if err != nil {
+		return "", fmt.Errorf("edited yaml: %w", err)
+	}
+	patch, err := strategicpatch.CreateTwoWayMergePatch(baseJSON, editedJSON, ds)
+	if err != nil {
+		return "", fmt.Errorf("compute patch: %w", err)
+	}
+	return string(patch), nil
+}
+
 // YAML renders the object set as ----separated multi-doc YAML (for --raw).
 func YAML(r Rendered) ([]byte, error) {
 	var out []byte
