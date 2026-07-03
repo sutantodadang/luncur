@@ -60,6 +60,9 @@ func migrate(db *sql.DB) error {
 		{"domains", "cert_error", `ALTER TABLE domains ADD COLUMN cert_error TEXT NOT NULL DEFAULT ''`},
 		{"domains", "cert_expires_at", `ALTER TABLE domains ADD COLUMN cert_expires_at TEXT NOT NULL DEFAULT ''`},
 		{"deployments", "rolled_back_from", `ALTER TABLE deployments ADD COLUMN rolled_back_from INTEGER`},
+		{"invites", "created_by", `ALTER TABLE invites ADD COLUMN created_by INTEGER`},
+		{"invites", "used_by", `ALTER TABLE invites ADD COLUMN used_by INTEGER`},
+		{"invites", "used_at", `ALTER TABLE invites ADD COLUMN used_at TEXT`},
 	} {
 		var n int
 		if err := db.QueryRow(

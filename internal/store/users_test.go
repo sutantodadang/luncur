@@ -53,3 +53,29 @@ func TestCreateUserRejectsShortPassword(t *testing.T) {
 		t.Fatal("want error for short password")
 	}
 }
+
+func TestListAndDeleteUsers(t *testing.T) {
+	s := openTest(t)
+	a, _ := s.CreateUser("a@example.com", "password123", "admin")
+	b, _ := s.CreateUser("b@example.com", "password123", "member")
+	if _, err := s.CreateToken(b.ID, "t1"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListUsers()
+	if err != nil || len(list) != 2 {
+		t.Fatalf("list = %+v err=%v", list, err)
+	}
+	if list[0].ID != a.ID || list[1].TokenCount != 1 || list[0].TokenCount != 0 {
+		t.Fatalf("rows: %+v", list)
+	}
+	if err := s.DeleteUser(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteUser(b.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: %v", err)
+	}
+	// Cascade: b's token is gone.
+	if l, _ := s.ListTokens(b.ID); len(l) != 0 {
+		t.Fatalf("tokens survived user delete: %+v", l)
+	}
+}
