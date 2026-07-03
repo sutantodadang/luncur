@@ -66,7 +66,7 @@ func TestExpiredTokenRejected(t *testing.T) {
 		t.Fatalf("expires_at not set: %v", err)
 	}
 	// Force it into the past; auth must now fail.
-	if _, err := s.DB().Exec(`UPDATE api_tokens SET expires_at = datetime('now', '-1 day')`); err != nil {
+	if _, err := s.DB().Exec(`UPDATE api_tokens SET expires_at = datetime('now', '-1 day') WHERE name = 'test'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.UserForToken(tok); !errors.Is(err, ErrAuthFailed) {
