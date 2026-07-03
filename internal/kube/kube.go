@@ -22,12 +22,13 @@ import (
 )
 
 var gvrByKind = map[string]schema.GroupVersionResource{
-	"Deployment": {Group: "apps", Version: "v1", Resource: "deployments"},
-	"Service":    {Group: "", Version: "v1", Resource: "services"},
-	"Ingress":    {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
-	"Secret":     {Group: "", Version: "v1", Resource: "secrets"},
-	"Namespace":  {Group: "", Version: "v1", Resource: "namespaces"},
-	"Job":        {Group: "batch", Version: "v1", Resource: "jobs"},
+	"Deployment":            {Group: "apps", Version: "v1", Resource: "deployments"},
+	"Service":               {Group: "", Version: "v1", Resource: "services"},
+	"Ingress":               {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
+	"Secret":                {Group: "", Version: "v1", Resource: "secrets"},
+	"Namespace":             {Group: "", Version: "v1", Resource: "namespaces"},
+	"Job":                   {Group: "batch", Version: "v1", Resource: "jobs"},
+	"PersistentVolumeClaim": {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
 }
 
 type Client struct {
