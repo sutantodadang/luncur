@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
@@ -39,7 +40,13 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/delete", s.uiPage(s.handleUIDomainDelete))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/deploy", s.uiPage(s.handleUIDeploy))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/rollback", s.uiPage(s.handleUIRollback))
+	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/edit/{kind}", s.uiPage(s.handleUIEditGet))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/edit/{kind}", s.uiPage(s.handleUIEditPost))
 }
+
+// editableKinds are the manifest kinds the YAML editor accepts — the same
+// set render.dataStructFor (via SetOverride) understands.
+var editableKinds = map[string]bool{"Deployment": true, "Service": true, "Ingress": true}
 
 // uiUser resolves the session cookie to a user.
 func (s *server) uiUser(r *http.Request) (store.User, bool) {
@@ -712,4 +719,120 @@ func (s *server) handleUIUserDelete(w http.ResponseWriter, r *http.Request, u st
 		return
 	}
 	http.Redirect(w, r, "/ui/users", http.StatusSeeOther)
+}
+
+// renderEditPage renders edit.html for both the GET view and any POST error
+// path, so a rejected submission re-shows the user's own text rather than
+// reloading the stored doc.
+func (s *server) renderEditPage(w http.ResponseWriter, r *http.Request, u store.User, p store.Project, a store.App, kind, yamlText, errMsg string) {
+	data := map[string]any{
+		"User": u, "Project": p, "App": a, "Kind": kind, "YAML": yamlText,
+		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
+	}
+	if errMsg != "" {
+		data["Error"] = errMsg
+	}
+	s.renderPage(w, "edit.html", data)
+}
+
+// editDoc renders the app (base or with overrides, per withOverrides) and
+// extracts the single document for kind — the shared render-then-split step
+// both the editor GET and POST need.
+func (s *server) editDoc(p store.Project, a store.App, kind string, withOverrides bool) ([]byte, error) {
+	image, err := s.appImage(a)
+	if err != nil {
+		return nil, err
+	}
+	rendered, err := s.renderApp(p, a, image, withOverrides)
+	if err != nil {
+		return nil, err
+	}
+	yamlBytes, err := render.YAML(rendered)
+	if err != nil {
+		return nil, err
+	}
+	return render.ExtractDoc(yamlBytes, kind)
+}
+
+// handleUIEditGet shows the app's current rendered doc (overrides applied)
+// for one editable kind in a textarea.
+func (s *server) handleUIEditGet(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	kind := r.PathValue("kind")
+	if !editableKinds[kind] {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	doc, err := s.editDoc(p, a, kind, true)
+	if err != nil {
+		log.Printf("ui edit render: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.renderEditPage(w, r, u, p, a, kind, string(doc), "")
+}
+
+// handleUIEditPost diffs the submitted YAML against a fresh base render (no
+// overrides) and stores the resulting strategic-merge patch through the same
+// s.setOverride path the JSON API uses. A no-op edit redirects without
+// writing anything; any error — bad YAML, an invalid patch, a rejected
+// override — re-renders the editor with the user's own text so nothing is
+// lost.
+func (s *server) handleUIEditPost(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	kind := r.PathValue("kind")
+	if !editableKinds[kind] {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	submitted := r.PostFormValue("yaml")
+
+	baseDoc, err := s.editDoc(p, a, kind, false)
+	if err != nil {
+		log.Printf("ui edit base render: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	patch, err := render.ComputeOverride(kind, baseDoc, []byte(submitted))
+	if err != nil {
+		s.renderEditPage(w, r, u, p, a, kind, submitted, err.Error())
+		return
+	}
+	if patch == "{}" {
+		uiRedirect(w, r, p, a)
+		return
+	}
+
+	if err := s.setOverride(r.Context(), p, a, kind, patch); err != nil {
+		var ve *store.ValidationError
+		msg := "internal error"
+		if errors.As(err, &ve) {
+			msg = ve.Error()
+		} else {
+			log.Printf("ui edit set override: %v", err)
+		}
+		s.renderEditPage(w, r, u, p, a, kind, submitted, msg)
+		return
+	}
+	uiRedirect(w, r, p, a)
 }

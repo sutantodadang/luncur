@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -898,5 +899,127 @@ func TestUIUsersPageAdminOnly(t *testing.T) {
 	defer selfDelResp.Body.Close()
 	if selfDelResp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("POST /ui/users/delete self: want 400, got %d", selfDelResp.StatusCode)
+	}
+}
+
+// extractTextarea pulls the value out of edit.html's single <textarea> via a
+// plain substring split (no HTML parser needed for a fixture that only ever
+// emits one), unescaping the entities html/template's text-context escaping
+// introduces.
+func extractTextarea(t *testing.T, body string) string {
+	t.Helper()
+	open := strings.Index(body, "<textarea")
+	if open == -1 {
+		t.Fatalf("no <textarea> in body: %s", body)
+	}
+	start := strings.Index(body[open:], ">")
+	if start == -1 {
+		t.Fatalf("unterminated <textarea> tag in body: %s", body)
+	}
+	start += open + 1
+	end := strings.Index(body[start:], "</textarea>")
+	if end == -1 {
+		t.Fatalf("no closing </textarea> in body: %s", body)
+	}
+	return html.UnescapeString(body[start : start+end])
+}
+
+// TestUIYAMLEditor exercises the per-kind rendered-YAML editor: GET shows
+// the current doc, a CSRF-correct POST with an edited replica count stores
+// the diff as an override that survives redeploys, invalid YAML re-renders
+// the editor with the error and the user's text preserved, and an
+// unsupported kind 404s.
+func TestUIYAMLEditor(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/p/apps", admin, `{"name":"web","port":3000}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	editURL := srv.URL + "/ui/projects/p/apps/web/edit/Deployment"
+
+	// 1. GET edit/Deployment -> 200, textarea contains "kind: Deployment"
+	// and the current replica count.
+	req1, err := http.NewRequest("GET", editURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req1.AddCookie(ck)
+	resp1, err := client.Do(req1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("GET edit/Deployment: want 200, got %d", resp1.StatusCode)
+	}
+	body1, err := io.ReadAll(resp1.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	textarea1 := extractTextarea(t, string(body1))
+	if !strings.Contains(textarea1, "kind: Deployment") || !strings.Contains(textarea1, "replicas: 1") {
+		t.Fatalf("GET edit/Deployment: textarea missing expected content, got: %s", textarea1)
+	}
+
+	// 2. CSRF-correct POST with replicas edited 1 -> 4 redirects to the app
+	// page and stores the override.
+	csrfCk := uiCSRF(t, client, srv.URL)
+	edited := strings.Replace(textarea1, "replicas: 1", "replicas: 4", 1)
+	postForm := url.Values{"yaml": {edited}}
+	resp2 := uiPost(t, client, editURL, csrfCk, ck, postForm)
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST edit/Deployment: want 303, got %d", resp2.StatusCode)
+	}
+	if loc := resp2.Header.Get("Location"); loc != "/ui/projects/p/apps/web" {
+		t.Fatalf("POST edit/Deployment: want Location /ui/projects/p/apps/web, got %q", loc)
+	}
+	id := appID(t, st, "p", "web")
+	overrides, err := st.Overrides(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(overrides["Deployment"], `"replicas":4`) {
+		t.Fatalf("stored override: want replicas:4, got: %s", overrides["Deployment"])
+	}
+
+	// 3. POST invalid YAML re-renders the editor (200) with the error and
+	// the submitted text preserved.
+	badForm := url.Values{"yaml": {"not: [valid"}}
+	resp3 := uiPost(t, client, editURL, csrfCk, ck, badForm)
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("POST invalid yaml: want 200, got %d", resp3.StatusCode)
+	}
+	body3, err := io.ReadAll(resp3.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body3), `class="err"`) {
+		t.Fatalf("POST invalid yaml: want error message, got: %s", body3)
+	}
+	if !strings.Contains(extractTextarea(t, string(body3)), "not: [valid") {
+		t.Fatalf("POST invalid yaml: want submitted text preserved, got: %s", body3)
+	}
+
+	// 4. GET edit/ConfigMap -> 404 (unsupported kind).
+	req4, err := http.NewRequest("GET", srv.URL+"/ui/projects/p/apps/web/edit/ConfigMap", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req4.AddCookie(ck)
+	resp4, err := client.Do(req4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp4.Body.Close()
+	if resp4.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET edit/ConfigMap: want 404, got %d", resp4.StatusCode)
 	}
 }

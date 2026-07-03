@@ -1,0 +1,13 @@
+{{define "edit.html"}}
+{{template "head" .}}{{template "nav" .}}
+<p><a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}">&larr; {{.App.Name}}</a></p>
+<h1>Edit {{.Kind}} — {{.App.Name}}</h1>
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+<p>Changes are stored as an override patch and survive redeploys.</p>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/{{.Kind}}">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <p><textarea name="yaml" rows="30" style="width:100%;font-family:monospace">{{.YAML}}</textarea></p>
+  <p><button type="submit">save override</button></p>
+</form>
+{{template "foot" .}}
+{{end}}

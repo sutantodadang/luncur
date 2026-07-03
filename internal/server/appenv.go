@@ -148,6 +148,18 @@ func (s *server) handleUnsetEnv(w http.ResponseWriter, r *http.Request, u store.
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// setOverride is the shared core of handleSetOverride and the UI YAML
+// editor: store the patch, then opportunistically sync if the app is live.
+// A *store.ValidationError means the patch was rejected by the store; any
+// other error is an internal failure.
+func (s *server) setOverride(ctx context.Context, p store.Project, a store.App, kind, patch string) error {
+	if err := s.st.SetOverride(a.ID, kind, patch); err != nil {
+		return err
+	}
+	s.syncIfLive(ctx, p, a)
+	return nil
+}
+
 // handleSetOverride stores a raw strategic-merge-patch for one manifest
 // kind, then opportunistically syncs. The request body IS the patch.
 func (s *server) handleSetOverride(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -168,7 +180,7 @@ func (s *server) handleSetOverride(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
-	if err := s.st.SetOverride(a.ID, kind, string(body)); err != nil {
+	if err := s.setOverride(r.Context(), p, a, kind, string(body)); err != nil {
 		var ve *store.ValidationError
 		if errors.As(err, &ve) {
 			writeError(w, http.StatusBadRequest, "bad_request", ve.Error())
@@ -179,7 +191,6 @@ func (s *server) handleSetOverride(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
-	s.syncIfLive(r.Context(), p, a)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -210,6 +221,20 @@ func (s *server) handleDeleteOverride(w http.ResponseWriter, r *http.Request, u 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// appImage returns the image to render an app with: its latest deployment's
+// image, or a placeholder if it has never been deployed.
+func (s *server) appImage(a store.App) (string, error) {
+	d, err := s.st.LatestDeployment(a.ID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return "<pending-first-deploy>", nil
+	case err != nil:
+		return "", err
+	default:
+		return d.ImageRef, nil
+	}
+}
+
 // handleRawManifest renders the app's current manifest set as multi-doc
 // YAML. Uses the latest deployment's image, or a placeholder if the app
 // has never been deployed. ?base=1 renders without overrides applied.
@@ -223,17 +248,11 @@ func (s *server) handleRawManifest(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
-	image := "<pending-first-deploy>"
-	d, err := s.st.LatestDeployment(a.ID)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		// keep placeholder
-	case err != nil:
+	image, err := s.appImage(a)
+	if err != nil {
 		log.Printf("latest deployment: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
-	default:
-		image = d.ImageRef
 	}
 
 	withOverrides := r.URL.Query().Get("base") != "1"
