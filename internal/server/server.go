@@ -149,7 +149,8 @@ func (s *server) handler() http.Handler {
 
 // New builds the full API handler. Later plans add their routes here.
 func New(d Deps) http.Handler {
-	return newServer(d).handler()
+	h, _ := NewWithBackend(d)
+	return h
 }
 
 // requireKube writes a 503 and returns false when no kube client is
