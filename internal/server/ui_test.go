@@ -2,11 +2,14 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/sutantodadang/luncur/internal/store"
 )
 
 func TestUILoginFlow(t *testing.T) {
@@ -361,6 +364,43 @@ func TestUIScalePersists(t *testing.T) {
 	}
 	if a.Replicas != 5 {
 		t.Fatalf("replicas: want 5, got %d", a.Replicas)
+	}
+}
+
+// TestUIDeployGitAppWithoutKube503 guards the UI git-deploy path when the
+// server has no kube client: it must answer 503 (mirroring the API's
+// kubernetes_unavailable), NOT silently redirect, and must not create a
+// deployment row it could never build.
+func TestUIDeployGitAppWithoutKube503(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"g","port":8080,"git_url":"https://x/y.git"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+
+	client := noRedirectClient()
+	req, err := http.NewRequest("POST", srv.URL+"/ui/projects/web/apps/g/deploy", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(ck)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("POST deploy without kube: want 503, got %d", resp.StatusCode)
+	}
+
+	if _, err := st.LatestDeployment(appID(t, st, "web", "g")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("no deployment row must be created, got err=%v", err)
 	}
 }
 

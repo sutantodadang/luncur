@@ -323,12 +323,11 @@ func (s *server) handleUIEnvUnset(w http.ResponseWriter, r *http.Request, u stor
 	uiRedirect(w, r, p, a)
 }
 
-// handleUIDeploy starts a git build for git-source apps; it mirrors the
-// git-deploy branch of handleDeployApp (create a "building" deployment,
-// s.startBuild). Non-git apps, or a git app when kube/the build source
-// isn't configured, are a no-op redirect — the template hides the "Deploy
-// from git" button in those cases, so this only guards against a direct
-// POST.
+// handleUIDeploy starts a git build for git-source apps via the same
+// deployGitApp core handleDeployApp's git branch uses. A non-git app is a
+// no-op redirect (the template hides the "Deploy from git" button, so this
+// only guards against a direct POST); missing kube/build-source surface as
+// 503 exactly like the API path, never as a silent redirect.
 func (s *server) handleUIDeploy(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.uiProject(w, r, u)
 	if !ok {
@@ -339,14 +338,22 @@ func (s *server) handleUIDeploy(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	if a.SourceType == "git" && s.kube != nil && s.src != nil {
-		d, err := s.st.CreateDeployment(a.ID, "building", "", u.ID)
-		if err != nil {
-			log.Printf("ui deploy: create deployment: %v", err)
+	if a.SourceType != "git" {
+		uiRedirect(w, r, p, a)
+		return
+	}
+
+	if _, err := s.deployGitApp(p, a, u.ID); err != nil {
+		switch {
+		case errors.Is(err, errKubeUnavailable):
+			http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		case errors.Is(err, errBuildUnavailable):
+			http.Error(w, "server has no data directory configured", http.StatusServiceUnavailable)
+		default:
+			log.Printf("ui deploy: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
 		}
-		s.startBuild(p, a, d)
+		return
 	}
 	uiRedirect(w, r, p, a)
 }

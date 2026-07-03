@@ -12,10 +12,14 @@ import (
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
-// errKubeUnavailable is scaleApp's sentinel for "this scale can't be
-// applied because no kube client is configured". Callers (the JSON API and
-// the UI) each translate it into their own response shape.
+// errKubeUnavailable is the shared cores' sentinel for "this action can't
+// be applied because no kube client is configured". Callers (the JSON API
+// and the UI) each translate it into their own response shape.
 var errKubeUnavailable = errors.New("kubernetes is not configured")
+
+// errBuildUnavailable is deployGitApp's sentinel for "no build source is
+// configured" (the server was started without a data directory).
+var errBuildUnavailable = errors.New("server has no data directory configured")
 
 // scaleReplicasError wraps a SetReplicas validation failure so callers can
 // tell it apart from scaleApp's other (internal) failure modes and answer
@@ -231,21 +235,47 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 	}
 
 	if a.SourceType == "git" {
-		if s.src == nil {
-			writeError(w, http.StatusServiceUnavailable, "build_unavailable", "server has no data directory configured")
-			return
-		}
-		d, err := s.st.CreateDeployment(a.ID, "building", "", u.ID)
+		d, err := s.deployGitApp(p, a, u.ID)
 		if err != nil {
-			log.Printf("create deployment: %v", err)
-			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			switch {
+			case errors.Is(err, errKubeUnavailable):
+				// Unreachable today (requireKube already answered above),
+				// kept so the shared core stays complete for any caller.
+				writeError(w, http.StatusServiceUnavailable, "kubernetes_unavailable", "kubernetes is not configured")
+			case errors.Is(err, errBuildUnavailable):
+				writeError(w, http.StatusServiceUnavailable, "build_unavailable", "server has no data directory configured")
+			default:
+				log.Printf("git deploy: %v", err)
+				writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			}
 			return
 		}
-		s.startBuild(p, a, d)
 		writeJSON(w, http.StatusAccepted, map[string]any{"deployment_id": d.ID, "status": "building"})
 		return
 	}
 	writeError(w, http.StatusBadRequest, "bad_request", "provide a source tarball or an image")
+}
+
+// deployGitApp is the shared core behind API (handleDeployApp's git branch)
+// and UI (handleUIDeploy) git-triggered deploys: verify kube and the build
+// source are configured, record a "building" deployment, and kick off the
+// async build. Returns errKubeUnavailable / errBuildUnavailable when the
+// respective dependency is missing — checked BEFORE creating the deployment
+// row, so a row is never left stuck in "building" for a build that can't
+// start (and startBuild's goroutine never sees a nil kube/src).
+func (s *server) deployGitApp(p store.Project, a store.App, userID int64) (store.Deployment, error) {
+	if s.kube == nil {
+		return store.Deployment{}, errKubeUnavailable
+	}
+	if s.src == nil {
+		return store.Deployment{}, errBuildUnavailable
+	}
+	d, err := s.st.CreateDeployment(a.ID, "building", "", userID)
+	if err != nil {
+		return store.Deployment{}, err
+	}
+	s.startBuild(p, a, d)
+	return d, nil
 }
 
 // deployImage is the synchronous prebuilt-image deploy path: render, apply,
