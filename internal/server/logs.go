@@ -42,6 +42,18 @@ func (s *server) handleRuntimeLogs(w http.ResponseWriter, r *http.Request, u sto
 	}
 
 	lines := make(chan string, 64)
+	// send parks on the channel OR the request context, never just the
+	// channel: once the client disconnects the main loop stops draining,
+	// and an unconditional send would leak the producer goroutine (and
+	// its kube log stream) forever.
+	send := func(line string) bool {
+		select {
+		case lines <- line:
+			return true
+		case <-r.Context().Done():
+			return false
+		}
+	}
 	var wg sync.WaitGroup
 	for _, pod := range pods {
 		wg.Add(1)
@@ -49,14 +61,16 @@ func (s *server) handleRuntimeLogs(w http.ResponseWriter, r *http.Request, u sto
 			defer wg.Done()
 			rc, err := s.kube.PodLogStream(r.Context(), p.Namespace, pod, follow)
 			if err != nil {
-				lines <- "[" + pod + "] error: " + err.Error()
+				send("[" + pod + "] error: " + err.Error())
 				return
 			}
 			defer rc.Close()
 			sc := bufio.NewScanner(rc)
 			sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 			for sc.Scan() {
-				lines <- "[" + pod + "] " + sc.Text()
+				if !send("[" + pod + "] " + sc.Text()) {
+					return
+				}
 			}
 		}(pod)
 	}
