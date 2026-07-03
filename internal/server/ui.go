@@ -31,6 +31,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains", s.uiPage(s.handleUIDomainAdd))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/delete", s.uiPage(s.handleUIDomainDelete))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/deploy", s.uiPage(s.handleUIDeploy))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/rollback", s.uiPage(s.handleUIRollback))
 }
 
 // uiUser resolves the session cookie to a user.
@@ -473,6 +474,55 @@ func (s *server) handleUIDeploy(w http.ResponseWriter, r *http.Request, u store.
 			http.Error(w, "server has no data directory configured", http.StatusServiceUnavailable)
 		default:
 			log.Printf("ui deploy: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIRollback is handleRollback's UI twin: same shared s.rollback
+// core, plain-text statuses instead of a JSON envelope, redirect instead of
+// a 202 body. Guards on s.kube itself (rather than relying on a sentinel
+// out of s.rollback) because applyImageDeploy would otherwise panic on a
+// nil client — mirroring handleRollback's requireKube check.
+func (s *server) handleUIRollback(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if s.kube == nil {
+		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	deployID, err := strconv.ParseInt(r.PostFormValue("deploy_id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid deploy_id", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := s.rollback(r.Context(), p, a, u, deployID); err != nil {
+		var missing *errImageMissing
+		var regErr *errRegistryCheck
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			http.Error(w, "no such deployment for this app", http.StatusNotFound)
+		case errors.Is(err, errNoRollbackTarget):
+			http.Error(w, errNoRollbackTarget.Error(), http.StatusConflict)
+		case errors.As(err, &missing):
+			http.Error(w, missing.Error(), http.StatusConflict)
+		case errors.As(err, &regErr):
+			http.Error(w, "could not verify image in registry", http.StatusServiceUnavailable)
+		default:
+			log.Printf("ui rollback: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
 		return

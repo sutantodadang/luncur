@@ -35,10 +35,18 @@
 </form>
 
 <h2>Deploys</h2>
-<table><tr><th>ID</th><th>Status</th><th>Image</th><th>When</th></tr>
+<table><tr><th>ID</th><th>Status</th><th>Image</th><th>When</th><th></th></tr>
 {{range .History}}<tr>
   <td>{{.ID}}</td><td class="status-{{.Status}}">{{.Status}}</td>
-  <td><code>{{.ImageRef}}</code></td><td>{{.CreatedAt}}</td>
+  <td><code>{{.ImageRef}}</code>{{if .RolledBackFrom}} <em>(rollback of {{.RolledBackFrom}})</em>{{end}}</td>
+  <td>{{.CreatedAt}}</td>
+  <td>{{if and .ImageRef (ne .ID $.LatestID)}}
+    <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollback">
+      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="deploy_id" value="{{.ID}}">
+      <button type="submit">rollback</button>
+    </form>
+  {{end}}</td>
 </tr>{{end}}
 </table>
 

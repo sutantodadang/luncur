@@ -4,7 +4,8 @@ Tiny self-hosted PaaS on K3s. One Go binary, SQLite, deploys as simple as
 Heroku — with an escape hatch to the real Kubernetes objects.
 
 Status: Phase 1 complete (Plans A-D); Phase 2 in progress — git push deploys
-(Plan E) and custom domains + TLS (Plan F) shipped. Working today:
+(Plan E), custom domains + TLS (Plan F), and rollback + hardening (Plan G)
+shipped. Working today:
 
 ## Install
 
@@ -52,6 +53,13 @@ luncur whoami
 luncur user add teammate@example.com --password ... [--role admin|member]
 ```
 
+**API tokens:**
+```sh
+luncur token list           # id, name, created, last used, expires
+luncur token revoke <id>    # revoke a token — if it's the browser's own
+                             # session cookie, that login is logged out too
+```
+
 **Projects & apps:**
 ```sh
 luncur project create myproj
@@ -70,6 +78,21 @@ luncur deploy myapp --project myproj --image my.registry/my/image:tag
 luncur scale myapp --project myproj --replicas 3
 luncur destroy myapp --project myproj
 ```
+
+**Rollback:**
+```sh
+luncur rollback myapp --project myproj               # back to the previous live deploy
+luncur rollback myapp --project myproj --deploy 12   # back to a specific deployment id
+```
+
+Rolling back redeploys an earlier deployment's image directly — no rebuild —
+and records the new deployment row's lineage, shown in the web UI's Deploys
+table as "(rollback of N)". The app page also has a `rollback` button on
+every history row except the newest and any row with no image. Only images
+hosted in luncur's embedded registry are HEAD-checked before rolling back
+(a 409 naming the image if it's gone); externally-hosted image refs (e.g.
+`docker.io/...`) are assumed present since luncur has no credentials to
+verify them.
 
 **Source build & deployment:**
 ```sh
@@ -134,8 +157,9 @@ luncur status myapp --project myproj
 After `luncur up`, the panel is served at `http://panel.<ip>.sslip.io/ui/`
 (login with the admin credentials printed by `luncur up`, or any user added
 via `luncur user add`). From there you can browse projects and apps, scale
-and edit env vars, trigger a deploy, and watch build/runtime logs stream
-live via Server-Sent Events — no CLI required.
+and edit env vars, trigger a deploy, roll back to a previous deploy, and
+watch build/runtime logs stream live via Server-Sent Events — no CLI
+required.
 
 ## Custom domains & TLS
 
@@ -187,16 +211,28 @@ When you run `luncur deploy` on a local source or git repository, the following 
 - `--builder-image` — OCI image for the build environment (default `luncur/builder:latest`); built by the release pipeline
 - `--registry-host` — in-cluster registry address (default `registry.luncur-system:5000`); K3s requires an insecure-registry entry for this host, written to `/etc/rancher/k3s/registries.yaml` by `luncur up`
 
+## Security
+
+luncur's own access to the cluster is a scoped `ClusterRole` — namespaces,
+Deployments, Jobs, Ingresses, and the specific CRDs luncur touches
+(HelmChartConfig, cert-manager's ClusterIssuer) — instead of
+`cluster-admin`; the rule set is golden-tested in
+`internal/up/manifests_test.go`. Every web-UI form (scale, env, domains,
+deploy, rollback, login) carries a CSRF token: a `luncur_csrf` cookie
+mirrored in a hidden `_csrf` field, checked on every POST before it runs.
+
 ## Approved deviations from the design spec
 
 - Web UI uses stdlib `html/template` + one vanilla-JS `EventSource` block instead of templ + HTMX. Zero codegen, zero vendored JS; same server-rendered pages + SSE behavior.
 - In-cluster registry is reachable from containerd via a NodePort (30500) + `registries.yaml` mirror to `http://127.0.0.1:30500`, since containerd on the node cannot resolve cluster-DNS names like `registry.luncur-system`.
 - Public-IP detection: node `ExternalIP` → node `InternalIP` → `--ip` flag. No outbound HTTP probe.
-- API tokens expire after 90 days (enforcement only; `luncur token list/revoke` is a future addition).
+- API tokens expire after 90 days; `luncur token list/revoke` manages them — session cookies live in the same table, so revoking one logs that browser out.
 - The git-push SSH host key persists as a file on the data PVC (beside the DB), not a K8s Secret — same durability, no kube dependency at SSH boot.
 - Push progress streams via a `post-receive` hook, so the `git push` exit code cannot reflect a build failure (refs land before the hook runs). The client still sees the full build log and a final `BUILD FAILED`/`app live` line.
 - The builtin ACME provider's HTTP-01 challenge Ingress lives in the `luncur-system` namespace, not the app's own namespace, because an Ingress's backend Service must be in the same namespace and the challenge responder runs as part of luncur itself.
 - The TLS cert provider (`builtin`/`traefik`/`cert-manager`) is fixed when `luncur serve` starts, read once from the `cert_provider` setting; changing it requires a restart (`luncur up --cert-provider ...` triggers one).
 - `cert-manager` mode reports domain status as `external` rather than reading the issued Secret back for its real expiry date — a nice-to-have deferred to a future Phase 2 pass.
+- CSRF is the stateless double-submit-cookie pattern (a random `luncur_csrf` cookie plus a matching `_csrf` hidden form field, compared with `crypto/subtle`) rather than a server-stored per-session token — same protection for this threat model (browser forms, no JS API), zero schema.
+- Rollback's registry-presence check only applies to images hosted in the embedded registry (ref prefixed with the configured `--registry-host`); externally-hosted image refs are assumed present since luncur has no credentials to check them.
 
 Design docs: `docs/superpowers/specs/`. Plans: `docs/superpowers/plans/`.

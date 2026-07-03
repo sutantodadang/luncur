@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -634,5 +635,67 @@ func TestUIPostRequiresCSRF(t *testing.T) {
 	defer loginResp.Body.Close()
 	if loginResp.StatusCode != http.StatusForbidden {
 		t.Fatalf("login without _csrf: want 403, got %d", loginResp.StatusCode)
+	}
+}
+
+// TestUIRollback exercises the rollback button on the app detail page: a
+// CSRF-correct POST with an explicit deploy_id redirects back to the app
+// page, and that page's history table then shows the new row's rollback
+// marker. Reuses rollback_test.go's fake-registry + kube-backed fixture,
+// adapted for the UI's session-cookie login flow.
+func TestUIRollback(t *testing.T) {
+	registryHost := fakeRegistry(t, "proj/web:1", "proj/web:2")
+	srv, st := rollbackServer(t, registryHost)
+
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+
+	id := appID(t, st, "proj", "web")
+	d1, err := st.CreateDeployment(id, "live", registryHost+"/proj/web:1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateDeployment(id, "live", registryHost+"/proj/web:2", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	form := url.Values{"deploy_id": {fmt.Sprintf("%d", d1.ID)}}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/rollback", csrfCk, ck, form)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST rollback: want 303, got %d", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web" {
+		t.Fatalf("POST rollback: want Location /ui/projects/proj/apps/web, got %q", loc)
+	}
+
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	appResp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer appResp.Body.Close()
+	if appResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET app page after rollback: want 200, got %d", appResp.StatusCode)
+	}
+	body, err := io.ReadAll(appResp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), fmt.Sprintf("(rollback of %d)", d1.ID)) {
+		t.Fatalf("app page after rollback: want rollback marker, got: %s", body)
 	}
 }
