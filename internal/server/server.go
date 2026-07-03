@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/sutantodadang/luncur/internal/acme"
 	"github.com/sutantodadang/luncur/internal/build"
@@ -34,6 +35,7 @@ type Deps struct {
 	SystemNamespace string
 	DataPVC         string
 	ACMEDirectory   string // override ACME directory URL ("" = setting/Let's Encrypt)
+	SecretKeyPath   string // sealer key file, included in backups when set
 }
 
 type server struct {
@@ -47,6 +49,13 @@ type server struct {
 	registryHost    string
 	systemNamespace string
 	dataPVC         string
+	dataDir         string
+	secretKeyPath   string
+
+	// execer runs commands in pods (addon dumps); s.kube in production,
+	// a fake in tests. nowFn is injectable for deterministic archive names.
+	execer kube.PodExecer
+	nowFn  func() time.Time
 
 	certs *certManager
 
@@ -88,6 +97,12 @@ func newServer(d Deps) *server {
 		registryHost:    registryHost,
 		systemNamespace: systemNamespace,
 		dataPVC:         dataPVC,
+		dataDir:         d.DataDir,
+		secretKeyPath:   d.SecretKeyPath,
+		nowFn:           time.Now,
+	}
+	if d.Kube != nil {
+		s.execer = d.Kube
 	}
 
 	if d.DataDir != "" {
@@ -155,6 +170,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{project}/addons/{name}/attach", s.authed(s.handleAttachAddon))
 	mux.HandleFunc("POST /v1/projects/{project}/addons/{name}/detach", s.authed(s.handleDetachAddon))
 	mux.HandleFunc("DELETE /v1/projects/{project}/addons/{name}", s.authed(s.handleDeleteAddon))
+	mux.HandleFunc("POST /v1/backups", s.adminOnly(s.handleCreateBackup))
+	mux.HandleFunc("GET /v1/backups", s.adminOnly(s.handleListBackups))
+	mux.HandleFunc("POST /v1/backups/prune", s.adminOnly(s.handlePruneBackups))
 	mux.HandleFunc("GET /v1/settings/{key}", s.adminOnly(s.handleGetSetting))
 	mux.HandleFunc("PUT /v1/settings/{key}", s.adminOnly(s.handleSetSetting))
 	mux.HandleFunc("GET /v1/tokens", s.authed(s.handleListTokens))

@@ -605,3 +605,33 @@ func (c *Client) ListInvites() ([]InviteInfo, error) {
 func (c *Client) RevokeInvite(token string) error {
 	return c.do("DELETE", "/v1/invites/"+token, nil, nil)
 }
+
+// BackupInfo is one backup archive as returned by the API.
+type BackupInfo struct {
+	ID        int64    `json:"id"`
+	Path      string   `json:"path"`
+	SizeBytes int64    `json:"size_bytes"`
+	Uploaded  bool     `json:"uploaded"`
+	CreatedAt string   `json:"created_at"`
+	Warnings  []string `json:"warnings"`
+}
+
+func (c *Client) CreateBackup(noUpload bool) (BackupInfo, error) {
+	var out BackupInfo
+	err := c.do("POST", "/v1/backups", map[string]bool{"no_upload": noUpload}, &out)
+	return out, err
+}
+
+func (c *Client) ListBackups() ([]BackupInfo, error) {
+	var out []BackupInfo
+	err := c.do("GET", "/v1/backups", nil, &out)
+	return out, err
+}
+
+func (c *Client) PruneBackups() (int, error) {
+	var out struct {
+		Removed int `json:"removed"`
+	}
+	err := c.do("POST", "/v1/backups/prune", nil, &out)
+	return out.Removed, err
+}

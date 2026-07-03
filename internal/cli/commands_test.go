@@ -32,7 +32,7 @@ func testEnv(t *testing.T) *httptest.Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(server.New(server.Deps{Store: st, Sealer: sealer}))
+	srv := httptest.NewServer(server.New(server.Deps{Store: st, Sealer: sealer, DataDir: t.TempDir()}))
 	t.Cleanup(func() { srv.Close(); st.Close() })
 	return srv
 }
@@ -401,5 +401,36 @@ func TestAddonCommands(t *testing.T) {
 	_, err = run(t, "addon", "create", "postgres", "--project", "p")
 	if err == nil || !strings.Contains(err.Error(), "kubernetes") {
 		t.Fatalf("want kubernetes error, got %v", err)
+	}
+}
+
+func TestBackupCommands(t *testing.T) {
+	srv := testEnv(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "backup", "create", "--no-upload")
+	if err != nil {
+		t.Fatalf("backup create: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, ".tar.gz") {
+		t.Fatalf("create output missing archive path: %s", out)
+	}
+
+	out, err = run(t, "backup", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "luncur-") {
+		t.Fatalf("list missing backup: %s", out)
+	}
+
+	out, err = run(t, "backup", "prune")
+	if err != nil {
+		t.Fatalf("prune: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "removed") {
+		t.Fatalf("prune output: %s", out)
 	}
 }
