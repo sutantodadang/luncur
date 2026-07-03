@@ -156,6 +156,62 @@ func testSSHPubKey(t *testing.T) string {
 	return string(ssh.MarshalAuthorizedKey(signer.PublicKey()))
 }
 
+func TestDomainAndConfigCommands(t *testing.T) {
+	srv := testEnv(t)
+
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "proj"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "app", "create", "web", "--project", "proj", "--port", "8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "domain", "add", "web", "www.example.com", "--project", "proj")
+	if err != nil {
+		t.Fatalf("domain add: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "www.example.com") {
+		t.Fatalf("want hostname in output, got %q", out)
+	}
+
+	out, err = run(t, "domain", "list", "web", "--project", "proj")
+	if err != nil {
+		t.Fatalf("domain list: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "www.example.com") || !strings.Contains(out, "none") {
+		t.Fatalf("want domain + status in list, got %q", out)
+	}
+
+	if _, err := run(t, "domain", "remove", "web", "www.example.com", "--project", "proj"); err != nil {
+		t.Fatalf("domain remove: %v", err)
+	}
+	out, err = run(t, "domain", "list", "web", "--project", "proj")
+	if err != nil {
+		t.Fatalf("domain list after remove: %v (%s)", err, out)
+	}
+	if strings.Contains(out, "www.example.com") {
+		t.Fatalf("domain not removed: %s", out)
+	}
+
+	if _, err := run(t, "config", "set", "cert_provider", "traefik"); err != nil {
+		t.Fatalf("config set: %v", err)
+	}
+	out, err = run(t, "config", "get", "cert_provider")
+	if err != nil {
+		t.Fatalf("config get: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "traefik") {
+		t.Fatalf("want traefik in output, got %q", out)
+	}
+
+	if _, err := run(t, "config", "set", "cert_provider", "bogus"); err == nil {
+		t.Fatal("want error for invalid cert_provider value")
+	}
+}
+
 func TestSSHKeyCommands(t *testing.T) {
 	srv := testEnv(t)
 

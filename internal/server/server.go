@@ -143,6 +143,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/domains", s.authed(s.handleListDomains))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/domains/{hostname}", s.authed(s.handleDeleteDomain))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/domains/{hostname}/retry", s.authed(s.handleRetryDomain))
+	mux.HandleFunc("GET /v1/settings/{key}", s.adminOnly(s.handleGetSetting))
+	mux.HandleFunc("PUT /v1/settings/{key}", s.adminOnly(s.handleSetSetting))
 
 	// ACME HTTP-01 challenge path: served by luncur itself, no auth (the
 	// ACME CA fetches it directly). Nil-guarded: tests may build a server

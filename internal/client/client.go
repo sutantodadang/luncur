@@ -409,3 +409,44 @@ func (c *Client) ListSSHKeys() ([]SSHKeyInfo, error) {
 func (c *Client) DeleteSSHKey(id int64) error {
 	return c.do("DELETE", fmt.Sprintf("/v1/ssh-keys/%d", id), nil, nil)
 }
+
+type DomainInfo struct {
+	Hostname      string `json:"hostname"`
+	CertStatus    string `json:"cert_status"`
+	CertError     string `json:"cert_error"`
+	CertExpiresAt string `json:"cert_expires_at"`
+	DNSWarning    string `json:"dns_warning"`
+}
+
+func (c *Client) AddDomain(project, app, hostname string) (DomainInfo, error) {
+	var out DomainInfo
+	err := c.do("POST", fmt.Sprintf("/v1/projects/%s/apps/%s/domains", project, app),
+		map[string]string{"hostname": hostname}, &out)
+	return out, err
+}
+
+func (c *Client) ListDomains(project, app string) ([]DomainInfo, error) {
+	var out []DomainInfo
+	err := c.do("GET", fmt.Sprintf("/v1/projects/%s/apps/%s/domains", project, app), nil, &out)
+	return out, err
+}
+
+func (c *Client) DeleteDomain(project, app, hostname string) error {
+	return c.do("DELETE", fmt.Sprintf("/v1/projects/%s/apps/%s/domains/%s", project, app, hostname), nil, nil)
+}
+
+func (c *Client) RetryDomain(project, app, hostname string) error {
+	return c.do("POST", fmt.Sprintf("/v1/projects/%s/apps/%s/domains/%s/retry", project, app, hostname), nil, nil)
+}
+
+func (c *Client) GetSetting(key string) (string, error) {
+	var out struct {
+		Value string `json:"value"`
+	}
+	err := c.do("GET", "/v1/settings/"+key, nil, &out)
+	return out.Value, err
+}
+
+func (c *Client) SetSetting(key, value string) error {
+	return c.do("PUT", "/v1/settings/"+key, map[string]string{"value": value}, nil)
+}
