@@ -73,3 +73,32 @@ func TestExpiredTokenRejected(t *testing.T) {
 		t.Fatalf("expired token: got %v, want ErrAuthFailed", err)
 	}
 }
+
+func TestSessionTokenExpiresInSevenDays(t *testing.T) {
+	s := openTest(t)
+	u, err := s.CreateUser("sess@example.com", "password123", "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := s.CreateSessionToken(u.ID, "session-exp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UserForToken(tok); err != nil {
+		t.Fatalf("fresh session token rejected: %v", err)
+	}
+	// Server-side expiry must land ~7 days out, not the API token's 90.
+	var ok bool
+	if err := s.DB().QueryRow(
+		`SELECT expires_at > datetime('now', '+6 days')
+		    AND expires_at < datetime('now', '+8 days')
+		 FROM api_tokens WHERE name = 'session-exp'`,
+	).Scan(&ok); err != nil {
+		t.Fatalf("expires_at lookup: %v", err)
+	}
+	if !ok {
+		var exp string
+		_ = s.DB().QueryRow(`SELECT expires_at FROM api_tokens WHERE name = 'session-exp'`).Scan(&exp)
+		t.Fatalf("session token expires_at = %q, want ~7 days out", exp)
+	}
+}

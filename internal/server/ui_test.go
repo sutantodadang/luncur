@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -132,5 +133,55 @@ func TestUILoginBadPassword(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "wrong email or password") {
 		t.Fatalf("bad password: body missing error message, got: %s", body)
+	}
+}
+
+func TestRootRedirectsToUI(t *testing.T) {
+	srv, _ := testServer(t)
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("GET /: want 303, got %d", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/ui/" {
+		t.Fatalf("GET /: want Location /ui/, got %q", loc)
+	}
+}
+
+func TestBearerWinsOverCookie(t *testing.T) {
+	srv, st := testServer(t)
+	bearerTok := seedUserToken(t, st, "bearer@example.com", "member")
+	cookieTok := seedUserToken(t, st, "cookie@example.com", "member")
+
+	req, err := http.NewRequest("GET", srv.URL+"/v1/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+bearerTok)
+	req.AddCookie(&http.Cookie{Name: "luncur_session", Value: cookieTok})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var me struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
+		t.Fatal(err)
+	}
+	if me.Email != "bearer@example.com" {
+		t.Fatalf("bearer must win over cookie: got %q", me.Email)
 	}
 }

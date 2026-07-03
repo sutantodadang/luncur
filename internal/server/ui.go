@@ -70,7 +70,7 @@ func (s *server) handleUILogin(w http.ResponseWriter, r *http.Request) {
 		s.renderPage(w, "login.html", map[string]any{"Error": "internal error"})
 		return
 	}
-	tok, err := s.st.CreateToken(u.ID, "session")
+	tok, err := s.st.CreateSessionToken(u.ID, "session")
 	if err != nil {
 		log.Printf("ui session token: %v", err)
 		s.renderPage(w, "login.html", map[string]any{"Error": "internal error"})
