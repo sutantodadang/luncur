@@ -190,8 +190,10 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 	}
 
 	status := "never_deployed"
+	latestID := int64(0)
 	if d, err := s.st.LatestDeployment(a.ID); err == nil {
 		status = d.Status
+		latestID = d.ID
 	} else if !errors.Is(err, store.ErrNotFound) {
 		log.Printf("ui app latest deployment: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -220,7 +222,7 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 
 	s.renderPage(w, "app.html", map[string]any{
 		"User": u, "Project": p, "App": a,
-		"Status": status, "URL": "http://" + hostFor(a.Name, s.externalIP),
+		"Status": status, "LatestID": latestID, "URL": "http://" + hostFor(a.Name, s.externalIP),
 		"History": history, "EnvKeys": envKeys,
 		"IsGit": a.SourceType == "git",
 	})

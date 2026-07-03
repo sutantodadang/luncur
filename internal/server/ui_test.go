@@ -430,3 +430,46 @@ func TestUIMemberCannotSeeForeignProject(t *testing.T) {
 		t.Fatalf("GET /ui/projects/web as non-member: want 404, got %d", resp.StatusCode)
 	}
 }
+
+func TestUIAppDetailContainsEventSourceScript(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+	id := appID(t, st, "web", "api")
+	if _, err := st.CreateDeployment(id, "live", "nginx:1", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+
+	client := noRedirectClient()
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web/apps/api", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ui/projects/web/apps/api: want 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyStr := string(body)
+	if !strings.Contains(bodyStr, "new EventSource") {
+		t.Fatalf("app detail page: body missing 'new EventSource', got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, `id="logs"`) {
+		t.Fatalf("app detail page: body missing 'id=\"logs\"', got: %s", bodyStr)
+	}
+}
