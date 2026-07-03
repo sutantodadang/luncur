@@ -104,3 +104,35 @@ func TestWhoamiWithoutLogin(t *testing.T) {
 		t.Fatal("want error when not logged in")
 	}
 }
+
+func TestStatusAppAndList(t *testing.T) {
+	srv := testEnv(t)
+
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "web"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "app", "create", "api", "--project", "web", "--port", "3000"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "status", "api", "--project", "web")
+	if err != nil {
+		t.Fatalf("status app: %v (%s)", err, out)
+	}
+	for _, want := range []string{"app:      api", "status:   never_deployed", "replicas: 1"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("want %q in output, got %q", want, out)
+		}
+	}
+
+	out, err = run(t, "status", "--project", "web")
+	if err != nil {
+		t.Fatalf("status list: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "NAME") || !strings.Contains(out, "api") {
+		t.Fatalf("want app list, got %q", out)
+	}
+}

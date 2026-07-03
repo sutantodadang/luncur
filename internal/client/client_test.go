@@ -1,6 +1,9 @@
 package client
 
 import (
+	"bytes"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -94,5 +97,21 @@ func TestClientProjectAppEnvRawFlow(t *testing.T) {
 	}
 	if err := c.DeleteApp("web", "api"); err == nil || !strings.Contains(err.Error(), "kubernetes_unavailable") {
 		t.Fatalf("want kubernetes_unavailable, got %v", err)
+	}
+}
+
+func TestStreamSSE(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: hello\n\ndata: world\n\nevent: end\ndata: live\n\n")
+	}))
+	defer srv.Close()
+	var buf bytes.Buffer
+	c := New(srv.URL, "tok")
+	if err := c.FollowDeployLogs("p", "a", 1, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "hello\nworld\n" {
+		t.Fatalf("got %q", got)
 	}
 }
