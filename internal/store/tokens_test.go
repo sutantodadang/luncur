@@ -46,3 +46,30 @@ func TestUserForTokenRejectsUnknown(t *testing.T) {
 		}
 	}
 }
+
+func TestExpiredTokenRejected(t *testing.T) {
+	s := openTest(t)
+	u, err := s.CreateUser("tok@example.com", "password123", "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := s.CreateToken(u.ID, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fresh token authenticates and has an expiry ~90 days out.
+	if _, err := s.UserForToken(tok); err != nil {
+		t.Fatalf("fresh token rejected: %v", err)
+	}
+	var exp string
+	if err := s.DB().QueryRow(`SELECT expires_at FROM api_tokens WHERE name = 'test'`).Scan(&exp); err != nil {
+		t.Fatalf("expires_at not set: %v", err)
+	}
+	// Force it into the past; auth must now fail.
+	if _, err := s.DB().Exec(`UPDATE api_tokens SET expires_at = datetime('now', '-1 day')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UserForToken(tok); !errors.Is(err, ErrAuthFailed) {
+		t.Fatalf("expired token: got %v, want ErrAuthFailed", err)
+	}
+}

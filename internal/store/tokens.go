@@ -19,7 +19,8 @@ func (s *Store) CreateToken(userID int64, name string) (string, error) {
 	plaintext := "lcr_" + hex.EncodeToString(raw)
 	sum := sha256.Sum256([]byte(plaintext))
 	_, err := s.db.Exec(
-		`INSERT INTO api_tokens (user_id, hash, name) VALUES (?, ?, ?)`,
+		`INSERT INTO api_tokens (user_id, hash, name, expires_at)
+		 VALUES (?, ?, ?, datetime('now', '+90 days'))`,
 		userID, hex.EncodeToString(sum[:]), name,
 	)
 	if err != nil {
@@ -34,7 +35,8 @@ func (s *Store) UserForToken(plaintext string) (User, error) {
 	var u User
 	err := s.db.QueryRow(
 		`SELECT u.id, u.email, u.role FROM api_tokens t
-		 JOIN users u ON u.id = t.user_id WHERE t.hash = ?`, h,
+		 JOIN users u ON u.id = t.user_id
+		 WHERE t.hash = ? AND (t.expires_at IS NULL OR t.expires_at > datetime('now'))`, h,
 	).Scan(&u.ID, &u.Email, &u.Role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrAuthFailed

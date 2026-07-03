@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   hash         TEXT NOT NULL UNIQUE,
   name         TEXT NOT NULL,
   last_used_at TEXT,
+  expires_at   TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
