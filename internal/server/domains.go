@@ -59,6 +59,29 @@ func domainJSON(d store.Domain, warning string) map[string]any {
 	return out
 }
 
+// addDomain is the shared core of handleAddDomain and its UI twin
+// (handleUIDomainAdd): register the hostname, mark non-builtin providers as
+// externally-issued, check DNS, opportunistically sync, and kick the cert
+// manager. Returns the DNS warning ("" when all good); a non-nil error means
+// the store rejected the hostname (invalid or duplicate).
+func (s *server) addDomain(ctx context.Context, p store.Project, a store.App, hostname string) (store.Domain, string, error) {
+	d, err := s.st.AddDomain(a.ID, hostname)
+	if err != nil {
+		return store.Domain{}, "", err
+	}
+	// Non-builtin providers own issuance — mark the row so the UI/CLI show
+	// "external" instead of a forever-"none".
+	if s.certProviderName() != "builtin" {
+		if err := s.st.SetDomainCert(d.ID, "external", "", ""); err == nil {
+			d.CertStatus = "external"
+		}
+	}
+	warning := dnsWarning(ctx, d.Hostname, s.externalIP)
+	s.syncIfLive(ctx, p, a)
+	s.kickCerts(p, a, d)
+	return d, warning, nil
+}
+
 func (s *server) handleAddDomain(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.requireProject(w, u, r.PathValue("project"))
 	if !ok {
@@ -75,21 +98,11 @@ func (s *server) handleAddDomain(w http.ResponseWriter, r *http.Request, u store
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	d, err := s.st.AddDomain(a.ID, req.Hostname)
+	d, warning, err := s.addDomain(r.Context(), p, a, req.Hostname)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	// Non-builtin providers own issuance — mark the row so the UI/CLI show
-	// "external" instead of a forever-"none".
-	if s.certProviderName() != "builtin" {
-		if err := s.st.SetDomainCert(d.ID, "external", "", ""); err == nil {
-			d.CertStatus = "external"
-		}
-	}
-	warning := dnsWarning(r.Context(), d.Hostname, s.externalIP)
-	s.syncIfLive(r.Context(), p, a)
-	s.kickCerts(p, a, d) // Task 6 wires this; stub in this task (see below)
 	writeJSON(w, http.StatusCreated, domainJSON(d, warning))
 }
 

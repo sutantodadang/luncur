@@ -4,7 +4,7 @@ Tiny self-hosted PaaS on K3s. One Go binary, SQLite, deploys as simple as
 Heroku — with an escape hatch to the real Kubernetes objects.
 
 Status: Phase 1 complete (Plans A-D); Phase 2 in progress — git push deploys
-shipped (Plan E). Working today:
+(Plan E) and custom domains + TLS (Plan F) shipped. Working today:
 
 ## Install
 
@@ -137,6 +137,47 @@ via `luncur user add`). From there you can browse projects and apps, scale
 and edit env vars, trigger a deploy, and watch build/runtime logs stream
 live via Server-Sent Events — no CLI required.
 
+## Custom domains & TLS
+
+```sh
+luncur domain add myapp www.example.com --project myproj
+luncur domain list myapp --project myproj
+luncur domain remove myapp www.example.com --project myproj
+luncur domain retry myapp www.example.com --project myproj   # builtin provider only
+```
+
+Point a DNS A record for the hostname at the server's advertised IP (the
+`--ip` luncur was installed with, printed by `luncur up`). `domain add`
+checks this immediately and returns a warning — shown once in the CLI
+output and, in the web UI, above the Domains table — if the hostname
+doesn't resolve there yet; the domain is still created, since DNS often
+lands after the request.
+
+TLS certs come from one of three providers, chosen with `luncur up
+--cert-provider <name>` (fixed for the life of the install; re-run `luncur
+up --cert-provider ...` to change it):
+
+- `builtin` (default) — luncur runs its own ACME (Let's Encrypt) HTTP-01
+  client: certs are requested automatically per domain, stored as
+  Kubernetes Secrets, and renewed within 30 days of expiry. Status
+  (`none → pending → issued`, or `failed` with an error) shows in `domain
+  list` and the web UI; `luncur domain retry` re-kicks a stuck domain.
+- `traefik` — `luncur up --cert-provider traefik` delegates TLS
+  termination and ACME to K3s's bundled Traefik (K3s-only).
+- `cert-manager` — `luncur up --cert-provider cert-manager` delegates via a
+  `ClusterIssuer` to an already-installed cert-manager.
+
+Both `traefik` and `cert-manager` issue certs themselves — luncur just
+annotates the Ingress and marks the domain `external` rather than tracking
+issuance state.
+
+Set the ACME account email (used by the `builtin` provider and passed to
+`traefik`/`cert-manager`'s issuer config) with:
+
+```sh
+luncur config set acme_email you@example.com
+```
+
 ## Build Pipeline
 
 When you run `luncur deploy` on a local source or git repository, the following happens: source is uploaded (tarball from local cwd or cloned from git URL) → a BuildKit Job runs in the `luncur-system` namespace, applying Nixpacks if no Dockerfile exists or using the Dockerfile if present → the resulting image is pushed to the in-cluster registry (default `registry.luncur-system:5000`) → app manifests are rendered and applied to Kubernetes → the app becomes live at `http://<app>.<ip>.sslip.io`. Build logs are streamed on demand via `luncur logs`.
@@ -154,5 +195,8 @@ When you run `luncur deploy` on a local source or git repository, the following 
 - API tokens expire after 90 days (enforcement only; `luncur token list/revoke` is a future addition).
 - The git-push SSH host key persists as a file on the data PVC (beside the DB), not a K8s Secret — same durability, no kube dependency at SSH boot.
 - Push progress streams via a `post-receive` hook, so the `git push` exit code cannot reflect a build failure (refs land before the hook runs). The client still sees the full build log and a final `BUILD FAILED`/`app live` line.
+- The builtin ACME provider's HTTP-01 challenge Ingress lives in the `luncur-system` namespace, not the app's own namespace, because an Ingress's backend Service must be in the same namespace and the challenge responder runs as part of luncur itself.
+- The TLS cert provider (`builtin`/`traefik`/`cert-manager`) is fixed when `luncur serve` starts, read once from the `cert_provider` setting; changing it requires a restart (`luncur up --cert-provider ...` triggers one).
+- `cert-manager` mode reports domain status as `external` rather than reading the issued Secret back for its real expiry date — a nice-to-have deferred to a future Phase 2 pass.
 
 Design docs: `docs/superpowers/specs/`. Plans: `docs/superpowers/plans/`.
