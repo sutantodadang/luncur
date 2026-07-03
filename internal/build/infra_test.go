@@ -2,6 +2,7 @@ package build
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +25,15 @@ func TestSystemObjects(t *testing.T) {
 	} {
 		if !got[want] {
 			t.Fatalf("missing %s (have %v)", want, got)
+		}
+	}
+	all := ""
+	for _, o := range objs {
+		all += string(o.JSON)
+	}
+	for _, want := range []string{`"type":"NodePort"`, `"nodePort":30500`} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("registry Service missing %q:\n%s", want, all)
 		}
 	}
 }

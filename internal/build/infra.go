@@ -96,10 +96,15 @@ func SystemObjects(dataPVC, registryPVC, registryImage string) ([]render.Object,
 			Namespace: systemNamespace,
 		},
 		Spec: corev1.ServiceSpec{
+			// NodePort 30500: containerd pulls via http://127.0.0.1:30500 (see
+			// up.RegistriesYAML); in-cluster clients keep using
+			// registry.luncur-system:5000.
+			Type:     corev1.ServiceTypeNodePort,
 			Selector: registryLabels,
 			Ports: []corev1.ServicePort{{
 				Port:       5000,
 				TargetPort: intstr.FromInt32(5000),
+				NodePort:   30500,
 			}},
 		},
 	}
