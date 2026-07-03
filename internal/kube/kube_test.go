@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
@@ -308,5 +310,68 @@ func TestApplyClusterIssuerIsClusterScoped(t *testing.T) {
 	}
 	if rec.namespace != "" {
 		t.Fatalf("want no namespace on cluster-scoped patch, got %q", rec.namespace)
+	}
+}
+
+func podMetricsObj(name, app, cpu, mem string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "metrics.k8s.io/v1beta1", "kind": "PodMetrics",
+		"metadata": map[string]any{
+			"name": name, "namespace": "proj",
+			"labels": map[string]any{"app.kubernetes.io/name": app},
+		},
+		"containers": []any{
+			map[string]any{"name": "app", "usage": map[string]any{"cpu": cpu, "memory": mem}},
+		},
+	}}
+}
+
+// podMetricsGVR is gvrByKind["PodMetrics"], spelled out here since the fake
+// dynamic client's tracker.Add path guesses a GVR by pluralizing the Kind
+// ("PodMetrics" -> "podmetricses"), which doesn't match the real resource
+// name ("pods"). Seeding must go through an explicit Create against this
+// GVR instead of the constructor's varargs.
+var podMetricsGVR = schema.GroupVersionResource{Group: "metrics.k8s.io", Version: "v1beta1", Resource: "pods"}
+
+func TestAppMetrics(t *testing.T) {
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{podMetricsGVR: "PodMetricsList"},
+	)
+	ctx := context.Background()
+	for _, obj := range []*unstructured.Unstructured{
+		podMetricsObj("web-1", "web", "250m", "128Mi"),
+		podMetricsObj("web-2", "web", "150m", "64Mi"),
+		podMetricsObj("other-1", "other", "999m", "999Mi"),
+	} {
+		if _, err := dyn.Resource(podMetricsGVR).Namespace("proj").Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := NewForTest(dyn, nil)
+	m, ok := c.AppMetrics(ctx, "proj", "web")
+	if !ok {
+		t.Fatal("metrics unavailable")
+	}
+	if m.CPUMilli != 400 || m.MemoryMiB != 192 || m.Pods != 2 {
+		t.Fatalf("metrics = %+v, want 400m/192MiB/2 pods", m)
+	}
+}
+
+func TestAppMetricsUnavailable(t *testing.T) {
+	// The list kind must stay registered (an unregistered list kind panics
+	// rather than erroring — see dynamicResourceClient.List), so force the
+	// unavailable path with a reactor that fails the list call instead —
+	// exactly the metrics-server-absent shape.
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{podMetricsGVR: "PodMetricsList"},
+	)
+	dyn.PrependReactor("list", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("the server could not find the requested resource")
+	})
+	c := NewForTest(dyn, nil)
+	if _, ok := c.AppMetrics(context.Background(), "proj", "web"); ok {
+		t.Fatal("want unavailable when metrics API missing")
 	}
 }
