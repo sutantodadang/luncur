@@ -10,5 +10,32 @@
   <td><a href="{{.URL}}">{{.URL}}</a></td>
 </tr>{{end}}
 </table>
+
+<h2>Addons</h2>
+{{if not .Addons}}<p>No addons yet.</p>{{end}}
+<table><tr><th>Name</th><th>Type</th><th>Version</th><th>Ready</th><th>Attached</th><th></th></tr>
+{{range .Addons}}<tr>
+  <td>{{.Name}}</td>
+  <td>{{.Type}}</td>
+  <td>{{.Version}}</td>
+  <td>{{.Ready}}</td>
+  <td>{{range .AttachedTo}}{{.}} {{end}}</td>
+  <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/addons/delete">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="name" value="{{.Name}}">
+    <label><input type="checkbox" name="force" value="1"> force</label>
+    <button type="submit">remove</button>
+  </form></td>
+</tr>{{end}}
+</table>
+<form method="post" action="/ui/projects/{{.Project.Name}}/addons">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <select name="type">
+    <option value="postgres">postgres</option>
+    <option value="redis">redis</option>
+  </select>
+  <input name="name" placeholder="name (optional)">
+  <button type="submit">create addon</button>
+</form>
 {{template "foot" .}}
 {{end}}

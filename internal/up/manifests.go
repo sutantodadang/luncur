@@ -83,7 +83,8 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 		Rules: []rbacv1.PolicyRule{
 			rule([]string{""}, []string{"namespaces", "services", "secrets", "configmaps", "serviceaccounts", "persistentvolumeclaims"}, full...),
 			rule([]string{""}, []string{"pods", "pods/log", "events", "nodes"}, read...),
-			rule([]string{"apps"}, []string{"deployments"}, full...),
+			rule([]string{""}, []string{"pods/exec"}, "create"),
+			rule([]string{"apps"}, []string{"deployments", "statefulsets"}, full...),
 			rule([]string{"apps"}, []string{"replicasets"}, read...),
 			rule([]string{"batch"}, []string{"jobs"}, full...),
 			rule([]string{"networking.k8s.io"}, []string{"ingresses"}, full...),

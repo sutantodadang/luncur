@@ -7,6 +7,7 @@
    edit: <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a> &middot;
    <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Service">Service</a> &middot;
    <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Ingress">Ingress</a></p>
+{{if .Warning}}<p class="err">{{.Warning}}</p>{{end}}
 
 <h2>Scale</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/scale">
@@ -54,7 +55,6 @@
 </table>
 
 <h2>Domains</h2>
-{{if .DNSWarning}}<p class="err">{{.DNSWarning}}</p>{{end}}
 <table><tr><th>Hostname</th><th>Cert</th><th>Expires</th><th></th></tr>
 {{range .Domains}}<tr>
   <td>{{.Hostname}}</td>
@@ -71,6 +71,29 @@
   <input name="hostname" placeholder="www.example.com" required>
   <button type="submit">add domain</button>
 </form>
+
+<h2>Addons</h2>
+{{if not .Addons}}<p>No addons attached.</p>{{end}}
+<table><tr><th>Name</th><th>Type</th><th>Version</th><th></th></tr>
+{{range .Addons}}<tr>
+  <td>{{.Name}}</td>
+  <td>{{.Type}}</td>
+  <td>{{.Version}}</td>
+  <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/addons/detach">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="name" value="{{.Name}}"><button type="submit">detach</button>
+  </form></td>
+</tr>{{end}}
+</table>
+{{if .ProjectAddons}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/addons/attach">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <select name="name">
+    {{range .ProjectAddons}}<option value="{{.Name}}">{{.Name}} ({{.Type}})</option>{{end}}
+  </select>
+  <button type="submit">attach</button>
+</form>
+{{end}}
 
 <h2>Logs</h2>
 <pre class="logs" id="logs" data-project="{{.Project.Name}}" data-app="{{.App.Name}}"></pre>

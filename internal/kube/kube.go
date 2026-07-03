@@ -19,9 +19,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/remotecommand"
 
+	"github.com/sutantodadang/luncur/internal/addon"
 	"github.com/sutantodadang/luncur/internal/render"
 )
 
@@ -38,6 +41,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"ClusterRoleBinding":    {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"},
 	"HelmChartConfig":       {Group: "helm.cattle.io", Version: "v1", Resource: "helmchartconfigs"},
 	"ClusterIssuer":         {Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"},
+	"StatefulSet":           {Group: "apps", Version: "v1", Resource: "statefulsets"},
 }
 
 // clusterScoped marks kinds Apply must patch without a namespace.
@@ -51,6 +55,13 @@ var clusterScoped = map[string]bool{
 type Client struct {
 	dyn dynamic.Interface
 	cs  kubernetes.Interface
+	cfg *rest.Config
+}
+
+// PodExecer runs a command inside a pod container. Faked in tests; the
+// real implementation streams over SPDY.
+type PodExecer interface {
+	ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdout, stderr io.Writer) error
 }
 
 // New builds a client from a kubeconfig path, or in-cluster config when
@@ -74,7 +85,7 @@ func New(kubeconfig string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{dyn: dyn, cs: cs}, nil
+	return &Client{dyn: dyn, cs: cs, cfg: cfg}, nil
 }
 
 func NewFromDynamic(dyn dynamic.Interface) *Client { return &Client{dyn: dyn} }
@@ -162,6 +173,30 @@ func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) er
 	return nil
 }
 
+// DeleteAddonObjects removes an addon instance's StatefulSet, headless
+// Service, and credentials Secret, and (unless keepData) its PVC.
+// NotFound is fine — deletion must be idempotent.
+func (c *Client) DeleteAddonObjects(ctx context.Context, namespace, name string, keepData bool) error {
+	svcName := addon.ServiceName(name)
+	targets := []struct{ kind, name string }{
+		{"StatefulSet", svcName},
+		{"Service", svcName},
+		{"Secret", addon.SecretName(name)},
+	}
+	if !keepData {
+		targets = append(targets, struct{ kind, name string }{"PersistentVolumeClaim", "data-" + svcName + "-0"})
+	}
+	for _, t := range targets {
+		err := c.dyn.Resource(gvrByKind[t.kind]).Namespace(namespace).Delete(
+			ctx, t.name, metav1.DeleteOptions{},
+		)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete %s/%s: %w", t.kind, t.name, err)
+		}
+	}
+	return nil
+}
+
 // WaitJob polls a Job until it succeeds (true), fails (false), or ctx ends.
 func (c *Client) WaitJob(ctx context.Context, namespace, name string, poll time.Duration) (bool, error) {
 	for {
@@ -202,6 +237,25 @@ func (c *Client) AppPods(ctx context.Context, namespace, app string) ([]string, 
 // PodLogStream streams a pod's logs, optionally following new output.
 func (c *Client) PodLogStream(ctx context.Context, namespace, pod string, follow bool) (io.ReadCloser, error) {
 	return c.cs.CoreV1().Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Follow: follow}).Stream(ctx)
+}
+
+// ExecPod implements PodExecer via the pods/exec subresource.
+func (c *Client) ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdout, stderr io.Writer) error {
+	if c.cfg == nil {
+		return fmt.Errorf("exec unavailable: no rest config (test client?)")
+	}
+	req := c.cs.CoreV1().RESTClient().Post().
+		Resource("pods").Namespace(namespace).Name(pod).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: container, Command: cmd,
+			Stdout: true, Stderr: true,
+		}, scheme.ParameterCodec)
+	exec, err := remotecommand.NewSPDYExecutor(c.cfg, "POST", req.URL())
+	if err != nil {
+		return err
+	}
+	return exec.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: stdout, Stderr: stderr})
 }
 
 // WaitDeployment polls until the Deployment has at least one ready replica
@@ -260,6 +314,20 @@ func (c *Client) GetSecretData(ctx context.Context, namespace, name string) (map
 		return nil, err
 	}
 	return sec.Data, nil
+}
+
+// StatefulSetReady reports whether a StatefulSet has at least one ready
+// replica. Absent → (false, nil): callers poll during provisioning.
+func (c *Client) StatefulSetReady(ctx context.Context, namespace, name string) (bool, error) {
+	u, err := c.dyn.Resource(gvrByKind["StatefulSet"]).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	n, _, _ := unstructured.NestedInt64(u.Object, "status", "readyReplicas")
+	return n >= 1, nil
 }
 
 // HasGroupVersion reports whether the cluster serves the given

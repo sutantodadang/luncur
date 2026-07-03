@@ -3,6 +3,8 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -255,6 +257,33 @@ func TestHasGroupVersion(t *testing.T) {
 	ok, err = c.HasGroupVersion(context.Background(), "cert-manager.io/v1")
 	if err != nil || ok {
 		t.Fatalf("absent gv: ok=%v err=%v, want false nil", ok, err)
+	}
+}
+
+func TestStatefulSetReady(t *testing.T) {
+	sts := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "StatefulSet",
+		"metadata": map[string]any{"name": "addon-db1", "namespace": "proj"},
+		"status":   map[string]any{"readyReplicas": int64(1)},
+	}}
+	dyn := newFakeDyn(t, sts) // reuse the file's existing fake-dynamic constructor
+	c := NewForTest(dyn, nil)
+	ok, err := c.StatefulSetReady(context.Background(), "proj", "addon-db1")
+	if err != nil || !ok {
+		t.Fatalf("ready = %v err=%v", ok, err)
+	}
+	ok, err = c.StatefulSetReady(context.Background(), "proj", "absent")
+	if err != nil || ok {
+		t.Fatalf("absent: ready=%v err=%v, want false nil", ok, err)
+	}
+}
+
+func TestClientImplementsPodExecer(t *testing.T) {
+	var _ PodExecer = (*Client)(nil)
+	c := NewForTest(nil, nil)
+	err := c.ExecPod(context.Background(), "ns", "pod", "c", []string{"true"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "exec unavailable") {
+		t.Fatalf("cfg-less exec: %v", err)
 	}
 }
 

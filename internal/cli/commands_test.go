@@ -374,3 +374,31 @@ func TestInviteCommands(t *testing.T) {
 		t.Fatalf("revoked invite still listed:\n%s", out)
 	}
 }
+
+// TestAddonCommands exercises the CLI wiring for addon commands. testEnv has
+// no kube, so provisioning surfaces the server's kubernetes_unavailable
+// error — the same honest, no-cluster-needed check other kube-dependent
+// commands rely on. Wire-level behavior (create/attach/env injection) is
+// covered by internal/server/addons_test.go.
+func TestAddonCommands(t *testing.T) {
+	srv := testEnv(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "p"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "addon", "list", "--project", "p")
+	if err != nil {
+		t.Fatalf("addon list: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "NAME") {
+		t.Fatalf("want header, got %q", out)
+	}
+
+	_, err = run(t, "addon", "create", "postgres", "--project", "p")
+	if err == nil || !strings.Contains(err.Error(), "kubernetes") {
+		t.Fatalf("want kubernetes error, got %v", err)
+	}
+}
