@@ -2,10 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/server"
@@ -134,5 +139,60 @@ func TestStatusAppAndList(t *testing.T) {
 	}
 	if !strings.Contains(out, "NAME") || !strings.Contains(out, "api") {
 		t.Fatalf("want app list, got %q", out)
+	}
+}
+
+// testSSHPubKey generates a fresh ed25519 key in authorized_keys format.
+func testSSHPubKey(t *testing.T) string {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(ssh.MarshalAuthorizedKey(signer.PublicKey()))
+}
+
+func TestSSHKeyCommands(t *testing.T) {
+	srv := testEnv(t)
+
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+
+	pubPath := filepath.Join(t.TempDir(), "id_ed25519.pub")
+	if err := os.WriteFile(pubPath, []byte(testSSHPubKey(t)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "ssh-key", "add", pubPath, "--name", "laptop")
+	if err != nil {
+		t.Fatalf("ssh-key add: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "SHA256:") {
+		t.Fatalf("add output missing fingerprint: %s", out)
+	}
+
+	out, err = run(t, "ssh-key", "list")
+	if err != nil {
+		t.Fatalf("ssh-key list: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "laptop") {
+		t.Fatalf("list missing key: %s", out)
+	}
+
+	if _, err := run(t, "ssh-key", "remove", "1"); err != nil {
+		t.Fatalf("ssh-key remove: %v", err)
+	}
+
+	out, err = run(t, "ssh-key", "list")
+	if err != nil {
+		t.Fatalf("ssh-key list after remove: %v (%s)", err, out)
+	}
+	if strings.Contains(out, "laptop") {
+		t.Fatalf("key not removed: %s", out)
 	}
 }

@@ -383,3 +383,29 @@ func (c *Client) RuntimeLogs(project, app string, follow bool, w io.Writer) erro
 	}
 	return c.stream(p, w)
 }
+
+type SSHKeyInfo struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Fingerprint string `json:"fingerprint"`
+	CreatedAt   string `json:"created_at"`
+}
+
+func (c *Client) AddSSHKey(name, publicKey string) (string, error) {
+	var out struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	err := c.do("POST", "/v1/ssh-keys",
+		map[string]string{"name": name, "public_key": publicKey}, &out)
+	return out.Fingerprint, err
+}
+
+func (c *Client) ListSSHKeys() ([]SSHKeyInfo, error) {
+	var out []SSHKeyInfo
+	err := c.do("GET", "/v1/ssh-keys", nil, &out)
+	return out, err
+}
+
+func (c *Client) DeleteSSHKey(id int64) error {
+	return c.do("DELETE", fmt.Sprintf("/v1/ssh-keys/%d", id), nil, nil)
+}
