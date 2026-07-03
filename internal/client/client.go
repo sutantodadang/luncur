@@ -224,6 +224,25 @@ func (c *Client) GetApp(project, app string) (AppInfo, error) {
 	return out, err
 }
 
+// MetricsInfo is an app's live CPU/memory/replica/deploy-count snapshot, as
+// returned by GET .../metrics. Available is false when metrics-server isn't
+// reachable; DeployCount is always populated.
+type MetricsInfo struct {
+	Available       bool  `json:"available"`
+	CPUMillicores   int64 `json:"cpu_millicores"`
+	MemoryMiB       int64 `json:"memory_mib"`
+	Pods            int   `json:"pods"`
+	ReadyReplicas   int64 `json:"ready_replicas"`
+	DesiredReplicas int64 `json:"desired_replicas"`
+	DeployCount     int64 `json:"deploy_count"`
+}
+
+func (c *Client) AppMetrics(project, app string) (MetricsInfo, error) {
+	var out MetricsInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/metrics", nil, &out)
+	return out, err
+}
+
 func (c *Client) DeleteApp(project, app string) error {
 	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app), nil, nil)
 }

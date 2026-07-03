@@ -25,8 +25,18 @@ func statusCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				m, err := c.AppMetrics(project, args[0])
+				if err != nil {
+					return err
+				}
 				cmd.Printf("app:      %s\nstatus:   %s\nreplicas: %d\nimage:    %s\nurl:      %s\n",
 					a.Name, a.Status, a.Replicas, a.Image, a.URL)
+				if m.Available {
+					cmd.Printf("cpu:      %dm\nmemory:   %dMi\n", m.CPUMillicores, m.MemoryMiB)
+				} else {
+					cmd.Printf("metrics:  unavailable\n")
+				}
+				cmd.Printf("deploys:  %d\n", m.DeployCount)
 				return nil
 			}
 			apps, err := c.ListApps(project)

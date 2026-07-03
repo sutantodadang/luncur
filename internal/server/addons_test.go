@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	ktesting "k8s.io/client-go/testing"
 
@@ -25,13 +26,15 @@ func addonTestServer(t *testing.T) (*server, *httptest.Server, *store.Store, *[]
 	t.Helper()
 	st := newTestStore(t)
 	scheme := runtime.NewScheme()
-	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{podMetricsGVR: "PodMetricsList"})
 	var actions []string
 	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
 		actions = append(actions, a.GetVerb()+" "+a.GetResource().Resource)
-		if a.GetVerb() == "get" {
-			// Let the default tracker answer Get (StatefulSetReady needs a
-			// real NotFound/found result, not a swallowed nil object).
+		if a.GetVerb() == "get" || a.GetVerb() == "list" {
+			// Let the default tracker answer reads (StatefulSetReady/the app
+			// page's metrics stats line need a real result, not a swallowed
+			// nil object).
 			return false, nil, nil
 		}
 		return true, nil, nil

@@ -2,6 +2,7 @@
 {{template "head" .}}{{template "nav" .}}
 <p><a href="/ui/projects/{{.Project.Name}}">&larr; {{.Project.Name}}</a></p>
 <h1>{{.App.Name}} <span class="status-{{.Status}}">{{.Status}}</span></h1>
+<p>{{if .Metrics.Available}}cpu {{.Metrics.CPUMillicores}}m &middot; mem {{.Metrics.MemoryMiB}}Mi &middot; {{end}}{{.Metrics.ReadyReplicas}}/{{.Metrics.DesiredReplicas}} ready &middot; {{.Metrics.DeployCount}} deploys</p>
 <p><a href="{{.URL}}">{{.URL}}</a> &middot;
    <a href="/v1/projects/{{.Project.Name}}/apps/{{.App.Name}}/raw">raw YAML</a> &middot;
    edit: <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a> &middot;

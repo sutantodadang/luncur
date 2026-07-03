@@ -128,7 +128,8 @@ func TestStatusAppAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status app: %v (%s)", err, out)
 	}
-	for _, want := range []string{"app:      api", "status:   never_deployed", "replicas: 1"} {
+	// testEnv has no kube, so metrics are unavailable but deploys is still shown.
+	for _, want := range []string{"app:      api", "status:   never_deployed", "replicas: 1", "metrics:  unavailable", "deploys:  0"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("want %q in output, got %q", want, out)
 		}
