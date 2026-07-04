@@ -44,6 +44,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/addons/detach", s.uiPage(s.handleUIAddonDetach))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/deploy", s.uiPage(s.handleUIDeploy))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/rollback", s.uiPage(s.handleUIRollback))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/adopt", s.uiPage(s.handleUIAdopt))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/edit/{kind}", s.uiPage(s.handleUIEditGet))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/edit/{kind}", s.uiPage(s.handleUIEditPost))
 }
@@ -907,6 +908,31 @@ func (s *server) handleUIInviteCreate(w http.ResponseWriter, r *http.Request, u 
 		}
 	}
 	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
+// handleUIAdopt is handleAdoptApp's UI twin: clear the ejected flag,
+// best-effort re-sync, redirect back to the app page.
+func (s *server) handleUIAdopt(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if !a.Ejected {
+		http.Error(w, "app is not ejected", http.StatusConflict)
+		return
+	}
+	if err := s.st.SetAppAdopted(a.ID); err != nil {
+		log.Printf("ui adopt: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	a.Ejected = false
+	s.syncIfLive(r.Context(), p, a)
+	uiRedirect(w, r, p, a)
 }
 
 func (s *server) handleUIInviteRevoke(w http.ResponseWriter, r *http.Request, u store.User) {

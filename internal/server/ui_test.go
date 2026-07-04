@@ -1244,3 +1244,69 @@ func TestUIInviteEmailNote(t *testing.T) {
 		t.Fatalf("invites = %d, want 2", len(invs))
 	}
 }
+
+// TestUIAdoptButton: an ejected app's page shows the adopt form; posting it
+// clears the flag and the page returns to normal management UI.
+func TestUIAdoptButton(t *testing.T) {
+	srv, st, _, _ := ejectTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/eject", admin, "").Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := noRedirectClient()
+	ck := uiSessionCookie(t, st, u.ID)
+
+	appPage := func(t *testing.T) string {
+		t.Helper()
+		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(ck)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("app page: want 200, got %d", resp.StatusCode)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	body := appPage(t)
+	if !strings.Contains(body, `action="/ui/projects/proj/apps/web/adopt"`) {
+		t.Fatalf("ejected page missing adopt form:\n%s", body)
+	}
+
+	csrfCk := uiCSRF(t, client, srv.URL)
+	resp := uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/adopt", csrfCk, ck, url.Values{})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("adopt post: want 303, got %d", resp.StatusCode)
+	}
+
+	body = appPage(t)
+	if strings.Contains(body, "This app is ejected") {
+		t.Fatalf("page still shows ejected note after adopt:\n%s", body)
+	}
+	if !strings.Contains(body, `action="/ui/projects/proj/apps/web/scale"`) {
+		t.Fatalf("management UI (scale form) not back after adopt:\n%s", body)
+	}
+
+	// Adopt on a non-ejected app -> 409.
+	resp = uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/adopt", csrfCk, ck, url.Values{})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("adopt non-ejected: want 409, got %d", resp.StatusCode)
+	}
+}
