@@ -29,9 +29,11 @@
   {{end}}</td>
 </tr>{{end}}
 </table>
+{{if .MailNote}}<p><em>{{.MailNote}}</em></p>{{end}}
 <form method="post" action="/ui/users/invite">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <label>role <select name="role"><option>member</option><option>admin</option></select></label>
+  <label>email <input name="email" size="28" placeholder="optional — email the link"></label>
   <button type="submit">create invite</button>
 </form>
 {{template "foot" .}}

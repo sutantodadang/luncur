@@ -7,10 +7,12 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/sutantodadang/luncur/internal/mail"
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
@@ -1172,5 +1174,73 @@ func TestUIAppPageShowsEjected(t *testing.T) {
 	}
 	if strings.Contains(string(body), `action="/ui/projects/p/apps/web/scale"`) {
 		t.Fatalf("app page: want scale form hidden for an ejected app, got: %s", body)
+	}
+}
+
+// TestUIInviteEmailNote: the invite form with an email posts, sends via
+// the mailer, and redirects to a page that shows the outcome note.
+func TestUIInviteEmailNote(t *testing.T) {
+	st := newTestStore(t)
+	s := newServer(Deps{Store: st})
+	fm := &fakeMailer{}
+	s.mailer = func() (mail.Mailer, error) { return fm, nil }
+	srv := httptest.NewServer(s.handler())
+	t.Cleanup(srv.Close)
+
+	admin, err := st.CreateUser("root@b.co", "password123", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := noRedirectClient()
+	adminCk := uiSessionCookie(t, st, admin.ID)
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	resp := uiPost(t, client, srv.URL+"/ui/users/invite", csrfCk, adminCk,
+		url.Values{"role": {"member"}, "email": {"new@b.co"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("invite post: want 303, got %d", resp.StatusCode)
+	}
+	loc := resp.Header.Get("Location")
+	if loc != "/ui/users?mail=sent" {
+		t.Fatalf("redirect = %q, want /ui/users?mail=sent", loc)
+	}
+	if fm.to != "new@b.co" {
+		t.Fatalf("mail to = %q, want new@b.co", fm.to)
+	}
+
+	// The redirected-to page renders the note.
+	req, err := http.NewRequest("GET", srv.URL+loc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(adminCk)
+	page, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer page.Body.Close()
+	body, err := io.ReadAll(page.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "invite emailed") {
+		t.Fatalf("users page missing mail note:\n%s", body)
+	}
+
+	// Failure path: mailer errors -> ?mail=failed, invite still created.
+	fm.err = fmt.Errorf("boom")
+	resp = uiPost(t, client, srv.URL+"/ui/users/invite", csrfCk, adminCk,
+		url.Values{"role": {"member"}, "email": {"x@b.co"}})
+	resp.Body.Close()
+	if got := resp.Header.Get("Location"); got != "/ui/users?mail=failed" {
+		t.Fatalf("redirect = %q, want /ui/users?mail=failed", got)
+	}
+	invs, err := st.ListInvites()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invs) != 2 {
+		t.Fatalf("invites = %d, want 2", len(invs))
 	}
 }
