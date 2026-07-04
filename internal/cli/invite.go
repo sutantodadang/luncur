@@ -13,7 +13,7 @@ func inviteCmd() *cobra.Command {
 		Short: "Manage registration invites (admin only)",
 	}
 
-	var role string
+	var role, email string
 	create := &cobra.Command{
 		Use:   "create",
 		Short: "Create a single-use invite link",
@@ -23,7 +23,7 @@ func inviteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			inv, err := c.CreateInvite(role)
+			inv, err := c.CreateInvite(role, email)
 			if err != nil {
 				return err
 			}
@@ -33,10 +33,18 @@ func inviteCmd() *cobra.Command {
 			}
 			cmd.Printf("invite created (role %s, expires %s):\n%s%s\n",
 				inv.Role, inv.ExpiresAt, cfg.Server, inv.Path)
+			if email != "" {
+				if inv.Emailed {
+					cmd.Printf("emailed to %s\n", email)
+				} else {
+					cmd.Printf("warning: %s\n", inv.Warning)
+				}
+			}
 			return nil
 		},
 	}
 	create.Flags().StringVar(&role, "role", "member", "role for the invited user (admin|member)")
+	create.Flags().StringVar(&email, "email", "", "email the invite link to this address")
 
 	list := &cobra.Command{
 		Use:   "list",

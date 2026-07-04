@@ -588,11 +588,17 @@ type InviteInfo struct {
 	ExpiresAt string `json:"expires_at"`
 	Path      string `json:"path"`
 	Used      bool   `json:"used"`
+	Emailed   bool   `json:"emailed"`
+	Warning   string `json:"warning"`
 }
 
-func (c *Client) CreateInvite(role string) (InviteInfo, error) {
+func (c *Client) CreateInvite(role, email string) (InviteInfo, error) {
 	var out InviteInfo
-	err := c.do("POST", "/v1/invites", map[string]string{"role": role}, &out)
+	body := map[string]string{"role": role}
+	if email != "" {
+		body["email"] = email
+	}
+	err := c.do("POST", "/v1/invites", body, &out)
 	return out, err
 }
 

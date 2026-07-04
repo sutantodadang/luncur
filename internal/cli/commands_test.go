@@ -378,6 +378,26 @@ func TestInviteCommands(t *testing.T) {
 	}
 }
 
+// TestInviteCreateEmailWarning: --email against a server without SMTP
+// configured still creates the invite and prints the warning.
+func TestInviteCreateEmailWarning(t *testing.T) {
+	srv := testEnv(t)
+	if out, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatalf("login: %v (%s)", err, out)
+	}
+
+	out, err := run(t, "invite", "create", "--role", "member", "--email", "new@b.co")
+	if err != nil {
+		t.Fatalf("invite create --email: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "/ui/register?token=") {
+		t.Fatalf("missing invite link:\n%s", out)
+	}
+	if !strings.Contains(out, "warning:") || !strings.Contains(out, "smtp is not configured") {
+		t.Fatalf("want unconfigured-SMTP warning, got:\n%s", out)
+	}
+}
+
 // TestAddonCommands exercises the CLI wiring for addon commands. testEnv has
 // no kube, so provisioning surfaces the server's kubernetes_unavailable
 // error — the same honest, no-cluster-needed check other kube-dependent
