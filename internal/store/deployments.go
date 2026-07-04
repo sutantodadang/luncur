@@ -139,6 +139,39 @@ func (s *Store) CountDeployments(appID int64) (int64, error) {
 	return n, err
 }
 
+// Ping verifies the database connection is reachable.
+func (s *Store) Ping() error {
+	var one int
+	return s.db.QueryRow(`SELECT 1`).Scan(&one)
+}
+
+// StuckDeployments returns deployments still 'building' whose created_at is
+// older than olderThanMin minutes, newest first — the doctor check's signal
+// that a builder job is stuck or the builder image is missing.
+func (s *Store) StuckDeployments(olderThanMin int) ([]Deployment, error) {
+	rows, err := s.db.Query(
+		`SELECT id, app_id, status, image_ref, log_path, created_by, created_at, rolled_back_from
+		 FROM deployments WHERE status = 'building' AND created_at < datetime('now', ?)
+		 ORDER BY id DESC`, fmt.Sprintf("-%d minutes", olderThanMin))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Deployment
+	for rows.Next() {
+		var d Deployment
+		var img, logp sql.NullString
+		var rolledBackFrom sql.NullInt64
+		if err := rows.Scan(&d.ID, &d.AppID, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom); err != nil {
+			return nil, err
+		}
+		d.ImageRef, d.LogPath = img.String, logp.String
+		d.RolledBackFrom = rolledBackFrom.Int64
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // ListDeployments returns an app's deploy history, newest first.
 // ponytail: hard cap 50 — paging when someone actually has 51 deploys to read.
 func (s *Store) ListDeployments(appID int64) ([]Deployment, error) {

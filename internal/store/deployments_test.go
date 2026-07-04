@@ -80,6 +80,47 @@ func TestRollbackDeployment(t *testing.T) {
 	}
 }
 
+func TestPing(t *testing.T) {
+	st := openTest(t)
+	if err := st.Ping(); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+}
+
+func TestStuckDeployments(t *testing.T) {
+	st := openTest(t)
+	p, _ := st.CreateProject("web")
+	a, _ := st.CreateApp(p.ID, "api", 8080, "web", "")
+
+	stuck, err := st.CreateDeployment(a.ID, "building", "img:stuck", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB().Exec(
+		`UPDATE deployments SET created_at = datetime('now', '-45 minutes') WHERE id = ?`, stuck.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.CreateDeployment(a.ID, "building", "img:fresh", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateDeployment(a.ID, "live", "img:live", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateDeployment(a.ID, "failed", "img:failed", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.StuckDeployments(30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != stuck.ID {
+		t.Fatalf("StuckDeployments = %+v, want only %d", got, stuck.ID)
+	}
+}
+
 func TestCountDeployments(t *testing.T) {
 	st := openTest(t)
 	p, _ := st.CreateProject("web")

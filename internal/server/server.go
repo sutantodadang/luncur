@@ -38,6 +38,7 @@ type Deps struct {
 	DataPVC         string
 	ACMEDirectory   string // override ACME directory URL ("" = setting/Let's Encrypt)
 	SecretKeyPath   string // sealer key file, included in backups when set
+	Version         string // server build version, reported by doctor
 }
 
 type server struct {
@@ -53,6 +54,7 @@ type server struct {
 	dataPVC         string
 	dataDir         string
 	secretKeyPath   string
+	version         string
 
 	// httpClient is used by the deploy/cert notifier (notify.go); tests may
 	// swap it to point at an httptest.Server or a short-timeout client.
@@ -115,6 +117,7 @@ func newServer(d Deps) *server {
 		dataPVC:         dataPVC,
 		dataDir:         d.DataDir,
 		secretKeyPath:   d.SecretKeyPath,
+		version:         d.Version,
 		nowFn:           time.Now,
 		httpClient:      &http.Client{Timeout: 5 * time.Second},
 	}
@@ -208,6 +211,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/tokens", s.authed(s.handleListTokens))
 	mux.HandleFunc("DELETE /v1/tokens/{id}", s.authed(s.handleRevokeToken))
 	mux.HandleFunc("GET /v1/audit", s.adminOnly(s.handleListAudit))
+	mux.HandleFunc("GET /v1/doctor", s.adminOnly(s.handleDoctor))
 
 	// ACME HTTP-01 challenge path: served by luncur itself, no auth (the
 	// ACME CA fetches it directly). Nil-guarded: tests may build a server

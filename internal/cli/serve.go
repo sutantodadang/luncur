@@ -128,6 +128,7 @@ func serveCmd() *cobra.Command {
 				BuilderImage:  builderImage,
 				RegistryHost:  registryHost,
 				SecretKeyPath: keyFile,
+				Version:       version,
 			})
 			srv := &http.Server{
 				Addr:              listen,
