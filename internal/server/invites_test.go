@@ -3,7 +3,12 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/sutantodadang/luncur/internal/mail"
+	"github.com/sutantodadang/luncur/internal/store"
 )
 
 func TestInviteEndpointsAdminOnly(t *testing.T) {
@@ -133,5 +138,128 @@ func TestUsersListAndDelete(t *testing.T) {
 	gone.Body.Close()
 	if gone.StatusCode != 404 {
 		t.Fatalf("unknown delete: want 404, got %d", gone.StatusCode)
+	}
+}
+
+// fakeMailer records the one message it was asked to send.
+type fakeMailer struct {
+	to, subject, body string
+	err               error
+}
+
+func (f *fakeMailer) Send(to, subject, body string) error {
+	f.to, f.subject, f.body = to, subject, body
+	return f.err
+}
+
+// mailerServer builds a test server whose mailer factory is overridden.
+func mailerServer(t *testing.T, m mail.Mailer, merr error) (*httptest.Server, *store.Store) {
+	t.Helper()
+	st := newTestStore(t)
+	s := newServer(Deps{Store: st})
+	s.mailer = func() (mail.Mailer, error) { return m, merr }
+	srv := httptest.NewServer(s.handler())
+	t.Cleanup(srv.Close)
+	return srv, st
+}
+
+func TestInviteEmailSent(t *testing.T) {
+	fm := &fakeMailer{}
+	srv, st := mailerServer(t, fm, nil)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/invites", admin, `{"role":"member","email":"new@b.co"}`)
+	if resp.StatusCode != 201 {
+		t.Fatalf("want 201, got %d", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out["emailed"] != true {
+		t.Fatalf("emailed = %v, want true", out["emailed"])
+	}
+	if _, ok := out["warning"]; ok {
+		t.Fatalf("unexpected warning: %v", out["warning"])
+	}
+	if fm.to != "new@b.co" {
+		t.Fatalf("mail to = %q, want new@b.co", fm.to)
+	}
+	if !strings.Contains(fm.body, "http://") || !strings.Contains(fm.body, "/ui/register?token="+out["token"].(string)) {
+		t.Fatalf("mail body missing absolute register link:\n%s", fm.body)
+	}
+}
+
+func TestInviteEmailSendFailure(t *testing.T) {
+	fm := &fakeMailer{err: fmt.Errorf("connection refused")}
+	srv, st := mailerServer(t, fm, nil)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/invites", admin, `{"email":"new@b.co"}`)
+	if resp.StatusCode != 201 {
+		t.Fatalf("send failure must not block creation: want 201, got %d", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out["emailed"] != false {
+		t.Fatalf("emailed = %v, want false", out["emailed"])
+	}
+	w, _ := out["warning"].(string)
+	if !strings.Contains(w, "connection refused") {
+		t.Fatalf("warning = %q, want send error in it", w)
+	}
+
+	// Invite still exists.
+	invs, err := st.ListInvites()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invs) != 1 {
+		t.Fatalf("invites = %d, want 1", len(invs))
+	}
+}
+
+func TestInviteEmailUnconfigured(t *testing.T) {
+	// Real default mailer factory, no smtp_host setting -> ErrUnconfigured.
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/invites", admin, `{"email":"new@b.co"}`)
+	if resp.StatusCode != 201 {
+		t.Fatalf("want 201, got %d", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out["emailed"] != false {
+		t.Fatalf("emailed = %v, want false", out["emailed"])
+	}
+	w, _ := out["warning"].(string)
+	if !strings.Contains(w, "smtp is not configured") {
+		t.Fatalf("warning = %q, want smtp is not configured", w)
+	}
+}
+
+func TestInviteNoEmailFieldNoEmailedKey(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/invites", admin, `{"role":"member"}`)
+	if resp.StatusCode != 201 {
+		t.Fatalf("want 201, got %d", resp.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if _, ok := out["emailed"]; ok {
+		t.Fatalf("emailed key present without email request: %v", out)
 	}
 }

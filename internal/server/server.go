@@ -12,6 +12,7 @@ import (
 	"github.com/sutantodadang/luncur/internal/acme"
 	"github.com/sutantodadang/luncur/internal/build"
 	"github.com/sutantodadang/luncur/internal/kube"
+	"github.com/sutantodadang/luncur/internal/mail"
 	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -56,6 +57,9 @@ type server struct {
 	// a fake in tests. nowFn is injectable for deterministic archive names.
 	execer kube.PodExecer
 	nowFn  func() time.Time
+
+	// mailer builds the invite Mailer from settings; tests override it.
+	mailer func() (mail.Mailer, error)
 
 	certs *certManager
 
@@ -108,6 +112,7 @@ func newServer(d Deps) *server {
 	if d.Kube != nil {
 		s.execer = d.Kube
 	}
+	s.mailer = s.smtpMailer
 
 	if d.DataDir != "" {
 		src, err := build.NewSource(d.DataDir)
