@@ -362,3 +362,44 @@ func TestSetHealthPath(t *testing.T) {
 		t.Fatalf("unknown id: %v, want ErrNotFound", err)
 	}
 }
+
+func TestSetWebhookSecret(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.WebhookSecret != nil {
+		t.Fatalf("want nil webhook secret by default, got %+v", a.WebhookSecret)
+	}
+
+	if err := s.SetWebhookSecret(a.ID, []byte("sealed-bytes")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetApp(p.ID, "api")
+	if err != nil || string(got.WebhookSecret) != "sealed-bytes" {
+		t.Fatalf("get after set webhook secret: %+v %v", got, err)
+	}
+	byID, err := s.GetAppByID(a.ID)
+	if err != nil || string(byID.WebhookSecret) != "sealed-bytes" {
+		t.Fatalf("GetAppByID after set: %+v %v", byID, err)
+	}
+	list, err := s.ListApps(p.ID)
+	if err != nil || len(list) != 1 || string(list[0].WebhookSecret) != "sealed-bytes" {
+		t.Fatalf("ListApps after set: %+v %v", list, err)
+	}
+
+	// Clear (nil/empty -> NULL -> nil).
+	if err := s.SetWebhookSecret(a.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetApp(p.ID, "api")
+	if err != nil || got.WebhookSecret != nil {
+		t.Fatalf("get after clear webhook secret: %+v %v", got, err)
+	}
+
+	if err := s.SetWebhookSecret(99999, []byte("x")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+}

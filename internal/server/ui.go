@@ -38,6 +38,8 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}", s.uiPage(s.handleUIApp))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/scale", s.uiPage(s.handleUIScale))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/health", s.uiPage(s.handleUIHealth))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook", s.uiPage(s.handleUIWebhookEnable))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook/disable", s.uiPage(s.handleUIWebhookDisable))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env", s.uiPage(s.handleUIEnvSet))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/delete", s.uiPage(s.handleUIEnvUnset))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains", s.uiPage(s.handleUIDomainAdd))
@@ -349,7 +351,15 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 	if !ok {
 		return
 	}
+	s.renderAppDetail(w, r, u, p, a, nil)
+}
 
+// renderAppDetail assembles app.html's full view model and renders it.
+// extra is merged in last (overriding nothing app.html itself sets) — its
+// only current use is handleUIWebhookEnable riding the freshly generated
+// secret along on the same response, instead of a redirect (a redirect
+// would have to carry the secret in the URL, which must never happen).
+func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store.User, p store.Project, a store.App, extra map[string]any) {
 	status := "never_deployed"
 	latestID := int64(0)
 	if d, err := s.st.LatestDeployment(a.ID); err == nil {
@@ -415,15 +425,81 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 		return
 	}
 
-	s.renderPage(w, "app.html", map[string]any{
+	data := map[string]any{
 		"User": u, "Project": p, "App": a,
 		"Status": status, "LatestID": latestID, "URL": "http://" + hostFor(a.Name, s.externalIP),
 		"History": history, "EnvKeys": envKeys,
-		"IsGit":   a.SourceType == "git",
-		"Domains": domains, "Volumes": volumes, "Warning": r.URL.Query().Get("warn"),
+		"IsGit":          a.SourceType == "git",
+		"WebhookEnabled": a.WebhookSecret != nil,
+		"WebhookURL":     "http://" + r.Host + webhookPath(p.Name, a.Name),
+		"Domains":        domains, "Volumes": volumes, "Warning": r.URL.Query().Get("warn"),
 		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
-	})
+	}
+	for k, v := range extra {
+		data[k] = v
+	}
+	s.renderPage(w, "app.html", data)
+}
+
+// handleUIWebhookEnable is enableWebhook's UI twin: same core, but renders
+// the app page directly (never redirects) so the freshly generated secret
+// rides along on this one response — it must never be persisted in
+// plaintext or appear in a URL/query string.
+func (s *server) handleUIWebhookEnable(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if a.Ejected {
+		http.Error(w, errAppEjected.Error(), http.StatusConflict)
+		return
+	}
+
+	secretHex, err := s.enableWebhook(a)
+	if err != nil {
+		switch {
+		case errors.Is(err, errNotGitApp):
+			http.Error(w, errNotGitApp.Error(), http.StatusBadRequest)
+		case errors.Is(err, errSealerUnavailable):
+			http.Error(w, errSealerUnavailable.Error(), http.StatusServiceUnavailable)
+		default:
+			log.Printf("ui enable webhook: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	a.WebhookSecret = []byte("x") // renderAppDetail only checks non-nil-ness
+
+	s.renderAppDetail(w, r, u, p, a, map[string]any{"WebhookSecretOnce": secretHex})
+}
+
+// handleUIWebhookDisable is disableWebhook's UI twin: clear the secret,
+// then redirect back — nothing sensitive to show, so a normal redirect
+// (unlike enable) is fine here.
+func (s *server) handleUIWebhookDisable(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if a.Ejected {
+		http.Error(w, errAppEjected.Error(), http.StatusConflict)
+		return
+	}
+	if err := s.st.SetWebhookSecret(a.ID, nil); err != nil {
+		log.Printf("ui disable webhook: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	uiRedirect(w, r, p, a)
 }
 
 // uiRedirect sends the browser back to the app detail page an action

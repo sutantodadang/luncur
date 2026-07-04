@@ -169,6 +169,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/deploys/{id}/logs", s.authed(s.handleDeployLogs))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/scale", s.authed(s.handleScaleApp))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/health", s.authed(s.handleSetHealth))
+	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookEnable))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookShow))
+	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookDisable))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/rollback", s.authed(s.handleRollback))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/env", s.authed(s.handleGetEnv))
 	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/env", s.authed(s.handleSetEnv))
@@ -206,6 +209,11 @@ func (s *server) handler() http.Handler {
 	if s.certs != nil {
 		mux.Handle("GET "+acme.ChallengePath+"{token}", s.certs.Challenges())
 	}
+
+	// Webhook trigger: unauthenticated by design (HMAC/token verification
+	// IS the auth) — a git provider hits this directly, so it must not sit
+	// behind s.authed's bearer-token check.
+	mux.HandleFunc("POST /hooks/apps/{project}/{app}", s.handleWebhookTrigger)
 
 	s.uiRoutes(mux)
 

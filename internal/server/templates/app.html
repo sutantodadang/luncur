@@ -42,6 +42,24 @@
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <button type="submit">Deploy from git</button>
 </form>
+
+<h2>Webhook</h2>
+{{if .WebhookSecretOnce}}
+<p>secret shown once — store it now (GitHub/Gitea: "Secret" field; GitLab: "Secret token" field):</p>
+<p><input readonly size="64" value="{{.WebhookSecretOnce}}"></p>
+{{end}}
+{{if .WebhookEnabled}}
+<p><input readonly size="64" value="{{.WebhookURL}}"></p>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/webhook/disable">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit">disable webhook</button>
+</form>
+{{else}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/webhook">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit">enable webhook</button>
+</form>
+{{end}}
 {{end}}
 
 <h2>Environment</h2>

@@ -43,7 +43,7 @@ Changed your mind? **Adopt** it back. No lock-in in either direction.
 
 | | |
 |---|---|
-| 🚢 **Deploy 3 ways** | `git push luncur main`, `luncur deploy` from local source (Nixpacks or Dockerfile, built in-cluster by BuildKit), or any pre-built image |
+| 🚢 **Deploy 3 ways** | `git push luncur main`, `luncur deploy` from local source (Nixpacks or Dockerfile, built in-cluster by BuildKit), or any pre-built image — or auto-deploy on push via a GitHub/GitLab/Gitea webhook |
 | ⏱️ **App kinds** | `web` (Deployment+Service+Ingress), `worker` (Deployment only, no URL), and `cron` (Kubernetes CronJob, `Forbid` concurrency) — `luncur logs` streams all three |
 | 🔒 **Automatic HTTPS** | Built-in ACME (Let's Encrypt) — HTTP-01 out of the box, **DNS-01 + wildcard certs** (`*.example.com`) via Cloudflare, Route53, or RFC2136/nsupdate |
 | 🐘 **Managed addons** | Postgres & Redis as StatefulSets: create, attach (`DATABASE_URL` injected), in-place version upgrades, per-addon logical dumps in every backup |
@@ -297,6 +297,19 @@ the app's configured branch (default `main`) triggers a deploy; the
 receiver is push-only (`git pull`/`clone` from luncur is rejected) and no
 repository is stored server-side — each push is archived straight into the
 same build pipeline `luncur deploy` uses.
+
+**Webhook auto-deploy (for git-source apps hosted elsewhere):**
+```sh
+luncur webhook enable myapp --project myproj
+# paste the printed URL + secret into GitHub/GitLab/Gitea's webhook settings (push events)
+```
+A push to the app's configured branch (default `main`) triggers the same
+build pipeline as `luncur deploy`; pushes to other refs are ignored. GitHub's
+"ping" event (sent when a webhook is first saved) is answered without
+deploying, so saving the hook doesn't kick off a spurious build.
+`luncur webhook enable` re-run rotates the secret — update it at the
+provider or deploys will stop authenticating. `luncur webhook show` and
+`luncur webhook disable` round out the command.
 
 **Environment & editing:**
 ```sh
@@ -675,6 +688,16 @@ settings (S3 secret key, SMTP password, DNS provider tokens) are sealed at
 rest with AES-256-GCM; the sealed settings are write-only through the API
 (reads show `(set)`).
 
+The deploy webhook endpoint (`POST /hooks/apps/{project}/{app}`) is
+unauthenticated at the HTTP layer by design — a git provider posts to it
+directly, so there's no bearer token to present. The HMAC/token check *is*
+the auth: every failure (unknown project/app, webhook disabled, unseal
+failure, bad signature) answers with the byte-identical 401 body, so the
+endpoint can't be used to probe whether a project or app exists. The
+request body is capped at 1 MiB before it's read. The webhook secret is
+sealed at rest the same way env vars are (AES-256-GCM) and is only ever
+shown in plaintext once, in the response to `webhook enable`.
+
 ### Design notes
 
 <details>
@@ -702,6 +725,9 @@ rest with AES-256-GCM; the sealed settings are write-only through the API
 - `CronJob` joined `Deployment`/`Service`/`Ingress` as an overridable manifest kind — the YAML override editor works for cron apps too.
 - App volumes force the Deployment's `Recreate` strategy because an RWO node-local PVC can't be mounted by the old and new pod simultaneously — a rolling update would deadlock waiting for a volume the outgoing pod still holds.
 - App volumes share the addons' never-implicit-delete philosophy: removing a volume (or destroying the app) leaves the PVC and its data in the cluster; only an explicit `--purge` deletes it. PVCs are not an overridable manifest kind.
+- A webhook-triggered push is deduped against an in-progress build: if the app's latest deployment is still `building`, the webhook returns the existing deployment id (202) instead of stacking a second build on the same app.
+- The webhook and the `git push luncur` SSH remote are independent trigger paths into the same `deployGitApp` core — an app can have both configured at once (e.g. push to luncur directly for fast iteration, webhook for a mirror hosted on GitHub/GitLab).
+- Re-enabling an already-enabled webhook always rotates the secret rather than offering a separate "rotate" verb — one action, no ambiguity about which secret is currently live.
 
 Every feature shipped with a written spec, a TDD implementation plan, and
 a full test suite that runs without a cluster or network.

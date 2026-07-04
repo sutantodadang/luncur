@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS apps (
   health_path   TEXT NOT NULL DEFAULT '',
   kind          TEXT NOT NULL DEFAULT 'web',
   schedule      TEXT NOT NULL DEFAULT '',
+  webhook_secret BLOB,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, name)
 );
