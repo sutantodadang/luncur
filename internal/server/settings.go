@@ -36,6 +36,21 @@ var settableKeys = map[string]func(string) bool{
 		n, err := strconv.Atoi(v)
 		return err == nil && n > 0
 	},
+	"smtp_host": func(v string) bool { return v != "" },
+	"smtp_port": func(v string) bool {
+		n, err := strconv.Atoi(v)
+		return err == nil && n > 0 && n < 65536
+	},
+	"smtp_user": func(v string) bool { return v != "" },
+	"smtp_pass": func(v string) bool { return v != "" },
+	"smtp_from": func(v string) bool { return v != "" },
+}
+
+// sealedKeys are write-only secrets: sealed at rest with the install
+// sealer, and GET returns "(set)" instead of the value.
+var sealedKeys = map[string]bool{
+	"backup_s3_secret_key": true,
+	"smtp_pass":            true,
 }
 
 func (s *server) handleGetSetting(w http.ResponseWriter, r *http.Request, _ store.User) {
@@ -53,7 +68,7 @@ func (s *server) handleGetSetting(w http.ResponseWriter, r *http.Request, _ stor
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	if key == "backup_s3_secret_key" {
+	if sealedKeys[key] {
 		v = "(set)"
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"key": key, "value": v})
@@ -75,7 +90,7 @@ func (s *server) handleSetSetting(w http.ResponseWriter, r *http.Request, _ stor
 	}
 
 	value := req.Value
-	if key == "backup_s3_secret_key" {
+	if sealedKeys[key] {
 		if s.sealer == nil {
 			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", "sealer is not configured")
 			return
@@ -95,15 +110,15 @@ func (s *server) handleSetSetting(w http.ResponseWriter, r *http.Request, _ stor
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// s3SecretKey unseals the write-only backup_s3_secret_key setting.
-func (s *server) s3SecretKey() (string, error) {
-	v, err := s.st.GetSetting("backup_s3_secret_key")
+// sealedSetting unseals a write-only sealed setting (see sealedKeys).
+func (s *server) sealedSetting(key string) (string, error) {
+	v, err := s.st.GetSetting(key)
 	if err != nil {
 		return "", err
 	}
 	raw, ok := strings.CutPrefix(v, "sealed:")
 	if !ok {
-		return "", fmt.Errorf("backup_s3_secret_key is not sealed")
+		return "", fmt.Errorf("%s is not sealed", key)
 	}
 	b, err := hex.DecodeString(raw)
 	if err != nil {
@@ -117,4 +132,9 @@ func (s *server) s3SecretKey() (string, error) {
 		return "", err
 	}
 	return string(plain), nil
+}
+
+// s3SecretKey unseals the write-only backup_s3_secret_key setting.
+func (s *server) s3SecretKey() (string, error) {
+	return s.sealedSetting("backup_s3_secret_key")
 }
