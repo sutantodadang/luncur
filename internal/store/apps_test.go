@@ -226,3 +226,42 @@ func TestSetAppAdopted(t *testing.T) {
 		t.Fatalf("unknown id: %v, want ErrNotFound", err)
 	}
 }
+
+func TestSetResources(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	a, err := s.CreateApp(p.ID, "api", 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.CPUMilli != 0 || a.MemoryMB != 0 {
+		t.Fatalf("want unset resources by default, got %+v", a)
+	}
+
+	if err := s.SetResources(a.ID, 250, 256); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetApp(p.ID, "api")
+	if err != nil || got.CPUMilli != 250 || got.MemoryMB != 256 {
+		t.Fatalf("get after set resources: %+v %v", got, err)
+	}
+
+	if err := s.SetResources(a.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetApp(p.ID, "api")
+	if err != nil || got.CPUMilli != 0 || got.MemoryMB != 0 {
+		t.Fatalf("get after clear resources: %+v %v", got, err)
+	}
+
+	if err := s.SetResources(a.ID, -1, 0); err == nil {
+		t.Fatal("want error for negative cpu")
+	}
+	if err := s.SetResources(a.ID, 0, -1); err == nil {
+		t.Fatal("want error for negative memory")
+	}
+
+	if err := s.SetResources(99999, 100, 100); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+}

@@ -103,26 +103,57 @@ func tailLines(s string, n int) string {
 func scaleCmd() *cobra.Command {
 	var project string
 	var replicas int
+	var cpu, memory string
 	cmd := &cobra.Command{
 		Use:   "scale <app>",
-		Short: "Scale an app",
+		Short: "Scale an app, or set/clear its per-app CPU and memory limits",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			replicasSet := cmd.Flags().Changed("replicas")
+			cpuSet := cmd.Flags().Changed("cpu")
+			memorySet := cmd.Flags().Changed("memory")
+			if !replicasSet && !cpuSet && !memorySet {
+				return fmt.Errorf("specify at least one of --replicas, --cpu, --memory")
+			}
+
 			c, err := apiClient()
 			if err != nil {
 				return err
 			}
-			if err := c.Scale(project, args[0], replicas); err != nil {
+			var replicasArg *int
+			var cpuArg, memoryArg *string
+			if replicasSet {
+				replicasArg = &replicas
+			}
+			if cpuSet {
+				cpuArg = &cpu
+			}
+			if memorySet {
+				memoryArg = &memory
+			}
+			if err := c.Scale(project, args[0], replicasArg, cpuArg, memoryArg); err != nil {
 				return err
 			}
-			cmd.Printf("scaled %s to %d replicas\n", args[0], replicas)
+
+			var parts []string
+			if replicasSet {
+				parts = append(parts, fmt.Sprintf("replicas=%d", replicas))
+			}
+			if cpuSet {
+				parts = append(parts, "cpu="+cpu)
+			}
+			if memorySet {
+				parts = append(parts, "memory="+memory)
+			}
+			cmd.Printf("scaled %s: %s\n", args[0], strings.Join(parts, " "))
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project name")
 	cmd.MarkFlagRequired("project")
 	cmd.Flags().IntVar(&replicas, "replicas", 0, "number of replicas")
-	cmd.MarkFlagRequired("replicas")
+	cmd.Flags().StringVar(&cpu, "cpu", "", "CPU request+limit (e.g. 250m, 1); empty string clears")
+	cmd.Flags().StringVar(&memory, "memory", "", "memory request+limit (e.g. 256Mi, 1Gi); empty string clears")
 	return cmd
 }
 

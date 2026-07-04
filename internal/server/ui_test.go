@@ -406,6 +406,60 @@ func TestUIScalePersists(t *testing.T) {
 	}
 }
 
+// TestUIScaleResourcesPersistAndPrefill posts cpu/memory through the scale
+// form, checks they persist, then loads the app page and checks the form
+// shows the new values back (value=, pre-filled) rather than a placeholder.
+func TestUIScaleResourcesPersistAndPrefill(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+	form := url.Values{"replicas": {"2"}, "cpu": {"250m"}, "memory": {"256Mi"}}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/web/apps/api/scale", csrfCk, ck, form)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST scale: want 303, got %d", resp.StatusCode)
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.CPUMilli != 250 || a.MemoryMB != 256 {
+		t.Fatalf("resources not persisted: %+v", a)
+	}
+
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web/apps/api", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	page, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer page.Body.Close()
+	body, err := io.ReadAll(page.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `value="250m"`) {
+		t.Fatalf("want cpu pre-filled with 250m, got:\n%s", body)
+	}
+	if !strings.Contains(string(body), `value="256Mi"`) {
+		t.Fatalf("want memory pre-filled with 256Mi, got:\n%s", body)
+	}
+}
+
 // TestUIDeployGitAppWithoutKube503 guards the UI git-deploy path when the
 // server has no kube client: it must answer 503 (mirroring the API's
 // kubernetes_unavailable), NOT silently redirect, and must not create a

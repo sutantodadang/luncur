@@ -112,6 +112,8 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 		Host:               hostFor(a.Name, s.externalIP),
 		Port:               int32(a.Port),
 		Replicas:           int32(a.Replicas),
+		CPUMilli:           a.CPUMilli,
+		MemoryMB:           a.MemoryMB,
 		Overrides:          overrides,
 		ExtraHosts:         extraHosts,
 		IngressAnnotations: annotations,

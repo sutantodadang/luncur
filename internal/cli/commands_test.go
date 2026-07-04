@@ -216,6 +216,43 @@ func TestDomainAndConfigCommands(t *testing.T) {
 	}
 }
 
+// TestScaleCommand exercises scaleCmd's flag matrix: cpu-only, all three
+// flags together, and no flags at all (rejected before hitting the API).
+func TestScaleCommand(t *testing.T) {
+	srv := testEnv(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "app", "create", "web", "--project", "p", "--port", "8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "scale", "web", "--project", "p", "--cpu", "250m")
+	if err != nil {
+		t.Fatalf("cpu-only scale: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "cpu=250m") || strings.Contains(out, "replicas=") {
+		t.Fatalf("cpu-only output: %q", out)
+	}
+
+	out, err = run(t, "scale", "web", "--project", "p", "--replicas", "3", "--cpu", "500m", "--memory", "512Mi")
+	if err != nil {
+		t.Fatalf("all-three scale: %v (%s)", err, out)
+	}
+	for _, want := range []string{"replicas=3", "cpu=500m", "memory=512Mi"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("all-three output missing %q: %q", want, out)
+		}
+	}
+
+	if _, err := run(t, "scale", "web", "--project", "p"); err == nil {
+		t.Fatal("want error when no scale flags are given")
+	}
+}
+
 func TestSSHKeyCommands(t *testing.T) {
 	srv := testEnv(t)
 

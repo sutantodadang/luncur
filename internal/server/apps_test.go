@@ -180,6 +180,96 @@ func TestScaleLiveAppWithoutKube503LeavesReplicasUnchanged(t *testing.T) {
 	}
 }
 
+// TestScaleResourcesPartialUpdate exercises the cpu/memory-only scale path:
+// a request touching only cpu leaves replicas untouched, and clearing via ""
+// resets to 0.
+func TestScaleResourcesPartialUpdate(t *testing.T) {
+	srv, st := testServer(t) // no kube; app never live, so no sync required
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/scale", admin, `{"cpu":"250m"}`)
+	if resp.StatusCode != 200 {
+		t.Fatalf("cpu-only scale: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Replicas != 1 {
+		t.Fatalf("replicas should be untouched, got %d", a.Replicas)
+	}
+	if a.CPUMilli != 250 {
+		t.Fatalf("cpu_milli: want 250, got %d", a.CPUMilli)
+	}
+
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/scale", admin, `{"memory":"256Mi"}`)
+	if resp.StatusCode != 200 {
+		t.Fatalf("memory-only scale: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	a, err = st.GetApp(mustProjectID(t, st, "web"), "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.CPUMilli != 250 || a.MemoryMB != 256 {
+		t.Fatalf("want cpu unchanged + memory set, got %+v", a)
+	}
+
+	// Clear cpu via "".
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/scale", admin, `{"cpu":""}`)
+	if resp.StatusCode != 200 {
+		t.Fatalf("clear cpu: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	a, err = st.GetApp(mustProjectID(t, st, "web"), "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.CPUMilli != 0 || a.MemoryMB != 256 {
+		t.Fatalf("want cpu cleared, memory unchanged, got %+v", a)
+	}
+}
+
+// TestScaleInvalidQuantity400 checks a bad cpu/memory quantity fails with a
+// 400 naming the offending field, and that an all-nil body ({}) is rejected
+// as "nothing to change" rather than silently scaling replicas to 0.
+func TestScaleInvalidQuantity400(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/scale", admin, `{"cpu":"bogus"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("bad cpu: want 400, got %d", resp.StatusCode)
+	}
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	errBody, _ := out["error"].(map[string]any)
+	if !strings.Contains(fmt.Sprint(errBody["message"]), "cpu") {
+		t.Fatalf("want field name in error message, got %v", out)
+	}
+
+	resp2 := doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/scale", admin, `{}`)
+	defer resp2.Body.Close()
+	if resp2.StatusCode != 400 {
+		t.Fatalf("empty body: want 400, got %d", resp2.StatusCode)
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Replicas != 1 {
+		t.Fatalf("empty body must not scale replicas to 0, got %d", a.Replicas)
+	}
+}
+
 func mustProjectID(t *testing.T, st *store.Store, project string) int64 {
 	t.Helper()
 	p, err := st.GetProject(project)

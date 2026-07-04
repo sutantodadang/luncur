@@ -47,7 +47,7 @@ Changed your mind? **Adopt** it back. No lock-in in either direction.
 | 🔒 **Automatic HTTPS** | Built-in ACME (Let's Encrypt) — HTTP-01 out of the box, **DNS-01 + wildcard certs** (`*.example.com`) via Cloudflare, Route53, or RFC2136/nsupdate |
 | 🐘 **Managed addons** | Postgres & Redis as StatefulSets: create, attach (`DATABASE_URL` injected), in-place version upgrades, per-addon logical dumps in every backup |
 | 💾 **Backups & restore** | One-command snapshot (SQLite + sealer key + addon dumps) to any S3-compatible bucket — stdlib SigV4 client, no SDK. `luncur restore` rebuilds a box from an archive |
-| 🖥️ **Web panel** | Server-rendered UI: deploys, live log streaming (SSE), scaling, env vars, domains, rollbacks, YAML overrides, user & token management — zero JS frameworks |
+| 🖥️ **Web panel** | Server-rendered UI: deploys, live log streaming (SSE), scaling (with per-app CPU/memory limits), env vars, domains, rollbacks, YAML overrides, user & token management — zero JS frameworks |
 | ⏪ **Instant rollback** | Redeploy any previous image in seconds, lineage tracked, from CLI or UI |
 | 👥 **Teams** | Projects with members, admin/member roles, single-use invite links (optionally emailed via SMTP), API tokens with self-service revoke |
 | 🪂 **The escape hatch** | `app eject` hands you the raw manifests and stops managing; `app adopt` reverses it. Your cluster, your call |
@@ -211,6 +211,12 @@ luncur app raw myapp --project myproj
 luncur deploy myapp --project myproj --image my.registry/my/image:tag
 luncur scale myapp --project myproj --replicas 3
 luncur destroy myapp --project myproj
+```
+
+**Per-app CPU/memory limits:**
+```sh
+luncur scale myapp --project myproj --cpu 250m --memory 256Mi   # requests==limits
+luncur scale myapp --project myproj --cpu "" --memory ""        # clear
 ```
 
 **Rollback:**
@@ -633,6 +639,7 @@ rest with AES-256-GCM; the sealed settings are write-only through the API
 - Registration marks the invite used *after* creating the user (two non-atomic statements against a single-instance SQLite server); a burned-but-unused invite can't happen, since validation failures abort before the user is created and a duplicate-email failure aborts before the invite is marked used.
 - Registry GC's "bytes reclaimed" figure is measured with `du -sk` inside the registry pod before/after `garbage-collect` (busybox `du`, KiB resolution) rather than precise blob accounting; the manifest-delete phase always runs and is counted accurately regardless, and when the exec phase itself fails (no kube, no pod, exec error) bytes reclaimed is reported as unknown (`-1`) rather than blocking the sweep.
 - RFC2136 DNS support shells out to `nsupdate` (bind-tools, in the release image); the TSIG secret rides the script on stdin, never argv (which would be visible in `ps`). It's a runtime binary, not a Go module — the no-new-dependencies rule is about Go modules (`git`, `pg_dump`, `nsupdate` are all selected on demand).
+- Per-app CPU/memory limits set requests==limits (Guaranteed QoS) deliberately, rather than exposing separate requests/limits fields — the YAML override editor is the escape hatch for anyone who needs a split.
 
 Every feature shipped with a written spec, a TDD implementation plan, and
 a full test suite that runs without a cluster or network.

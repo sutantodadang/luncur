@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -417,16 +420,68 @@ func (s *server) handleDeployLogs(w http.ResponseWriter, r *http.Request, u stor
 	w.Write(logBytes)
 }
 
+// parseCPUMilli parses a CPU quantity ("250m", "1", "1.5") into millicores.
+// "" clears (returns 0). Rejects negative or unparseable values.
+func parseCPUMilli(s string) (int64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	q, err := resource.ParseQuantity(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid cpu quantity %q: %w", s, err)
+	}
+	if q.Sign() < 0 {
+		return 0, fmt.Errorf("cpu must be >= 0, got %q", s)
+	}
+	return q.MilliValue(), nil
+}
+
+// parseMemoryMB parses a memory quantity ("256Mi", "1Gi", or a plain integer
+// meaning MiB, e.g. "512") into MiB. "" clears (returns 0). Rejects negative,
+// unparseable, or nonzero-but-under-1Mi values.
+func parseMemoryMB(s string) (int64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	qs := s
+	if _, err := strconv.ParseInt(s, 10, 64); err == nil {
+		qs = s + "Mi" // plain integer means MiB
+	}
+	q, err := resource.ParseQuantity(qs)
+	if err != nil {
+		return 0, fmt.Errorf("invalid memory quantity %q: %w", s, err)
+	}
+	if q.Sign() < 0 {
+		return 0, fmt.Errorf("memory must be >= 0, got %q", s)
+	}
+	mb := q.Value() / (1024 * 1024)
+	if q.Value() > 0 && mb == 0 {
+		return 0, fmt.Errorf("memory %q is less than 1Mi", s)
+	}
+	return mb, nil
+}
+
+// scaleChange is a partial update: nil fields are left unchanged. All-nil is
+// rejected by scaleApp ("nothing to change").
+type scaleChange struct {
+	Replicas *int
+	CPUMilli *int64
+	MemoryMB *int64
+}
+
 // scaleApp is the shared core of handleScaleApp and its UI twin
-// (handleUIScale): check whether the app is live BEFORE persisting the
-// replica change (a live app with no kube client can't apply a scale, so it
-// must not record a DB state it can't honor), then persist and, if live,
-// sync. Returns errKubeUnavailable when a live app's scale can't be
-// applied, or a *scaleReplicasError when the requested replica count is
-// invalid; any other error is an internal failure.
-func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, replicas int) (store.App, error) {
+// (handleUIScale): check whether the app is live BEFORE persisting any
+// change (a live app with no kube client can't apply a scale, so it must not
+// record a DB state it can't honor), then persist and, if live, sync.
+// Returns errKubeUnavailable when a live app's scale can't be applied, or a
+// *scaleReplicasError when the requested replica count is invalid; any other
+// error is an internal failure.
+func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req scaleChange) (store.App, error) {
 	if a.Ejected {
 		return store.App{}, errAppEjected
+	}
+	if req.Replicas == nil && req.CPUMilli == nil && req.MemoryMB == nil {
+		return store.App{}, &scaleReplicasError{fmt.Errorf("nothing to change")}
 	}
 	d, err := s.st.LatestDeployment(a.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -437,10 +492,25 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, rep
 		return store.App{}, errKubeUnavailable
 	}
 
-	if err := s.st.SetReplicas(a.ID, replicas); err != nil {
-		return store.App{}, &scaleReplicasError{err}
+	if req.Replicas != nil {
+		if err := s.st.SetReplicas(a.ID, *req.Replicas); err != nil {
+			return store.App{}, &scaleReplicasError{err}
+		}
+		a.Replicas = *req.Replicas
 	}
-	a.Replicas = replicas
+	if req.CPUMilli != nil || req.MemoryMB != nil {
+		cpu, mem := a.CPUMilli, a.MemoryMB
+		if req.CPUMilli != nil {
+			cpu = *req.CPUMilli
+		}
+		if req.MemoryMB != nil {
+			mem = *req.MemoryMB
+		}
+		if err := s.st.SetResources(a.ID, cpu, mem); err != nil {
+			return store.App{}, &scaleReplicasError{err}
+		}
+		a.CPUMilli, a.MemoryMB = cpu, mem
+	}
 
 	if live {
 		if err := s.syncApp(ctx, p, a); err != nil {
@@ -461,15 +531,36 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	var req struct {
-		Replicas int `json:"replicas"`
+	var body struct {
+		Replicas *int    `json:"replicas"`
+		CPU      *string `json:"cpu"`
+		Memory   *string `json:"memory"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
 
-	updated, err := s.scaleApp(r.Context(), p, a, req.Replicas)
+	var req scaleChange
+	req.Replicas = body.Replicas
+	if body.CPU != nil {
+		cpu, err := parseCPUMilli(*body.CPU)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "cpu: "+err.Error())
+			return
+		}
+		req.CPUMilli = &cpu
+	}
+	if body.Memory != nil {
+		mem, err := parseMemoryMB(*body.Memory)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "memory: "+err.Error())
+			return
+		}
+		req.MemoryMB = &mem
+	}
+
+	updated, err := s.scaleApp(r.Context(), p, a, req)
 	if err != nil {
 		var re *scaleReplicasError
 		switch {
@@ -486,5 +577,9 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"replicas": updated.Replicas})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"replicas":  updated.Replicas,
+		"cpu_milli": updated.CPUMilli,
+		"memory_mb": updated.MemoryMB,
+	})
 }
