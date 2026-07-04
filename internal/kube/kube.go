@@ -322,6 +322,48 @@ func (c *Client) NodeIP(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("no node addresses found")
 }
 
+// NodesReady returns the cluster's total node count and the names of any
+// nodes whose NodeReady condition isn't True.
+func (c *Client) NodesReady(ctx context.Context) (total int, notReady []string, err error) {
+	nodes, err := c.cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, nil, fmt.Errorf("list nodes: %w", err)
+	}
+	total = len(nodes.Items)
+	for _, n := range nodes.Items {
+		ready := false
+		for _, cond := range n.Status.Conditions {
+			if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+				ready = true
+				break
+			}
+		}
+		if !ready {
+			notReady = append(notReady, n.Name)
+		}
+	}
+	return total, notReady, nil
+}
+
+// ReadyPods counts how many pods matching selector in namespace have a True
+// PodReady condition, alongside the total matched.
+func (c *Client) ReadyPods(ctx context.Context, namespace, selector string) (ready, total int, err error) {
+	list, err := c.cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return 0, 0, fmt.Errorf("list pods: %w", err)
+	}
+	total = len(list.Items)
+	for _, p := range list.Items {
+		for _, cond := range p.Status.Conditions {
+			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+				ready++
+				break
+			}
+		}
+	}
+	return ready, total, nil
+}
+
 // GetSecretData reads a Secret's decoded data; nil map when it doesn't exist.
 func (c *Client) GetSecretData(ctx context.Context, namespace, name string) (map[string][]byte, error) {
 	sec, err := c.cs.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})

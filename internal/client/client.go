@@ -792,6 +792,23 @@ type AuditEntry struct {
 	Target    string `json:"target"`
 }
 
+// DoctorCheck is one named diagnostic result from GET /v1/doctor.
+type DoctorCheck struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Detail string `json:"detail"`
+}
+
+// Doctor runs the server's one-shot diagnostics (admin only).
+func (c *Client) Doctor() (serverVersion string, checks []DoctorCheck, err error) {
+	var out struct {
+		ServerVersion string        `json:"server_version"`
+		Checks        []DoctorCheck `json:"checks"`
+	}
+	err = c.do("GET", "/v1/doctor", nil, &out)
+	return out.ServerVersion, out.Checks, err
+}
+
 // AuditList fetches the audit log (admin only), newest first. limit <= 0
 // leaves it unset (the server defaults/caps it); user/contains filter by
 // exact email and by substring match respectively, both optional.

@@ -358,6 +358,75 @@ func TestAppMetrics(t *testing.T) {
 	}
 }
 
+func readyCondNode(name string, ready bool) *corev1.Node {
+	status := corev1.ConditionTrue
+	if !ready {
+		status = corev1.ConditionFalse
+	}
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{
+			{Type: corev1.NodeReady, Status: status},
+		}},
+	}
+}
+
+func TestNodesReadyAllReady(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(readyCondNode("n1", true))
+	c := NewForTest(nil, cs)
+	total, notReady, err := c.NodesReady(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(notReady) != 0 {
+		t.Fatalf("NodesReady = (%d, %v), want (1, [])", total, notReady)
+	}
+}
+
+func TestNodesReadyOneNotReady(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(readyCondNode("n1", true), readyCondNode("n2", false))
+	c := NewForTest(nil, cs)
+	total, notReady, err := c.NodesReady(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(notReady) != 1 || notReady[0] != "n2" {
+		t.Fatalf("NodesReady = (%d, %v), want (2, [n2])", total, notReady)
+	}
+}
+
+func readyCondPod(namespace, name, label string, ready bool) *corev1.Pod {
+	status := corev1.ConditionTrue
+	if !ready {
+		status = corev1.ConditionFalse
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: namespace,
+			Labels: map[string]string{"app.kubernetes.io/name": label},
+		},
+		Status: corev1.PodStatus{Conditions: []corev1.PodCondition{
+			{Type: corev1.PodReady, Status: status},
+		}},
+	}
+}
+
+func TestReadyPods(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset(
+		readyCondPod("kube-system", "traefik-1", "traefik", true),
+		readyCondPod("kube-system", "traefik-2", "traefik", false),
+		readyCondPod("kube-system", "other-1", "other", true),
+	)
+	c := NewForTest(nil, cs)
+	ready, total, err := c.ReadyPods(context.Background(), "kube-system", "app.kubernetes.io/name=traefik")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready != 1 || total != 2 {
+		t.Fatalf("ReadyPods = (%d, %d), want (1, 2)", ready, total)
+	}
+}
+
 func TestAppMetricsUnavailable(t *testing.T) {
 	// The list kind must stay registered (an unregistered list kind panics
 	// rather than erroring — see dynamicResourceClient.List), so force the
