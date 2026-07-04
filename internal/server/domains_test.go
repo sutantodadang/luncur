@@ -183,3 +183,52 @@ func TestRenderProviderAnnotations(t *testing.T) {
 		t.Fatalf("cert-manager: missing tls secret:\n%s", ing)
 	}
 }
+
+// TestWildcardDomainNeedsDNSProvider: wildcard + dns_provider none -> 400;
+// with a provider set the row is created and the A-record warning is
+// skipped (a wildcard can't be resolved directly).
+func TestWildcardDomainNeedsDNSProvider(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/domains", admin, `{"hostname":"*.example.com"}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("wildcard without provider: want 400, got %d", resp.StatusCode)
+	}
+	var env struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !strings.Contains(env.Error.Message, "dns_provider") {
+		t.Fatalf("message = %q", env.Error.Message)
+	}
+
+	if err := st.SetSetting("dns_provider", "cloudflare"); err != nil {
+		t.Fatal(err)
+	}
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/domains", admin, `{"hostname":"*.example.com"}`)
+	if resp.StatusCode != 201 {
+		t.Fatalf("wildcard with provider: want 201, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Hostname   string `json:"hostname"`
+		DNSWarning string `json:"dns_warning"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.Hostname != "*.example.com" {
+		t.Fatalf("hostname = %q", out.Hostname)
+	}
+	if out.DNSWarning != "" {
+		t.Fatalf("wildcard must skip the A-record warning, got %q", out.DNSWarning)
+	}
+}

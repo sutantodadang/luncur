@@ -20,7 +20,11 @@ var hostnameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([
 
 func (s *Store) AddDomain(appID int64, hostname string) (Domain, error) {
 	h := strings.ToLower(strings.TrimSpace(hostname))
-	if !hostnameRe.MatchString(h) {
+	// One leading "*." makes a wildcard; the remainder must be a normal
+	// hostname either way. Policy (wildcards need a dns provider) is the
+	// server's job — here it's just an ordinary hostname value.
+	base, _ := strings.CutPrefix(h, "*.")
+	if strings.Contains(base, "*") || !hostnameRe.MatchString(base) {
 		return Domain{}, fmt.Errorf("invalid hostname %q", hostname)
 	}
 	res, err := s.db.Exec(

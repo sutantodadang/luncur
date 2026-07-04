@@ -10,10 +10,12 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/sutantodadang/luncur/internal/acme"
+	"github.com/sutantodadang/luncur/internal/dns"
 	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -35,8 +37,18 @@ type certManager struct {
 
 	jobs chan certJob
 
+	// lookupTXT overrides the DNS-01 solver's propagation lookup; nil =
+	// the solver's default authoritative-NS query. Tests inject an
+	// instant one.
+	lookupTXT func(ctx context.Context, fqdn string) ([]string, error)
+
 	mu           sync.Mutex
 	pendingHosts map[string]bool // hosts currently in the challenge Ingress
+}
+
+// newDNS01Solver builds the dns-01 solver for one issuance.
+func (m *certManager) newDNS01Solver(prov dns.Provider) *acme.DNS01Solver {
+	return &acme.DNS01Solver{Provider: prov, LookupTXT: m.lookupTXT}
 }
 
 func newCertManager(s *server, directoryURL string) *certManager {
@@ -141,20 +153,35 @@ func (m *certManager) issue(ctx context.Context, j certJob) {
 		fail(fmt.Errorf("acme account key: %w", err))
 		return
 	}
-	if err := m.setChallengeHost(ctx, j.d.Hostname, true); err != nil {
-		fail(fmt.Errorf("challenge ingress: %w", err))
-		return
-	}
-	defer func() {
-		if err := m.setChallengeHost(ctx, j.d.Hostname, false); err != nil {
-			log.Printf("remove challenge host %s: %v", j.d.Hostname, err)
+
+	// DNS-01 when the hostname is a wildcard (HTTP-01 can't validate it)
+	// or a dns provider is configured for this install; HTTP-01 with the
+	// challenge Ingress otherwise.
+	useDNS := strings.HasPrefix(j.d.Hostname, "*.") || m.s.dnsProviderName() != "none"
+	var solver acme.Solver
+	if useDNS {
+		prov, err := m.s.dnsProvider()
+		if err != nil {
+			fail(fmt.Errorf("dns provider: %w", err))
+			return
 		}
-	}()
+		solver = m.newDNS01Solver(prov)
+	} else {
+		if err := m.setChallengeHost(ctx, j.d.Hostname, true); err != nil {
+			fail(fmt.Errorf("challenge ingress: %w", err))
+			return
+		}
+		defer func() {
+			if err := m.setChallengeHost(ctx, j.d.Hostname, false); err != nil {
+				log.Printf("remove challenge host %s: %v", j.d.Hostname, err)
+			}
+		}()
+	}
 
 	email, _ := st.GetSetting("acme_email")
 	iss := &acme.Issuer{
 		DirectoryURL: m.directoryURL, AccountKey: key,
-		Email: email, Challenges: m.challenges,
+		Email: email, Challenges: m.challenges, Solver: solver,
 	}
 	ictx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()

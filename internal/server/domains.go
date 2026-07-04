@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/sutantodadang/luncur/internal/store"
@@ -64,9 +65,17 @@ func domainJSON(d store.Domain, warning string) map[string]any {
 // externally-issued, check DNS, opportunistically sync, and kick the cert
 // manager. Returns the DNS warning ("" when all good); a non-nil error means
 // the store rejected the hostname (invalid or duplicate).
+// errWildcardNeedsDNS gates wildcard hostnames: they can only be validated
+// over DNS-01, which needs a configured provider.
+var errWildcardNeedsDNS = errors.New("wildcard domains require a configured dns_provider (settings: dns_provider)")
+
 func (s *server) addDomain(ctx context.Context, p store.Project, a store.App, hostname string) (store.Domain, string, error) {
 	if a.Ejected {
 		return store.Domain{}, "", errAppEjected
+	}
+	isWildcard := strings.HasPrefix(strings.TrimSpace(hostname), "*.")
+	if isWildcard && s.dnsProviderName() == "none" {
+		return store.Domain{}, "", errWildcardNeedsDNS
 	}
 	d, err := s.st.AddDomain(a.ID, hostname)
 	if err != nil {
@@ -79,7 +88,11 @@ func (s *server) addDomain(ctx context.Context, p store.Project, a store.App, ho
 			d.CertStatus = "external"
 		}
 	}
-	warning := dnsWarning(ctx, d.Hostname, s.externalIP)
+	warning := ""
+	if !isWildcard {
+		// A wildcard can't be resolved directly; skip the A-record check.
+		warning = dnsWarning(ctx, d.Hostname, s.externalIP)
+	}
 	s.syncIfLive(ctx, p, a)
 	s.kickCerts(p, a, d)
 	return d, warning, nil
