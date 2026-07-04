@@ -46,6 +46,28 @@ type Input struct {
 	IngressAnnotations map[string]string
 	// TLS is set as spec.tls verbatim (secret refs per issued domain).
 	TLS []netv1.IngressTLS
+	// Volumes are the app's persistent volumes (web/worker only; cron
+	// ignores this field). Each renders an RWO PersistentVolumeClaim plus a
+	// pod volume + container mount; any non-empty Volumes forces the
+	// Deployment's strategy to Recreate (RWO/node-local storage can't be
+	// rolling-updated across nodes).
+	Volumes []Volume
+}
+
+// Volume is a single per-app persistent volume: a name (becomes the PVC's
+// name suffix and the pod volume name), the container mount path, and the
+// requested size in GB.
+type Volume struct {
+	Name   string
+	Path   string
+	SizeGB int
+}
+
+// VolumeClaimName is the PersistentVolumeClaim name luncur renders for one
+// of an app's volumes: deterministic so the server's purge path (which never
+// has a rendered manifest at hand) can compute it independently.
+func VolumeClaimName(appName, volumeName string) string {
+	return appName + "-" + volumeName
 }
 
 func int32Ptr(n int32) *int32 { return &n }
@@ -208,6 +230,39 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 		l.InitialDelaySeconds, l.PeriodSeconds, l.FailureThreshold = 15, 20, 3
 		container.ReadinessProbe, container.LivenessProbe = r, l
 	}
+	// Volumes: one RWO PVC per volume, mounted into the app container. Cron
+	// jobs ignore them (no PVCs emitted, no mounts).
+	var podVolumes []corev1.Volume
+	if kind != "cron" {
+		for _, v := range in.Volumes {
+			claim := VolumeClaimName(in.AppName, v.Name)
+			pvc := &corev1.PersistentVolumeClaim{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "PersistentVolumeClaim"},
+				ObjectMeta: meta(in, claim),
+				Spec: corev1.PersistentVolumeClaimSpec{
+					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+					Resources: corev1.VolumeResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceStorage: *resource.NewQuantity(int64(v.SizeGB)*1024*1024*1024, resource.BinarySI),
+						},
+					},
+				},
+			}
+			if err := add("PersistentVolumeClaim", pvc); err != nil {
+				return Rendered{}, err
+			}
+			podVolumes = append(podVolumes, corev1.Volume{
+				Name: v.Name,
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim},
+				},
+			})
+			container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+				Name: v.Name, MountPath: v.Path,
+			})
+		}
+	}
+
 	replicas := in.Replicas
 	dep := &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
@@ -217,9 +272,14 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			Selector: &metav1.LabelSelector{MatchLabels: selector(in.AppName)},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels(in.AppName)},
-				Spec:       corev1.PodSpec{Containers: []corev1.Container{container}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: podVolumes},
 			},
 		},
+	}
+	if len(podVolumes) > 0 {
+		// RWO node-local volumes can't be attached by the old and new pod at
+		// once, so a rolling update would deadlock — Recreate instead.
+		dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 	}
 
 	switch kind {

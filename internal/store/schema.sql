@@ -126,3 +126,14 @@ CREATE TABLE IF NOT EXISTS backups (
   uploaded   INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS volumes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  app_id     INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,
+  path       TEXT NOT NULL,
+  size_gb    INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(app_id, name),
+  UNIQUE(app_id, path)
+);

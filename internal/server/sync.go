@@ -69,6 +69,15 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 		}
 	}
 
+	vols, err := s.st.ListVolumes(a.ID)
+	if err != nil {
+		return render.Rendered{}, fmt.Errorf("list volumes: %w", err)
+	}
+	var renderVols []render.Volume
+	for _, v := range vols {
+		renderVols = append(renderVols, render.Volume{Name: v.Name, Path: v.Path, SizeGB: v.SizeGB})
+	}
+
 	var extraHosts []string
 	var tls []netv1.IngressTLS
 	annotations := map[string]string{}
@@ -125,6 +134,7 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 		ExtraHosts:         extraHosts,
 		IngressAnnotations: annotations,
 		TLS:                tls,
+		Volumes:            renderVols,
 	}
 	return render.Render(in, env)
 }

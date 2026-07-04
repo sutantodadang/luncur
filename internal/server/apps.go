@@ -499,6 +499,15 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 	if a.Kind == "cron" && req.Replicas != nil {
 		return store.App{}, &kindMismatchError{fmt.Errorf("cron apps do not scale")}
 	}
+	if req.Replicas != nil && *req.Replicas > 1 {
+		vols, err := s.st.ListVolumes(a.ID)
+		if err != nil {
+			return store.App{}, err
+		}
+		if len(vols) > 0 {
+			return store.App{}, &volumeReplicaConflictError{fmt.Errorf("app has a volume (RWO node-local storage); max 1 replica")}
+		}
+	}
 	d, err := s.st.LatestDeployment(a.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return store.App{}, err
@@ -580,6 +589,7 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 	if err != nil {
 		var re *scaleReplicasError
 		var ke *kindMismatchError
+		var rc *volumeReplicaConflictError
 		switch {
 		case errors.Is(err, errAppEjected):
 			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
@@ -587,6 +597,8 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 			writeError(w, http.StatusServiceUnavailable, "kubernetes_unavailable", "kubernetes is not configured")
 		case errors.As(err, &ke):
 			writeError(w, http.StatusBadRequest, "kind_mismatch", ke.Error())
+		case errors.As(err, &rc):
+			writeError(w, http.StatusConflict, "volume_replica_conflict", rc.Error())
 		case errors.As(err, &re):
 			writeError(w, http.StatusBadRequest, "bad_request", re.Error())
 		default:
