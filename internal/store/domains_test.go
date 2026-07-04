@@ -59,3 +59,29 @@ func TestDomainRoundTrip(t *testing.T) {
 		t.Fatalf("second delete: %v, want ErrNotFound", err)
 	}
 }
+
+func TestAddDomainWildcard(t *testing.T) {
+	s := openTest(t)
+	p, err := s.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.CreateApp(p.ID, "web", 8080)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := s.AddDomain(a.ID, "*.Example.COM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Hostname != "*.example.com" {
+		t.Fatalf("hostname = %q", d.Hostname)
+	}
+
+	for _, bad := range []string{"*", "*.", "*.*.example.com", "foo.*.example.com", "*example.com"} {
+		if _, err := s.AddDomain(a.ID, bad); err == nil {
+			t.Fatalf("%q accepted", bad)
+		}
+	}
+}

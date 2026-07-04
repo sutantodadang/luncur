@@ -11,6 +11,7 @@ import (
 
 	"github.com/sutantodadang/luncur/internal/acme"
 	"github.com/sutantodadang/luncur/internal/build"
+	"github.com/sutantodadang/luncur/internal/dns"
 	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/mail"
 	"github.com/sutantodadang/luncur/internal/secret"
@@ -60,6 +61,9 @@ type server struct {
 
 	// mailer builds the invite Mailer from settings; tests override it.
 	mailer func() (mail.Mailer, error)
+
+	// dnsProvider builds the DNS-01 provider from settings; tests override.
+	dnsProvider func() (dns.Provider, error)
 
 	certs *certManager
 
@@ -113,6 +117,7 @@ func newServer(d Deps) *server {
 		s.execer = d.Kube
 	}
 	s.mailer = s.smtpMailer
+	s.dnsProvider = s.dnsProviderFromSettings
 
 	if d.DataDir != "" {
 		src, err := build.NewSource(d.DataDir)

@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 
 	"github.com/sutantodadang/luncur/internal/acme/acmetest"
+	"github.com/sutantodadang/luncur/internal/dns"
 	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/store"
@@ -261,5 +263,83 @@ func TestCertSweepReadsBackCertManagerExpiry(t *testing.T) {
 	}
 	if want := notAfter.UTC().Truncate(time.Second); !gotExp.Equal(want) {
 		t.Fatalf("cert_expires_at = %v, want %v", gotExp, want)
+	}
+}
+
+// recordingServerProvider mirrors internal/acme's test recorder for use in
+// package server tests.
+type recordingServerProvider struct {
+	mu       sync.Mutex
+	presents map[string]string
+}
+
+func (p *recordingServerProvider) Present(ctx context.Context, fqdn, value string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.presents == nil {
+		p.presents = map[string]string{}
+	}
+	p.presents[fqdn] = value
+	return nil
+}
+
+func (p *recordingServerProvider) CleanUp(ctx context.Context, fqdn, value string) error {
+	return nil
+}
+
+func (p *recordingServerProvider) txt(fqdn string) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if v, ok := p.presents[fqdn]; ok {
+		return []string{v}
+	}
+	return nil
+}
+
+// TestIssueDNS01PickedForWildcard: with a dns provider configured, the
+// cert manager issues a wildcard via dns-01 — no challenge-Ingress writes,
+// TXT presented for the base domain, TLS secret stored.
+func TestIssueDNS01PickedForWildcard(t *testing.T) {
+	srv, st, patches, _ := certTestServer(t)
+	if err := st.SetSetting("dns_provider", "cloudflare"); err != nil {
+		t.Fatal(err)
+	}
+	p, a, d := seedDomain(t, st, "*.example.com")
+
+	prov := &recordingServerProvider{}
+	srv.dnsProvider = func() (dns.Provider, error) { return prov, nil }
+	srv.certs.lookupTXT = func(ctx context.Context, fqdn string) ([]string, error) {
+		return prov.txt(fqdn), nil // instant propagation
+	}
+
+	// chalHost 127.0.0.1:1 — any HTTP-01 fetch would fail; dns-01 mode
+	// validates via the recorded TXT instead.
+	fakeDir := acmetest.New(t, "127.0.0.1:1")
+	fakeDir.SetTXTLookup(prov.txt)
+	srv.certs.directoryURL = fakeDir.DirectoryURL()
+
+	srv.certs.issue(context.Background(), certJob{p, a, d})
+
+	list, err := st.ListDomains(a.ID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list = %+v err=%v", list, err)
+	}
+	got := list[0]
+	if got.CertStatus != "issued" {
+		t.Fatalf("cert_status = %q (error %q), want issued", got.CertStatus, got.CertError)
+	}
+
+	if v := prov.txt("_acme-challenge.example.com"); len(v) == 0 {
+		t.Fatalf("no TXT presented for the base domain; presents = %v", prov.presents)
+	}
+
+	for _, pt := range *patches {
+		if pt.resource == "ingresses" && pt.name == challengeIngress {
+			t.Fatalf("dns-01 issuance must not touch the challenge Ingress: %+v", pt)
+		}
+	}
+	if !hasPatch(*patches, "secrets", p.Namespace, certSecretName(a.Name, d.Hostname),
+		`"type":"kubernetes.io/tls"`) {
+		t.Fatalf("no applied TLS secret found in patches: %+v", *patches)
 	}
 }

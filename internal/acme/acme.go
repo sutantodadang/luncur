@@ -1,5 +1,6 @@
 // Package acme issues TLS certificates via RFC 8555 (Let's Encrypt) using
-// HTTP-01 challenges served by luncur itself.
+// HTTP-01 challenges served by luncur itself, or DNS-01 challenges
+// published through a dns.Provider.
 package acme
 
 import (
@@ -61,12 +62,40 @@ func (c *Challenges) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, keyAuth)
 }
 
+// Solver answers one ACME challenge type. Setup publishes the challenge
+// response and blocks until it is servable; cleanup removes it.
+type Solver interface {
+	Type() string // "http-01" or "dns-01"
+	Setup(ctx context.Context, domain, token, keyAuth string) (cleanup func(), err error)
+}
+
+// HTTP01Solver serves challenges from the in-process Challenges store —
+// the default solver, preserving the pre-Solver behavior.
+type HTTP01Solver struct{ Challenges *Challenges }
+
+func (s HTTP01Solver) Type() string { return "http-01" }
+
+func (s HTTP01Solver) Setup(ctx context.Context, domain, token, keyAuth string) (func(), error) {
+	s.Challenges.Put(token, keyAuth)
+	return func() { s.Challenges.Delete(token) }, nil
+}
+
 // Issuer drives one ACME account.
 type Issuer struct {
 	DirectoryURL string
 	AccountKey   *ecdsa.PrivateKey
 	Email        string
 	Challenges   *Challenges
+	Solver       Solver // nil = HTTP-01 backed by Challenges
+}
+
+// solver returns the configured Solver, defaulting to HTTP-01 backed by
+// i.Challenges.
+func (i *Issuer) solver() Solver {
+	if i.Solver != nil {
+		return i.Solver
+	}
+	return HTTP01Solver{Challenges: i.Challenges}
 }
 
 func GenerateAccountKey() (*ecdsa.PrivateKey, error) {
@@ -120,22 +149,29 @@ func (i *Issuer) Issue(ctx context.Context, domain string) (certPEM, keyPEM []by
 		if z.Status == xacme.StatusValid {
 			continue
 		}
+		solver := i.solver()
 		var chal *xacme.Challenge
 		for _, c := range z.Challenges {
-			if c.Type == "http-01" {
+			if c.Type == solver.Type() {
 				chal = c
 				break
 			}
 		}
 		if chal == nil {
-			return nil, nil, time.Time{}, fmt.Errorf("no http-01 challenge offered for %s", domain)
+			return nil, nil, time.Time{}, fmt.Errorf("no %s challenge offered for %s", solver.Type(), domain)
 		}
+		// HTTP01ChallengeResponse returns the raw keyAuthorization
+		// (token.thumbprint) — the input both challenge types derive their
+		// response from.
 		keyAuth, err := cl.HTTP01ChallengeResponse(chal.Token)
 		if err != nil {
 			return nil, nil, time.Time{}, err
 		}
-		i.Challenges.Put(chal.Token, keyAuth)
-		defer i.Challenges.Delete(chal.Token)
+		cleanup, err := solver.Setup(ctx, domain, chal.Token, keyAuth)
+		if err != nil {
+			return nil, nil, time.Time{}, fmt.Errorf("challenge setup: %w", err)
+		}
+		defer cleanup()
 
 		if _, err := cl.Accept(ctx, chal); err != nil {
 			return nil, nil, time.Time{}, fmt.Errorf("acme accept: %w", err)

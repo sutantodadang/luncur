@@ -44,13 +44,27 @@ var settableKeys = map[string]func(string) bool{
 	"smtp_user": func(v string) bool { return v != "" },
 	"smtp_pass": func(v string) bool { return v != "" },
 	"smtp_from": func(v string) bool { return v != "" },
+	"dns_provider": func(v string) bool {
+		return v == "cloudflare" || v == "route53" || v == "rfc2136" || v == "none"
+	},
+	"dns_cloudflare_token":    func(v string) bool { return v != "" },
+	"dns_route53_access_key":  func(v string) bool { return v != "" },
+	"dns_route53_secret_key":  func(v string) bool { return v != "" },
+	"dns_route53_region":      func(v string) bool { return v != "" },
+	"dns_rfc2136_server":      func(v string) bool { return v != "" },
+	"dns_rfc2136_tsig_name":   func(v string) bool { return v != "" },
+	"dns_rfc2136_tsig_secret": func(v string) bool { return v != "" },
+	"dns_rfc2136_tsig_algo":   func(v string) bool { return v != "" },
 }
 
 // sealedKeys are write-only secrets: sealed at rest with the install
 // sealer, and GET returns "(set)" instead of the value.
 var sealedKeys = map[string]bool{
-	"backup_s3_secret_key": true,
-	"smtp_pass":            true,
+	"backup_s3_secret_key":    true,
+	"smtp_pass":               true,
+	"dns_cloudflare_token":    true,
+	"dns_route53_secret_key":  true,
+	"dns_rfc2136_tsig_secret": true,
 }
 
 func (s *server) handleGetSetting(w http.ResponseWriter, r *http.Request, _ store.User) {

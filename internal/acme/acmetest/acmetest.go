@@ -18,6 +18,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,13 +39,21 @@ type Server struct {
 	authzOK   bool
 	certDER   []byte
 	orderDone bool
+
+	txtLookup func(fqdn string) []string // non-nil => offer dns-01
+	domain    string                     // identifier from the order request
 }
+
+// SetTXTLookup switches the fake to dns-01: authorizations offer a dns-01
+// challenge, validated by checking lookup("_acme-challenge.<domain>")
+// returns at least one TXT value.
+func (f *Server) SetTXTLookup(lookup func(fqdn string) []string) { f.txtLookup = lookup }
 
 // New starts a fake ACME directory server. chalHost is the host:port
 // serving the HTTP-01 challenge response (an acme.Challenges-backed
 // server) — the fake validates the challenge by actually fetching it.
 func New(t *testing.T, chalHost string) *Server {
-	f := &Server{t: t, mux: http.NewServeMux(), chalHost: chalHost}
+	f := &Server{t: t, mux: http.NewServeMux(), chalHost: chalHost, domain: "www.example.com"}
 	f.srv = httptest.NewServer(f.withNonce(f.mux))
 	t.Cleanup(f.srv.Close)
 
@@ -79,6 +88,17 @@ func New(t *testing.T, chalHost string) *Server {
 		fmt.Fprint(w, `{"status":"valid"}`)
 	})
 	f.mux.HandleFunc("/order", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Identifiers []struct {
+				Value string `json:"value"`
+			} `json:"identifiers"`
+		}
+		if b := jwsPayload(t, r); b != nil {
+			_ = json.Unmarshal(b, &req)
+		}
+		if len(req.Identifiers) > 0 && req.Identifiers[0].Value != "" {
+			f.domain = req.Identifiers[0].Value
+		}
 		w.Header().Set("Location", u+"/order/1")
 		w.WriteHeader(http.StatusCreated)
 		f.writeOrder(w)
@@ -91,16 +111,33 @@ func New(t *testing.T, chalHost string) *Server {
 		if f.authzOK {
 			status = "valid"
 		}
+		chalType := "http-01"
+		if f.txtLookup != nil {
+			chalType = "dns-01"
+		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"status":     status,
-			"identifier": map[string]string{"type": "dns", "value": "www.example.com"},
+			"identifier": map[string]string{"type": "dns", "value": strings.TrimPrefix(f.domain, "*.")},
 			"challenges": []map[string]string{{
-				"type": "http-01", "url": u + "/chal/1", "token": "tok-e2e", "status": status,
+				"type": chalType, "url": u + "/chal/1", "token": "tok-e2e", "status": status,
 			}},
 		})
 	})
 	f.mux.HandleFunc("/chal/1", func(w http.ResponseWriter, r *http.Request) {
-		// "Validate" by fetching the token from the challenge server.
+		if f.txtLookup != nil {
+			// DNS-01 mode: "validate" by checking a TXT record was
+			// presented for the challenge name.
+			fqdn := "_acme-challenge." + strings.TrimPrefix(f.domain, "*.")
+			if len(f.txtLookup(fqdn)) == 0 {
+				http.Error(w, `{"status":"invalid"}`, http.StatusOK)
+				return
+			}
+			f.authzOK = true
+			fmt.Fprint(w, `{"status":"valid"}`)
+			return
+		}
+		// HTTP-01 mode: "validate" by fetching the token from the
+		// challenge server.
 		resp, err := http.Get("http://" + f.chalHost + acme.ChallengePath + "tok-e2e")
 		if err != nil || resp.StatusCode != 200 {
 			http.Error(w, `{"status":"invalid"}`, http.StatusOK)
