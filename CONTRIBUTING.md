@@ -51,12 +51,6 @@ go run ./cmd/luncur serve --db luncur.db --listen :8080 \
 | `internal/render` | app manifests (Deployment/Service/Ingress) |
 | `internal/acme`, `internal/dns` | TLS issuance (HTTP-01 + DNS-01) |
 | `internal/kube`, `internal/build` | cluster client, build pipeline |
-| `docs/superpowers/specs` | phase design docs — the "why" behind features |
-| `docs/superpowers/plans` | per-feature implementation plans |
-
-Every shipped feature has a design spec and an implementation plan in
-`docs/superpowers/` — reading the relevant one is the fastest way to
-understand a subsystem before changing it.
 
 ## Licensing of contributions
 

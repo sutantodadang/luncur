@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub Release
+  packages: write # push the server image to ghcr.io
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./... && go vet ./... && go test ./...
+
+  binaries:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # CGO_ENABLED=0 static binaries; version stamped into
+      # internal/cli.version so `luncur version` and the default
+      # `luncur up --image` tag (ghcr.io/...:<version>) match this tag.
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 \
+              go build -trimpath \
+                -ldflags "-s -w -X github.com/sutantodadang/luncur/internal/cli.version=${GITHUB_REF_NAME}" \
+                -o "dist/luncur-${target%/*}-${target#*/}" ./cmd/luncur
+          done
+          (cd dist && sha256sum luncur-* > checksums.txt)
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/luncur-*
+            dist/checksums.txt
+          generate_release_notes: true
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # `luncur up` defaults to ghcr.io/sutantodadang/luncur:<version>
+      # where <version> is the v-prefixed tag — push exactly that, plus
+      # :latest for the curl-installer path in the README.
+      - name: Build and push server image
+        run: |
+          IMG=ghcr.io/${{ github.repository }}
+          docker build -t "$IMG:${GITHUB_REF_NAME}" -t "$IMG:latest" .
+          docker push "$IMG:${GITHUB_REF_NAME}"
+          docker push "$IMG:latest"
