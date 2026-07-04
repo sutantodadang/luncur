@@ -66,6 +66,11 @@ luncur token revoke <id>    # revoke a token — if it's the browser's own
                              # session cookie, that login is logged out too
 ```
 
+The web UI mirrors this: every user has a `/ui/tokens` page (nav →
+"tokens") listing their own tokens with per-row revoke buttons. The
+browser session is the row named `session`; revoking it logs that browser
+out.
+
 **Projects & apps:**
 ```sh
 luncur project create myproj
@@ -334,29 +339,45 @@ before.
 backup can unseal your env vars and addon credentials. The S3 bucket is
 the trust boundary; scope its access accordingly.
 
-### Restore runbook
+### Restoring
 
-Restore is deliberately a documented procedure, not a command:
+`luncur restore` automates the DB/key half; addon data stays guided:
 
-1. Provision the new VPS: `luncur up` (fresh install, any admin password —
-   it will be replaced by the restored DB).
+```sh
+# on the target host, with the server scaled down
+luncur restore /path/to/luncur-YYYYMMDD-HHMMSS.tar.gz --data-dir <data-dir> [--force]
+
+# or straight from the backup bucket
+luncur restore <prefix>/luncur-....tar.gz --s3-endpoint https://<s3> \
+  --s3-bucket my-backups --s3-access-key ... --s3-secret-key ... --data-dir <data-dir>
+```
+
+It validates the archive's `manifest.json` before touching anything and
+refuses a data dir whose DB already has projects unless `--force` — which
+first copies the current `luncur.db`/`luncur.key` into
+`pre-restore-<timestamp>/` inside the data dir. On success it extracts
+`luncur.db` and `luncur.key` and prints the remaining guided steps.
+
+Full procedure on a fresh VPS:
+
+1. Provision: `luncur up` (fresh install, any admin password — it will be
+   replaced by the restored DB).
 2. Stop the server so SQLite is quiescent:
    `kubectl -n luncur-system scale deploy/luncur --replicas=0`.
-3. Copy the backup archive onto the node and untar it. The data PVC is a
+3. Run `luncur restore` against the data PVC's path. The PVC is a
    `local-path` volume on the node — find it with
    `kubectl -n luncur-system get pvc luncur-data -o jsonpath='{.spec.volumeName}'`
    and look under `/var/lib/rancher/k3s/storage/<volume>/`.
-4. Replace `luncur.db` and `luncur.key` on the PVC with the archive's
-   copies.
-5. Start the server: `kubectl -n luncur-system scale deploy/luncur --replicas=1`,
+4. Start the server: `kubectl -n luncur-system scale deploy/luncur --replicas=1`,
    then `luncur login` with the restored credentials.
-6. Re-create each addon (`luncur addon create ...` with the same names) so
-   the StatefulSets exist, then restore data into them:
+5. Re-create each addon (`luncur addon create ...` with the same names) so
+   the StatefulSets exist, then restore data into them (the restore
+   command prints these same steps for the dumps it found):
    - Postgres: `kubectl -n <project-ns> exec -i addon-<name>-0 -- sh -c
      'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean' < addons/<project>-<name>.pgdump`
    - Redis: scale the addon StatefulSet to 0, copy the `.rdb` onto its PVC
      as `dump.rdb`, scale back to 1.
-7. Redeploy apps (`luncur deploy` / `git push`) and verify with
+6. Redeploy apps (`luncur deploy` / `git push`) and verify with
    `luncur status`.
 
 ## Ejecting an app

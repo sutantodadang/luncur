@@ -30,6 +30,8 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/users/invite", s.uiPage(s.handleUIInviteCreate))
 	mux.HandleFunc("POST /ui/users/invite/revoke", s.uiPage(s.handleUIInviteRevoke))
 	mux.HandleFunc("POST /ui/users/delete", s.uiPage(s.handleUIUserDelete))
+	mux.HandleFunc("GET /ui/tokens", s.uiPage(s.handleUITokens))
+	mux.HandleFunc("POST /ui/tokens/revoke", s.uiPage(s.handleUITokenRevoke))
 	mux.HandleFunc("GET /ui/", s.uiPage(s.handleUIProjects))
 	mux.HandleFunc("GET /ui/projects/{project}", s.uiPage(s.handleUIApps))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}", s.uiPage(s.handleUIApp))
@@ -879,6 +881,41 @@ func (s *server) handleUIUsers(w http.ResponseWriter, r *http.Request, u store.U
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 		"MailNote": mailNote,
 	})
+}
+
+// handleUITokens lists the caller's own tokens — the UI twin of
+// GET /v1/tokens. The web session rides the same table (name "session").
+func (s *server) handleUITokens(w http.ResponseWriter, r *http.Request, u store.User) {
+	tokens, err := s.st.ListTokens(u.ID)
+	if err != nil {
+		log.Printf("ui tokens: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.renderPage(w, "tokens.html", map[string]any{
+		"User": u, "Tokens": tokens,
+		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
+	})
+}
+
+// handleUITokenRevoke revokes one of the caller's tokens. Revoking the
+// current session's token logs the browser out on the next request.
+func (s *server) handleUITokenRevoke(w http.ResponseWriter, r *http.Request, u store.User) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	id, err := strconv.ParseInt(r.PostFormValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid token id", http.StatusBadRequest)
+		return
+	}
+	if err := s.st.RevokeToken(u.ID, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+		log.Printf("ui revoke token: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/ui/tokens", http.StatusSeeOther)
 }
 
 func (s *server) handleUIInviteCreate(w http.ResponseWriter, r *http.Request, u store.User) {

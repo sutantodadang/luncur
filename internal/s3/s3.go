@@ -81,6 +81,26 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 	return c.send(ctx, http.MethodDelete, key, nil, 0)
 }
 
+// Get downloads one object. The caller must close the returned body. Error
+// responses (>=300) are drained and surfaced like send's.
+func (c *Client) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url(key), nil)
+	if err != nil {
+		return nil, err
+	}
+	sign(req, c.AccessKey, c.SecretKey, c.region(), c.now().UTC())
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		resp.Body.Close()
+		return nil, fmt.Errorf("s3 GET %s: %d %s", key, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return resp.Body, nil
+}
+
 func hmacSHA256(key, data []byte) []byte {
 	h := hmac.New(sha256.New, key)
 	h.Write(data)
