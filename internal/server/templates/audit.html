@@ -1,0 +1,10 @@
+{{define "audit.html"}}
+{{template "head" .}}{{template "nav" .}}
+<h1>Audit log</h1>
+<table><tr><th>Time</th><th>User</th><th>Action</th><th>Target</th></tr>
+{{range .Entries}}<tr>
+  <td>{{.CreatedAt}}</td><td>{{.UserEmail}}</td><td>{{.Action}}</td><td>{{.Target}}</td>
+</tr>{{end}}
+</table>
+{{template "foot" .}}
+{{end}}

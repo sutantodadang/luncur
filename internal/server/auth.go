@@ -34,6 +34,10 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	if info := auditFrom(r.Context()); info != nil {
+		info.Email = u.Email
+		info.Pattern = "POST /v1/login"
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"token": tok})
 }
 
@@ -55,6 +59,10 @@ func (s *server) authed(next func(http.ResponseWriter, *http.Request, store.User
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid token")
 			return
+		}
+		if info := auditFrom(r.Context()); info != nil {
+			info.Email = u.Email
+			info.Pattern = r.Pattern
 		}
 		next(w, r, u)
 	}

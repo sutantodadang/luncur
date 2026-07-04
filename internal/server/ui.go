@@ -27,6 +27,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/register", s.handleUIRegisterPage)
 	mux.HandleFunc("POST /ui/register", s.handleUIRegister)
 	mux.HandleFunc("GET /ui/users", s.uiPage(s.handleUIUsers))
+	mux.HandleFunc("GET /ui/audit", s.uiPage(s.handleUIAudit))
 	mux.HandleFunc("POST /ui/users/invite", s.uiPage(s.handleUIInviteCreate))
 	mux.HandleFunc("POST /ui/users/invite/revoke", s.uiPage(s.handleUIInviteRevoke))
 	mux.HandleFunc("POST /ui/users/delete", s.uiPage(s.handleUIUserDelete))
@@ -85,6 +86,10 @@ func (s *server) uiPage(next func(http.ResponseWriter, *http.Request, store.User
 		}
 		if r.Method == http.MethodPost && !s.checkCSRF(w, r) {
 			return
+		}
+		if info := auditFrom(r.Context()); info != nil {
+			info.Email = u.Email
+			info.Pattern = r.Pattern
 		}
 		next(w, r, u)
 	}

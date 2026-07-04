@@ -782,3 +782,37 @@ func (c *Client) RegistryGC() (RegistryGCReport, error) {
 	err := c.do("POST", "/v1/registry/gc", nil, &out)
 	return out, err
 }
+
+// AuditEntry is one recorded mutating request, as returned by GET /v1/audit.
+type AuditEntry struct {
+	ID        int64  `json:"id"`
+	CreatedAt string `json:"created_at"`
+	UserEmail string `json:"user_email"`
+	Action    string `json:"action"`
+	Target    string `json:"target"`
+}
+
+// AuditList fetches the audit log (admin only), newest first. limit <= 0
+// leaves it unset (the server defaults/caps it); user/contains filter by
+// exact email and by substring match respectively, both optional.
+func (c *Client) AuditList(limit int, user, contains string) ([]AuditEntry, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if user != "" {
+		q.Set("user", user)
+	}
+	if contains != "" {
+		q.Set("contains", contains)
+	}
+	path := "/v1/audit"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out struct {
+		Entries []AuditEntry `json:"entries"`
+	}
+	err := c.do("GET", path, nil, &out)
+	return out.Entries, err
+}

@@ -49,6 +49,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(backupCmd())
 	root.AddCommand(restoreCmd())
 	root.AddCommand(registryCmd())
+	root.AddCommand(auditCmd())
 	return root
 }
 
