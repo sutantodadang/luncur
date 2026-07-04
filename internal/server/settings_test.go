@@ -190,3 +190,93 @@ func TestSettingsBackupS3SecretKey(t *testing.T) {
 		t.Fatalf("raw setting = %q, want sealed: prefix", raw)
 	}
 }
+
+// TestSettingsSMTPKeys: plain smtp_* keys round-trip; smtp_port must be a
+// valid port number.
+func TestSettingsSMTPKeys(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/smtp_host", admin, `{"value":"mail.example.com"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("put smtp_host: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/smtp_port", admin, `{"value":"70000"}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("put smtp_port 70000: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/smtp_port", admin, `{"value":"587"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("put smtp_port 587: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "GET", srv.URL+"/v1/settings/smtp_host", admin, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("get smtp_host: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.Value != "mail.example.com" {
+		t.Fatalf("smtp_host = %q, want mail.example.com", out.Value)
+	}
+}
+
+// TestSettingsSMTPPassSealed mirrors TestSettingsBackupS3SecretKey for
+// smtp_pass: 503 without a sealer; sealed at rest; GET masks to "(set)".
+func TestSettingsSMTPPassSealed(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/smtp_pass", admin, `{"value":"hunter2"}`)
+	if resp.StatusCode != 503 {
+		t.Fatalf("put without sealer: want 503, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st2 := newTestStore(t)
+	srv2 := newHTTPTest(t, Deps{Store: st2, Sealer: sealer})
+	admin2 := seedUserToken(t, st2, "root@b.co", "admin")
+
+	resp = doAuthed(t, "PUT", srv2.URL+"/v1/settings/smtp_pass", admin2, `{"value":"hunter2"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("put with sealer: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "GET", srv2.URL+"/v1/settings/smtp_pass", admin2, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("get: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.Value != "(set)" {
+		t.Fatalf("get value = %q, want (set)", out.Value)
+	}
+
+	raw, err := st2.GetSetting("smtp_pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(raw, "sealed:") {
+		t.Fatalf("raw smtp_pass = %q, want sealed: prefix", raw)
+	}
+}

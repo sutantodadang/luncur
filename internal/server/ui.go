@@ -866,9 +866,17 @@ func (s *server) handleUIUsers(w http.ResponseWriter, r *http.Request, u store.U
 	for _, i := range invites {
 		rows = append(rows, uiInviteRow{Token: i.Token, Role: i.Role, ExpiresAt: i.ExpiresAt, Used: i.UsedBy != 0})
 	}
+	var mailNote string
+	switch r.URL.Query().Get("mail") {
+	case "sent":
+		mailNote = "invite emailed"
+	case "failed":
+		mailNote = "invite created, but the email failed — copy the link below"
+	}
 	s.renderPage(w, "users.html", map[string]any{
 		"User": u, "Users": users, "Invites": rows, "Self": u.ID,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
+		"MailNote": mailNote,
 	})
 }
 
@@ -884,11 +892,21 @@ func (s *server) handleUIInviteCreate(w http.ResponseWriter, r *http.Request, u 
 	if role == "" {
 		role = "member"
 	}
-	if _, err := s.st.CreateInvite(role, u.ID); err != nil {
+	inv, err := s.st.CreateInvite(role, u.ID)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	http.Redirect(w, r, "/ui/users", http.StatusSeeOther)
+	dest := "/ui/users"
+	if email := strings.TrimSpace(r.PostFormValue("email")); email != "" {
+		if err := s.emailInvite(r, email, inv); err != nil {
+			log.Printf("ui invite email to %s: %v", email, err)
+			dest += "?mail=failed"
+		} else {
+			dest += "?mail=sent"
+		}
+	}
+	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
 func (s *server) handleUIInviteRevoke(w http.ResponseWriter, r *http.Request, u store.User) {

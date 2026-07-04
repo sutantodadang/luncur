@@ -19,7 +19,8 @@ func inviteJSON(i store.Invite) map[string]any {
 
 func (s *server) handleCreateInvite(w http.ResponseWriter, r *http.Request, u store.User) {
 	var req struct {
-		Role string `json:"role"`
+		Role  string `json:"role"`
+		Email string `json:"email"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -33,7 +34,17 @@ func (s *server) handleCreateInvite(w http.ResponseWriter, r *http.Request, u st
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, inviteJSON(inv))
+	out := inviteJSON(inv)
+	if req.Email != "" {
+		if err := s.emailInvite(r, req.Email, inv); err != nil {
+			log.Printf("invite email to %s: %v", req.Email, err)
+			out["emailed"] = false
+			out["warning"] = "email not sent: " + err.Error()
+		} else {
+			out["emailed"] = true
+		}
+	}
+	writeJSON(w, http.StatusCreated, out)
 }
 
 func (s *server) handleListInvites(w http.ResponseWriter, r *http.Request, _ store.User) {
