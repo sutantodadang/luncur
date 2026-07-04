@@ -398,6 +398,55 @@ func TestInviteCreateEmailWarning(t *testing.T) {
 	}
 }
 
+// TestAddonUpgradeCommand: testEnv has no kube, so the server answers 503
+// kubernetes_unavailable — proves the CLI wiring reaches the right route.
+func TestAddonUpgradeCommand(t *testing.T) {
+	srv := testEnv(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "p"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := run(t, "addon", "upgrade", "pg1", "--project", "p", "--version", "17")
+	if err == nil || !strings.Contains(err.Error(), "kubernetes") {
+		t.Fatalf("want kubernetes error, got %v", err)
+	}
+}
+
+// TestAppAdoptCommand: eject then adopt round-trips through the CLI; no
+// kube in testEnv means adopt just clears the flag (sync is skipped).
+func TestAppAdoptCommand(t *testing.T) {
+	srv := testEnv(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "app", "create", "web", "--project", "p", "--port", "8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Adopt before eject -> not_ejected error.
+	_, err := run(t, "app", "adopt", "web", "--project", "p")
+	if err == nil || !strings.Contains(err.Error(), "not ejected") {
+		t.Fatalf("adopt non-ejected: want not-ejected error, got %v", err)
+	}
+
+	if out, err := run(t, "app", "eject", "web", "--project", "p", "--yes"); err != nil {
+		t.Fatalf("eject: %v (%s)", err, out)
+	}
+	out, err := run(t, "app", "adopt", "web", "--project", "p")
+	if err != nil {
+		t.Fatalf("adopt: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "adopted web") {
+		t.Fatalf("adopt output: %s", out)
+	}
+}
+
 // TestAddonCommands exercises the CLI wiring for addon commands. testEnv has
 // no kube, so provisioning surfaces the server's kubernetes_unavailable
 // error — the same honest, no-cluster-needed check other kube-dependent

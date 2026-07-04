@@ -12,6 +12,10 @@
 
 {{if .App.Ejected}}
 <p>This app is ejected — luncur no longer manages it.</p>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/adopt">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit">adopt — luncur manages it again</button>
+</form>
 {{else}}
 <h2>Scale</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/scale">

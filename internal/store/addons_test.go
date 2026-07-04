@@ -103,3 +103,30 @@ func TestAllAddons(t *testing.T) {
 		t.Fatalf("all addons = %+v", all)
 	}
 }
+
+func TestSetAddonVersion(t *testing.T) {
+	s := openTest(t)
+	p, err := s.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.CreateAddon(p.ID, "postgres", "pg1", "16", 1, []byte("creds"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetAddonVersion(a.ID, "17"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetAddon(p.ID, "pg1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != "17" {
+		t.Fatalf("version = %q, want 17", got.Version)
+	}
+
+	if err := s.SetAddonVersion(99999, "17"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+}

@@ -145,10 +145,22 @@ func (s *Store) DeleteApp(id int64) error {
 	return nil
 }
 
-// SetAppEjected one-way marks an app as ejected from luncur's management.
-// There is no un-eject setter.
+// SetAppEjected marks an app as ejected from luncur's management.
+// SetAppAdopted reverses it.
 func (s *Store) SetAppEjected(id int64) error {
 	res, err := s.db.Exec(`UPDATE apps SET ejected = 1 WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetAppAdopted clears the ejected flag: luncur manages the app again.
+func (s *Store) SetAppAdopted(id int64) error {
+	res, err := s.db.Exec(`UPDATE apps SET ejected = 0 WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}

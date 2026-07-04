@@ -244,10 +244,17 @@ luncur addon attach db1 myapp --project myproj                     # attach an e
 luncur addon detach db1 myapp --project myproj
 
 luncur addon list --project myproj                                 # NAME, TYPE, VERSION, READY, ATTACHED
+luncur addon upgrade db1 --project myproj --version 17              # in-place, rolling restart; PVC untouched
 luncur addon remove db1 --project myproj                            # 409 if still attached
 luncur addon remove db1 --project myproj --force                    # remove despite attachments
 luncur addon remove db1 --project myproj --force --keep-data        # remove but keep the PVC
 ```
+
+`addon upgrade` swaps the StatefulSet's image tag and SSA-applies it — a
+rolling restart on the same PVC. Every upgrade response carries the
+warning *"major version DB upgrades may require manual migration — take a
+backup first."*: luncur does not run `pg_upgrade` or any engine-level data
+migration.
 
 Addons are project-level Postgres/Redis instances (a StatefulSet + PVC +
 headless Service + credentials Secret, rendered the same way apps are) that
@@ -356,10 +363,11 @@ Restore is deliberately a documented procedure, not a command:
 
 ```sh
 luncur app eject myapp --project myproj [--yes]
+luncur app adopt myapp --project myproj    # reverse it later
 ```
 
-Ejecting detaches an app from luncur's management, one-way — there is no
-un-eject. luncur renders the app's final manifest (current overrides plus
+Ejecting detaches an app from luncur's management (reversible via
+`app adopt`, below). luncur renders the app's final manifest (current overrides plus
 its latest image), prints the YAML to stdout, and archives a copy under
 `data/ejected/<project>-<app>.yaml` on the server. From then on every
 mutation — deploy, scale, env, domains, overrides, rollback, addon
@@ -372,6 +380,12 @@ luncur's own records (DB rows) only, leaving the running objects in place.
 Ejected apps are marked `(ejected)` in `luncur app list` and with an
 "ejected" badge in the web UI, which also hides the now-inert
 scale/deploy/env/domains/rollback/edit forms in favor of a one-line note.
+
+`luncur app adopt` reverses eject: it clears the ejected flag and
+re-applies luncur's rendered state onto the running objects (reclaiming
+`fieldManager=luncur`). Any manual drift made to those objects while
+ejected is overwritten. The web UI's ejected note carries an adopt button
+that does the same; after adopting, the normal management UI returns.
 
 Without `--yes`, `app eject` asks you to type the app's name back to
 confirm before doing anything irreversible.

@@ -110,6 +110,6 @@ func appCmd() *cobra.Command {
 	raw.Flags().StringVar(&rawProject, "project", "", "project name")
 	raw.MarkFlagRequired("project")
 
-	cmd.AddCommand(create, list, info, raw, ejectCmd())
+	cmd.AddCommand(create, list, info, raw, ejectCmd(), adoptCmd())
 	return cmd
 }

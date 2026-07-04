@@ -155,6 +155,32 @@ func addonCmd() *cobra.Command {
 	remove.Flags().BoolVar(&removeForce, "force", false, "remove even if attached to apps")
 	remove.Flags().BoolVar(&removeKeepData, "keep-data", false, "keep the underlying PVC data")
 
-	cmd.AddCommand(create, add, attach, detach, list, remove)
+	var upgradeProject, upgradeVersion string
+	upgrade := &cobra.Command{
+		Use:   "upgrade <name>",
+		Short: "Upgrade an addon in place to a new version",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			a, err := c.UpgradeAddon(upgradeProject, args[0], upgradeVersion)
+			if err != nil {
+				return err
+			}
+			cmd.Printf("upgraded %s to %s\n", a.Name, a.Version)
+			if a.Warning != "" {
+				cmd.Printf("warning: %s\n", a.Warning)
+			}
+			return nil
+		},
+	}
+	upgrade.Flags().StringVar(&upgradeProject, "project", "", "project name")
+	upgrade.MarkFlagRequired("project")
+	upgrade.Flags().StringVar(&upgradeVersion, "version", "", "target version (image tag)")
+	upgrade.MarkFlagRequired("version")
+
+	cmd.AddCommand(create, add, attach, detach, list, remove, upgrade)
 	return cmd
 }

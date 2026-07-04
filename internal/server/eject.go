@@ -73,3 +73,37 @@ func (s *server) handleEjectApp(w http.ResponseWriter, r *http.Request, u store.
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"yaml": string(y), "saved_to": saved})
 }
+
+// handleAdoptApp reverses eject: clears the flag and re-applies luncur's
+// rendered state onto the still-running objects, reclaiming
+// fieldManager=luncur (and overwriting any drift — documented behavior).
+func (s *server) handleAdoptApp(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	if !ok {
+		return
+	}
+	if !a.Ejected {
+		writeError(w, http.StatusConflict, "not_ejected", "app is not ejected")
+		return
+	}
+
+	if err := s.st.SetAppAdopted(a.ID); err != nil {
+		log.Printf("adopt %s: %v", a.Name, err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	a.Ejected = false
+
+	out := map[string]any{"adopted": true}
+	if s.kube != nil {
+		if err := s.syncApp(r.Context(), p, a); err != nil {
+			log.Printf("adopt %s: sync: %v", a.Name, err)
+			out["warning"] = "adopted, but re-apply failed: " + err.Error()
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}

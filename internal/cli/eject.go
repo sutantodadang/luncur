@@ -47,3 +47,32 @@ func ejectCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the interactive confirmation")
 	return cmd
 }
+
+// adoptCmd is `app adopt`: reverses eject — luncur reclaims management of
+// the app and re-applies its rendered state (winning any manual drift).
+func adoptCmd() *cobra.Command {
+	var project string
+	cmd := &cobra.Command{
+		Use:   "adopt <name>",
+		Short: "Re-adopt an ejected app under luncur's management",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			warning, err := c.AdoptApp(project, args[0])
+			if err != nil {
+				return err
+			}
+			cmd.Printf("adopted %s — luncur manages it again\n", args[0])
+			if warning != "" {
+				cmd.Printf("warning: %s\n", warning)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&project, "project", "", "project name")
+	cmd.MarkFlagRequired("project")
+	return cmd
+}

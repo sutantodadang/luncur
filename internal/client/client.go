@@ -525,6 +525,16 @@ func (c *Client) DetachAddon(project, name, app string) error {
 		map[string]string{"app": app}, nil)
 }
 
+// UpgradeAddon re-renders an addon at a new version and applies it (a
+// rolling restart). The response carries the manual-migration warning.
+func (c *Client) UpgradeAddon(project, name, version string) (AddonInfo, error) {
+	var out AddonInfo
+	err := c.do("POST",
+		"/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/upgrade",
+		map[string]string{"version": version}, &out)
+	return out, err
+}
+
 func (c *Client) RemoveAddon(project, name string, force, keepData bool) error {
 	path := "/v1/projects/" + url.PathEscape(project) + "/addons/" + url.PathEscape(name)
 	q := url.Values{}
@@ -653,6 +663,18 @@ func (c *Client) EjectApp(project, app string) (yaml, savedTo string, err error)
 	}
 	err = c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/eject", nil, &out)
 	return out.YAML, out.SavedTo, err
+}
+
+// AdoptApp reverses eject: luncur reclaims management of project/app and
+// re-applies its rendered state. warning is non-empty when the flag was
+// cleared but the re-apply failed.
+func (c *Client) AdoptApp(project, app string) (string, error) {
+	var out struct {
+		Warning string `json:"warning"`
+	}
+	err := c.do("POST",
+		"/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/adopt", nil, &out)
+	return out.Warning, err
 }
 
 // RegistryGCReport is one registry GC sweep's result, as returned by POST

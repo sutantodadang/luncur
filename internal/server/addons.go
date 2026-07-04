@@ -447,3 +447,73 @@ func (s *server) handleDeleteAddon(w http.ResponseWriter, r *http.Request, u sto
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// addonUpgradeWarning rides every upgrade response: luncur only swaps the
+// image tag; it cannot run engine-level data migrations.
+const addonUpgradeWarning = "major version DB upgrades may require manual migration — take a backup first."
+
+// handleUpgradeAddon re-renders an addon's manifests at a new version and
+// SSA-applies them (rolling restart). The PVC and credentials are untouched.
+func (s *server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	if !s.requireKube(w) {
+		return
+	}
+	a, ok := s.requireAddon(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Version == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "version is required")
+		return
+	}
+
+	if err := s.st.SetAddonVersion(a.ID, req.Version); err != nil {
+		log.Printf("upgrade addon %s: %v", a.Name, err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	a.Version = req.Version
+
+	creds, err := s.unsealCreds(a)
+	if err != nil {
+		if errors.Is(err, errSealerUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", "sealer is not configured")
+			return
+		}
+		log.Printf("upgrade addon %s: creds: %v", a.Name, err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	objs, err := addon.Render(addon.Params{
+		Namespace: p.Namespace, Type: a.Type, Name: a.Name, Version: a.Version,
+		SizeGB: a.SizeGB, Creds: creds,
+	})
+	if err != nil {
+		log.Printf("upgrade addon %s: render: %v", a.Name, err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if err := s.kube.EnsureNamespace(r.Context(), p.Namespace); err != nil {
+		log.Printf("upgrade addon %s: namespace: %v", a.Name, err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if err := s.kube.Apply(r.Context(), p.Namespace, objs); err != nil {
+		log.Printf("upgrade addon %s: apply: %v", a.Name, err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name": a.Name, "type": a.Type, "version": a.Version,
+		"warning": addonUpgradeWarning,
+	})
+}
