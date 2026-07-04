@@ -177,3 +177,74 @@ func TestPushRefusesEjected(t *testing.T) {
 		t.Fatalf("Branch on ejected app = %v, want error containing \"ejected\"", err)
 	}
 }
+
+func TestAdoptFlow(t *testing.T) {
+	srv, st, actions, _ := ejectTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+
+	id := appID(t, st, "proj", "web")
+	if _, err := st.CreateDeployment(id, "live", "nginx:1", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Adopt before eject -> 409 not_ejected.
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/adopt", admin, "")
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("adopt non-ejected: want 409, got %d", resp.StatusCode)
+	}
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if env.Error.Code != "not_ejected" {
+		t.Fatalf("code = %q, want not_ejected", env.Error.Code)
+	}
+
+	// Eject, then adopt.
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/eject", admin, "").Body.Close()
+	*actions = nil
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/adopt", admin, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("adopt: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Adopted bool   `json:"adopted"`
+		Warning string `json:"warning"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !out.Adopted || out.Warning != "" {
+		t.Fatalf("adopt response = %+v", out)
+	}
+
+	// Flag cleared in the store.
+	a, err := st.GetApp(mustProjectID(t, st, "proj"), "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Ejected {
+		t.Fatal("app still ejected after adopt")
+	}
+
+	// The live state was re-applied (fieldManager reclaim).
+	applied := strings.Join(*actions, ",")
+	if !strings.Contains(applied, "deployments") {
+		t.Fatalf("no Deployment re-apply recorded, actions: %s", applied)
+	}
+
+	// Mutations work again: scale no longer 409s.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/scale", admin, `{"replicas":2}`)
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		t.Fatal("scale still 409s after adopt")
+	}
+}
