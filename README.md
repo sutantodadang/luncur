@@ -1,22 +1,139 @@
-# luncur
+<div align="center">
 
-Tiny self-hosted PaaS on K3s. One Go binary, SQLite, deploys as simple as
-Heroku — with an escape hatch to the real Kubernetes objects.
+# 🚀 luncur
 
-Status: Phase 3 complete (Plans I-L) — addons, metrics, backups, eject +
-registry GC, on top of Phase 2 (Plans E-H: git push deploys, custom domains
-+ TLS, rollback + hardening, invites + user admin + the web YAML editor)
-and Phase 1's PaaS core (Plans A-D). Working today:
+**Empty VPS → running PaaS in under 2 minutes.**
 
-## Install
+*Deploys as simple as Heroku, on hardware you own — one Go binary, SQLite,
+and real Kubernetes underneath, with an escape hatch when you outgrow it.*
+
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/sutantodadang/luncur?include_prereleases)](https://github.com/sutantodadang/luncur/releases)
+[![Sponsor](https://img.shields.io/badge/❤-Sponsor-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/sutantodadang)
+
+[Quickstart](#-quickstart) · [Features](#-features) · [How it works](#-how-it-works) · [Documentation](#-documentation) · [Roadmap](#-roadmap) · [Sponsor](#-sponsor-luncur)
+
+</div>
+
+---
+
+## Why luncur?
+
+You have a side project and a $5 VPS. Your choices today:
+
+- **A managed PaaS** — lovely DX, but the bill scales faster than your app,
+  and your data lives on someone else's computer.
+- **Raw Kubernetes** — yours forever, but now you maintain ingress
+  controllers, cert-manager, registries, and forty YAML files before your
+  first deploy.
+- **luncur** — `git push` deploys, automatic HTTPS, managed Postgres/Redis,
+  backups, a web panel… produced by **one Go binary and a SQLite file**,
+  running on K3s on your own box.
+
+The trick: luncur doesn't hide Kubernetes, it *renders* it. Every app is a
+plain Deployment/Service/Ingress you can inspect (`luncur app raw`), patch
+through a YAML editor that survives redeploys, or — when you outgrow the
+training wheels — **eject** and keep running without luncur in the loop.
+Changed your mind? **Adopt** it back. No lock-in in either direction.
+
+## ✨ Features
+
+| | |
+|---|---|
+| 🚢 **Deploy 3 ways** | `git push luncur main`, `luncur deploy` from local source (Nixpacks or Dockerfile, built in-cluster by BuildKit), or any pre-built image |
+| 🔒 **Automatic HTTPS** | Built-in ACME (Let's Encrypt) — HTTP-01 out of the box, **DNS-01 + wildcard certs** (`*.example.com`) via Cloudflare, Route53, or RFC2136/nsupdate |
+| 🐘 **Managed addons** | Postgres & Redis as StatefulSets: create, attach (`DATABASE_URL` injected), in-place version upgrades, per-addon logical dumps in every backup |
+| 💾 **Backups & restore** | One-command snapshot (SQLite + sealer key + addon dumps) to any S3-compatible bucket — stdlib SigV4 client, no SDK. `luncur restore` rebuilds a box from an archive |
+| 🖥️ **Web panel** | Server-rendered UI: deploys, live log streaming (SSE), scaling, env vars, domains, rollbacks, YAML overrides, user & token management — zero JS frameworks |
+| ⏪ **Instant rollback** | Redeploy any previous image in seconds, lineage tracked, from CLI or UI |
+| 👥 **Teams** | Projects with members, admin/member roles, single-use invite links (optionally emailed via SMTP), API tokens with self-service revoke |
+| 🪂 **The escape hatch** | `app eject` hands you the raw manifests and stops managing; `app adopt` reverses it. Your cluster, your call |
+| 📦 **One binary** | Server, CLI, installer, and restore tool are the same `luncur` executable. State is one SQLite file. Secrets sealed at rest (AES-256-GCM) |
+
+**Zero-bloat scorecard:** 1 Go module · SQLite (no DB server) · stdlib
+`html/template` UI (no Node, no bundler) · stdlib S3/SigV4/SMTP/DNS-01
+clients (no SDKs) · scoped ClusterRole (not cluster-admin) · every feature
+tested without a cluster or network.
+
+## ⚡ Quickstart
 
 On a fresh Linux VPS:
 
 ```sh
 curl -sfLo luncur https://github.com/sutantodadang/luncur/releases/latest/download/luncur-linux-amd64
 chmod +x luncur
-sudo ./luncur up
+sudo ./luncur up        # installs K3s + luncur, prints admin credentials (once — save them!)
 ```
+
+Deploy your first app from your laptop:
+
+```sh
+luncur login http://panel.<ip>.sslip.io
+luncur project create demo
+luncur app create web --project demo --port 8080
+
+luncur ssh-key add                                        # once per machine
+git remote add luncur ssh://git@<ip>:30022/demo/web.git   # once per repo
+git push luncur main                                      # 🚀 build streams into your push output
+```
+
+Your app is live at `http://web.<ip>.sslip.io` — no DNS setup needed
+(sslip.io resolves automatically). Add a real domain and HTTPS:
+
+```sh
+luncur domain add web www.example.com --project demo   # cert issues automatically
+```
+
+Re-running `sudo ./luncur up` is always safe: every step is
+skip-or-repair, so it doubles as upgrade and self-heal.
+
+## 🔍 How it works
+
+```text
+you                        your VPS (that's the whole footprint)
+────                       ─────────────────────────────────────────────
+git push ──────────────►   ┌─ K3s ────────────────────────────────────┐
+luncur CLI ────────────►   │  luncur server (1 binary + SQLite + PVC) │
+browser (web panel) ───►   │     │ renders manifests, SSA-applies     │
+                           │     ├─► BuildKit Job ─► embedded registry│
+                           │     ├─► your apps   Deployment/Svc/Ingress
+                           │     ├─► addons      Postgres/Redis (PVC) │
+                           │     └─► TLS         ACME HTTP-01/DNS-01  │
+                           └──────────────────────────────────────────┘
+```
+
+Everything luncur creates is a normal Kubernetes object applied with
+server-side apply (`fieldManager=luncur`). `kubectl` sees exactly what you
+see. Delete luncur and your apps keep running.
+
+## 📚 Documentation
+
+Everything below is the complete operator's manual — luncur has no
+separate docs site; this README is it.
+
+<details>
+<summary><b>Table of contents</b></summary>
+
+- [Install](#install)
+- [Auth, users & tokens](#auth-users--tokens)
+- [Projects & apps](#projects--apps)
+- [Deploying](#deploying)
+- [Web UI](#web-ui)
+- [Custom domains & TLS](#custom-domains--tls)
+- [Wildcard domains & DNS-01](#wildcard-domains--dns-01)
+- [Addons (Postgres/Redis)](#addons-postgresredis)
+- [Backups](#backups)
+- [Restoring](#restoring)
+- [Ejecting an app](#ejecting-an-app)
+- [Registry GC](#registry-gc)
+- [Build pipeline](#build-pipeline)
+- [Security](#security)
+- [Design notes](#design-notes)
+
+</details>
+
+### Install
 
 `luncur up` is a one-command installer: it installs K3s (pinned version),
 writes the containerd `registries.yaml` mirror for the in-cluster registry,
@@ -47,7 +164,8 @@ luncur serve --db luncur.db \
   --registry-host registry.luncur-system:5000
 ```
 
-**Auth:**
+### Auth, users & tokens
+
 ```sh
 luncur login http://localhost:8080
 luncur whoami
@@ -71,7 +189,8 @@ The web UI mirrors this: every user has a `/ui/tokens` page (nav →
 browser session is the row named `session`; revoking it logs that browser
 out.
 
-**Projects & apps:**
+### Projects & apps
+
 ```sh
 luncur project create myproj
 luncur project list
@@ -83,7 +202,9 @@ luncur app info myapp --project myproj
 luncur app raw myapp --project myproj
 ```
 
-**Deployment & scaling:**
+### Deploying
+
+**Image, scale, destroy:**
 ```sh
 luncur deploy myapp --project myproj --image my.registry/my/image:tag
 luncur scale myapp --project myproj --replicas 3
@@ -167,7 +288,7 @@ Live cpu/memory come from the cluster's `metrics-server` (K3s bundles it by
 default); if it's not installed or unreachable, `status` prints `metrics:
 unavailable` instead — the deploy count is always shown regardless.
 
-## Web UI
+### Web UI
 
 After `luncur up`, the panel is served at `http://panel.<ip>.sslip.io/ui/`
 (login with the admin credentials printed by `luncur up`, or any user added
@@ -194,7 +315,7 @@ the result as the same strategic-merge-patch override `luncur edit` writes
 immediately. Invalid YAML re-shows the editor with the error and your text
 intact, never discarding the edit.
 
-## Custom domains & TLS
+### Custom domains & TLS
 
 ```sh
 luncur domain add myapp www.example.com --project myproj
@@ -269,7 +390,7 @@ without a configured `dns_provider` is refused with a 400. `traefik` and
 Failures behave like HTTP-01: the domain shows `cert_status failed` with
 the message and the app keeps serving.
 
-## Addons (Postgres/Redis)
+### Addons (Postgres/Redis)
 
 ```sh
 luncur addon create postgres --project myproj                     # provision, unattached
@@ -319,7 +440,7 @@ The web UI mirrors all of this: each project page has an Addons table
 addons list (detach buttons) plus an attach form listing the project's
 addons.
 
-## Backups
+### Backups
 
 `luncur backup create` (admin) snapshots luncur's whole state into a
 tar.gz under `backups/` on the data PVC: a consistent SQLite snapshot
@@ -411,7 +532,7 @@ Full procedure on a fresh VPS:
 6. Redeploy apps (`luncur deploy` / `git push`) and verify with
    `luncur status`.
 
-## Ejecting an app
+### Ejecting an app
 
 ```sh
 luncur app eject myapp --project myproj [--yes]
@@ -442,7 +563,7 @@ that does the same; after adopting, the normal management UI returns.
 Without `--yes`, `app eject` asks you to type the app's name back to
 confirm before doing anything irreversible.
 
-## Registry GC
+### Registry GC
 
 ```sh
 luncur registry gc   # admin only
@@ -466,7 +587,7 @@ A sweep also runs automatically once a week. The registry container's
 system manifests, since the registry's HTTP API rejects manifest DELETEs
 outright without it.
 
-## Build Pipeline
+### Build pipeline
 
 When you run `luncur deploy` on a local source or git repository, the following happens: source is uploaded (tarball from local cwd or cloned from git URL) → a BuildKit Job runs in the `luncur-system` namespace, applying Nixpacks if no Dockerfile exists or using the Dockerfile if present → the resulting image is pushed to the in-cluster registry (default `registry.luncur-system:5000`) → app manifests are rendered and applied to Kubernetes → the app becomes live at `http://<app>.<ip>.sslip.io`. Build logs are streamed on demand via `luncur logs`.
 
@@ -475,7 +596,7 @@ When you run `luncur deploy` on a local source or git repository, the following 
 - `--builder-image` — OCI image for the build environment (default `luncur/builder:latest`); built by the release pipeline
 - `--registry-host` — in-cluster registry address (default `registry.luncur-system:5000`); K3s requires an insecure-registry entry for this host, written to `/etc/rancher/k3s/registries.yaml` by `luncur up`
 
-## Security
+### Security
 
 luncur's own access to the cluster is a scoped `ClusterRole` — namespaces,
 Deployments, Jobs, Ingresses, and the specific CRDs luncur touches
@@ -485,7 +606,15 @@ Deployments, Jobs, Ingresses, and the specific CRDs luncur touches
 deploy, rollback, login) carries a CSRF token: a `luncur_csrf` cookie
 mirrored in a hidden `_csrf` field, checked on every POST before it runs.
 
-## Approved deviations from the design spec
+Secrets never sit in plaintext: env vars, addon credentials, and sensitive
+settings (S3 secret key, SMTP password, DNS provider tokens) are sealed at
+rest with AES-256-GCM; the sealed settings are write-only through the API
+(reads show `(set)`).
+
+### Design notes
+
+<details>
+<summary>Deliberate deviations & implementation notes (click to expand)</summary>
 
 - Web UI uses stdlib `html/template` + one vanilla-JS `EventSource` block instead of templ + HTMX. Zero codegen, zero vendored JS; same server-rendered pages + SSE behavior.
 - In-cluster registry is reachable from containerd via a NodePort (30500) + `registries.yaml` mirror to `http://127.0.0.1:30500`, since containerd on the node cannot resolve cluster-DNS names like `registry.luncur-system`.
@@ -503,4 +632,78 @@ mirrored in a hidden `_csrf` field, checked on every POST before it runs.
 - Registry GC's "bytes reclaimed" figure is measured with `du -sk` inside the registry pod before/after `garbage-collect` (busybox `du`, KiB resolution) rather than precise blob accounting; the manifest-delete phase always runs and is counted accurately regardless, and when the exec phase itself fails (no kube, no pod, exec error) bytes reclaimed is reported as unknown (`-1`) rather than blocking the sweep.
 - RFC2136 DNS support shells out to `nsupdate` (bind-tools, in the release image); the TSIG secret rides the script on stdin, never argv (which would be visible in `ps`). It's a runtime binary, not a Go module — the no-new-dependencies rule is about Go modules (`git`, `pg_dump`, `nsupdate` are all selected on demand).
 
-Design docs: `docs/superpowers/specs/`. Plans: `docs/superpowers/plans/`.
+Design docs: [`docs/superpowers/specs/`](docs/superpowers/specs/) ·
+Implementation plans: [`docs/superpowers/plans/`](docs/superpowers/plans/) —
+every feature shipped with a written spec, a TDD implementation plan, and a
+full test suite that runs without a cluster or network.
+
+</details>
+
+## 🗺️ Roadmap
+
+**Shipped** (Phases 1–4 — every phase has a design spec + implementation plans in `docs/superpowers/`):
+
+- [x] One-command install on a fresh VPS (`luncur up`), safe to re-run
+- [x] Deploys: image, local source, git URL, `git push` over SSH
+- [x] In-cluster builds (BuildKit + Nixpacks/Dockerfile) + embedded registry with GC
+- [x] Web panel with live log streaming, YAML override editor, users/invites/tokens
+- [x] Custom domains, three TLS providers, wildcard certs via DNS-01 (Cloudflare/Route53/RFC2136)
+- [x] Postgres/Redis addons with in-place upgrades
+- [x] S3 backups (scheduled) + `luncur restore`
+- [x] Rollbacks, metrics, eject/adopt escape hatch
+
+**Exploring next** (sponsor input shapes the order — open an issue!):
+
+- [ ] More DNS providers (deSEC, Hetzner, DigitalOcean, …)
+- [ ] Automated addon-data restore (today: guided one-liners)
+- [ ] HTML invite/notification emails
+- [ ] Preview environments per branch
+- [ ] Multi-node K3s support
+- [ ] ARM builds & Raspberry Pi story
+
+## 💖 Sponsor luncur
+
+luncur is free, open source (AGPL-3.0), and built with care: **every feature ships
+with a written design spec, a reviewed implementation plan, and tests that
+run without a cluster** — 230+ of them. That rigor takes time, and time is
+the thing sponsorship buys.
+
+**What your sponsorship funds:**
+
+- 🧑‍💻 Dedicated development time on the roadmap above
+- 🖥️ Real-world test infrastructure (VPSes, domains, DNS zones for
+  wildcard-cert testing across providers)
+- 🩹 Fast security responses and dependable maintenance — the boring work
+  that keeps a self-hosted tool trustworthy
+
+**Who should sponsor:** if luncur replaced a PaaS bill for your side
+project, agency, or startup — consider sending a slice of the difference.
+One month of a hobby-dyno bill funds real features here.
+
+<div align="center">
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor_on_GitHub-❤-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/sutantodadang)
+
+⭐ **Can't sponsor? Star the repo** — it genuinely helps others find luncur.
+
+</div>
+
+## 🤝 Contributing
+
+Bug reports, feature discussions, and PRs welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the dev loop (spoiler: `go test
+./...`, no cluster needed) and the ground rules (one module, no new
+dependencies, TDD).
+
+## 📄 License
+
+[AGPL-3.0](LICENSE) © 2026 Dadang Sutanto
+
+luncur is genuinely open source — use it, self-host it, modify it, fork
+it. The AGPL asks one thing: if you run a **modified** luncur as a service
+for others, share those modifications back.
+
+**Need different terms?** For proprietary embedding, OEM redistribution,
+or offering luncur as a managed service without AGPL obligations, a
+separate **commercial license** is available from the copyright holder —
+open a GitHub issue or reach out directly.
