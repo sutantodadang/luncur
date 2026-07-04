@@ -44,6 +44,7 @@ Changed your mind? **Adopt** it back. No lock-in in either direction.
 | | |
 |---|---|
 | 🚢 **Deploy 3 ways** | `git push luncur main`, `luncur deploy` from local source (Nixpacks or Dockerfile, built in-cluster by BuildKit), or any pre-built image |
+| ⏱️ **App kinds** | `web` (Deployment+Service+Ingress), `worker` (Deployment only, no URL), and `cron` (Kubernetes CronJob, `Forbid` concurrency) — `luncur logs` streams all three |
 | 🔒 **Automatic HTTPS** | Built-in ACME (Let's Encrypt) — HTTP-01 out of the box, **DNS-01 + wildcard certs** (`*.example.com`) via Cloudflare, Route53, or RFC2136/nsupdate |
 | 🐘 **Managed addons** | Postgres & Redis as StatefulSets: create, attach (`DATABASE_URL` injected), in-place version upgrades, per-addon logical dumps in every backup |
 | 💾 **Backups & restore** | One-command snapshot (SQLite + sealer key + addon dumps) to any S3-compatible bucket — stdlib SigV4 client, no SDK. `luncur restore` rebuilds a box from an archive |
@@ -203,6 +204,19 @@ luncur app list --project myproj
 luncur app info myapp --project myproj
 luncur app raw myapp --project myproj
 ```
+
+**App kinds — web (default), worker, cron:**
+```sh
+luncur app create worker1 --project myproj --kind worker
+luncur app create nightly --project myproj --kind cron --schedule "0 3 * * *"
+```
+Workers get a Deployment with no Service/Ingress — no URL, no domains.
+Cron apps run as a Kubernetes CronJob (`concurrencyPolicy: Forbid`, so a slow
+run never overlaps the next trigger); the schedule is only checked for valid
+5-field cron syntax client- and server-side — Kubernetes evaluates it.
+`luncur logs` streams pod output for all three kinds; scaling replicas only
+applies to web/worker (cron scales cpu/memory only), and domains/health
+checks are web-only.
 
 ### Deploying
 
@@ -648,6 +662,9 @@ rest with AES-256-GCM; the sealed settings are write-only through the API
 - RFC2136 DNS support shells out to `nsupdate` (bind-tools, in the release image); the TSIG secret rides the script on stdin, never argv (which would be visible in `ps`). It's a runtime binary, not a Go module — the no-new-dependencies rule is about Go modules (`git`, `pg_dump`, `nsupdate` are all selected on demand).
 - Per-app CPU/memory limits set requests==limits (Guaranteed QoS) deliberately, rather than exposing separate requests/limits fields — the YAML override editor is the escape hatch for anyone who needs a split.
 - Health check probe timings (readiness period/threshold, liveness initial delay/period/threshold) are fixed, not configurable — the YAML override editor is the escape hatch for anyone who needs to tune them.
+- Cron schedules are validated as syntactically-correct 5-field cron expressions only (field count + per-position numeric bounds); Kubernetes' CronJob controller is what actually evaluates them at runtime.
+- CronJob history limits (`successfulJobsHistoryLimit`/`failedJobsHistoryLimit`: 3/3, `backoffLimit`: 2) are fixed, not configurable — same escape hatch as above.
+- `CronJob` joined `Deployment`/`Service`/`Ingress` as an overridable manifest kind — the YAML override editor works for cron apps too.
 
 Every feature shipped with a written spec, a TDD implementation plan, and
 a full test suite that runs without a cluster or network.
@@ -666,9 +683,11 @@ a full test suite that runs without a cluster or network.
 - [x] Postgres/Redis addons with in-place upgrades
 - [x] S3 backups (scheduled) + `luncur restore`
 - [x] Rollbacks, metrics, eject/adopt escape hatch
+- [x] App kinds: background workers and cron jobs (Kubernetes CronJob)
 
 **Exploring next** (sponsor input shapes the order — open an issue!):
 
+- [ ] Cron run history (last-run status), pause/suspend, manual "run now"
 - [ ] More DNS providers (deSEC, Hetzner, DigitalOcean, …)
 - [ ] Automated addon-data restore (today: guided one-liners)
 - [ ] HTML invite/notification emails

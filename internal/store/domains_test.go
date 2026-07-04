@@ -11,7 +11,7 @@ func TestDomainRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := s.CreateApp(p.ID, "web", 8080)
+	a, err := s.CreateApp(p.ID, "web", 8080, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestAddDomainWildcard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := s.CreateApp(p.ID, "web", 8080)
+	a, err := s.CreateApp(p.ID, "web", 8080, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}

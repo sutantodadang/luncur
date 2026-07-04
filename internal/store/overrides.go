@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 )
 
-var overridableKinds = map[string]bool{"Deployment": true, "Service": true, "Ingress": true}
+var overridableKinds = map[string]bool{"Deployment": true, "Service": true, "Ingress": true, "CronJob": true}
 
 // dangerousDeploymentKeys are pod-spec fields that let an override escape
 // the app's own namespace/pod boundary (host filesystem/network/PID/IPC
@@ -83,7 +83,7 @@ func collectKeys(v any) []string {
 
 func (s *Store) SetOverride(appID int64, kind, patchJSON string) error {
 	if !overridableKinds[kind] {
-		return validationErrorf("unsupported kind %q (Deployment, Service, or Ingress)", kind)
+		return validationErrorf("unsupported kind %q (Deployment, Service, Ingress, or CronJob)", kind)
 	}
 	var obj map[string]any
 	if err := json.Unmarshal([]byte(patchJSON), &obj); err != nil || obj == nil {

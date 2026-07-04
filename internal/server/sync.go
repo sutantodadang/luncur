@@ -69,36 +69,40 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 		}
 	}
 
-	domains, err := s.st.ListDomains(a.ID)
-	if err != nil {
-		return render.Rendered{}, fmt.Errorf("list domains: %w", err)
-	}
 	var extraHosts []string
 	var tls []netv1.IngressTLS
 	annotations := map[string]string{}
-	provider := s.certProviderName()
-	for _, d := range domains {
-		extraHosts = append(extraHosts, d.Hostname)
-		switch provider {
-		case "builtin":
-			if d.CertStatus == "issued" {
+	// Domains/TLS/cert-provider annotations only apply to web apps: worker
+	// and cron kinds render no Service/Ingress to attach them to.
+	if a.Kind == "web" {
+		domains, err := s.st.ListDomains(a.ID)
+		if err != nil {
+			return render.Rendered{}, fmt.Errorf("list domains: %w", err)
+		}
+		provider := s.certProviderName()
+		for _, d := range domains {
+			extraHosts = append(extraHosts, d.Hostname)
+			switch provider {
+			case "builtin":
+				if d.CertStatus == "issued" {
+					tls = append(tls, netv1.IngressTLS{
+						Hosts: []string{d.Hostname}, SecretName: certSecretName(a.Name, d.Hostname),
+					})
+				}
+			case "cert-manager":
 				tls = append(tls, netv1.IngressTLS{
 					Hosts: []string{d.Hostname}, SecretName: certSecretName(a.Name, d.Hostname),
 				})
 			}
-		case "cert-manager":
-			tls = append(tls, netv1.IngressTLS{
-				Hosts: []string{d.Hostname}, SecretName: certSecretName(a.Name, d.Hostname),
-			})
 		}
-	}
-	if len(domains) > 0 {
-		switch provider {
-		case "traefik":
-			annotations["traefik.ingress.kubernetes.io/router.tls"] = "true"
-			annotations["traefik.ingress.kubernetes.io/router.tls.certresolver"] = "le"
-		case "cert-manager":
-			annotations["cert-manager.io/cluster-issuer"] = "luncur-le"
+		if len(domains) > 0 {
+			switch provider {
+			case "traefik":
+				annotations["traefik.ingress.kubernetes.io/router.tls"] = "true"
+				annotations["traefik.ingress.kubernetes.io/router.tls.certresolver"] = "le"
+			case "cert-manager":
+				annotations["cert-manager.io/cluster-issuer"] = "luncur-le"
+			}
 		}
 	}
 	if len(annotations) == 0 {
@@ -112,6 +116,8 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 		Host:               hostFor(a.Name, s.externalIP),
 		Port:               int32(a.Port),
 		Replicas:           int32(a.Replicas),
+		Kind:               a.Kind,
+		Schedule:           a.Schedule,
 		CPUMilli:           a.CPUMilli,
 		MemoryMB:           a.MemoryMB,
 		HealthPath:         a.HealthPath,

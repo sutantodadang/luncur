@@ -49,7 +49,7 @@ func metricsTestServer(t *testing.T) (*httptestServer, *store.Store, store.Proje
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := st.CreateApp(p.ID, "web", 8080)
+	a, err := st.CreateApp(p.ID, "web", 8080, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}

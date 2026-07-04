@@ -2,14 +2,31 @@
 {{template "head" .}}{{template "nav" .}}
 <p><a href="/ui/">&larr; Projects</a></p>
 <h1>{{.Project.Name}}</h1>
-{{if not .Apps}}<p>No apps yet. Create one with <code>luncur app create</code>.</p>{{end}}
-<table><tr><th>App</th><th>Replicas</th><th>URL</th></tr>
+{{if not .Apps}}<p>No apps yet. Create one below or with <code>luncur app create</code>.</p>{{end}}
+<table><tr><th>App</th><th>Kind</th><th>Replicas</th><th>URL</th></tr>
 {{range .Apps}}<tr>
   <td><a href="/ui/projects/{{$.Project.Name}}/apps/{{.Name}}">{{.Name}}</a>{{if .Ejected}} (ejected){{end}}</td>
+  <td>{{.Kind}}</td>
   <td>{{.Replicas}}</td>
-  <td><a href="{{.URL}}">{{.URL}}</a></td>
+  <td>{{if .URL}}<a href="{{.URL}}">{{.URL}}</a>{{else}}-{{end}}</td>
 </tr>{{end}}
 </table>
+
+<h2>Create app</h2>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input name="name" placeholder="name" required>
+  <select name="kind">
+    <option value="web">web</option>
+    <option value="worker">worker</option>
+    <option value="cron">cron</option>
+  </select>
+  <input type="number" name="port" placeholder="port (web only)">
+  <input name="schedule" placeholder="schedule (cron only), e.g. 0 3 * * *">
+  <input name="git_url" placeholder="git URL (optional)">
+  <input name="git_branch" placeholder="branch (optional)">
+  <button type="submit">create app</button>
+</form>
 
 <h2>Addons</h2>
 {{if not .Addons}}<p>No addons yet.</p>{{end}}

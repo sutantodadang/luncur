@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS apps (
   cpu_milli     INTEGER NOT NULL DEFAULT 0,
   memory_mb     INTEGER NOT NULL DEFAULT 0,
   health_path   TEXT NOT NULL DEFAULT '',
+  kind          TEXT NOT NULL DEFAULT 'web',
+  schedule      TEXT NOT NULL DEFAULT '',
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, name)
 );

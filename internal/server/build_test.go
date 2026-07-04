@@ -62,7 +62,7 @@ func TestRunBuildSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := st.CreateApp(p.ID, "api", 8080)
+	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}

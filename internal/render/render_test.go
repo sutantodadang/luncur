@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -250,6 +251,191 @@ func TestRenderHealthPathUnsetMeansNoProbes(t *testing.T) {
 	raw := objByKind(t, r, "Deployment")
 	if strings.Contains(string(raw), "readinessProbe") || strings.Contains(string(raw), "livenessProbe") {
 		t.Fatalf("raw JSON should not contain probe keys:\n%s", raw)
+	}
+}
+
+func workerInput() Input {
+	return Input{
+		AppName:   "worker",
+		Namespace: "luncur-proj",
+		Image:     "registry.luncur-system:5000/worker:1",
+		Kind:      "worker",
+		Replicas:  2,
+	}
+}
+
+func cronInput() Input {
+	return Input{
+		AppName:   "nightly",
+		Namespace: "luncur-proj",
+		Image:     "registry.luncur-system:5000/nightly:1",
+		Kind:      "cron",
+		Schedule:  "0 3 * * *",
+	}
+}
+
+func TestRenderWorkerHasOnlyDeploymentNoPorts(t *testing.T) {
+	r := mustRender(t, workerInput(), nil)
+	if len(r.Objects) != 1 || r.Objects[0].Kind != "Deployment" {
+		t.Fatalf("want exactly one Deployment for worker, got %+v", r.Objects)
+	}
+	var d appsv1.Deployment
+	if err := json.Unmarshal(r.Objects[0].JSON, &d); err != nil {
+		t.Fatal(err)
+	}
+	c := d.Spec.Template.Spec.Containers[0]
+	if len(c.Ports) != 0 {
+		t.Fatalf("want no container ports for worker, got %+v", c.Ports)
+	}
+	if *d.Spec.Replicas != 2 {
+		t.Fatalf("replicas: %d", *d.Spec.Replicas)
+	}
+}
+
+func TestRenderWorkerWithEnvHasSecretAndEnvFrom(t *testing.T) {
+	r := mustRender(t, workerInput(), map[string]string{"K": "v"})
+	if len(r.Objects) != 2 {
+		t.Fatalf("want Secret+Deployment for worker with env, got %+v", r.Objects)
+	}
+	var d appsv1.Deployment
+	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+	c := d.Spec.Template.Spec.Containers[0]
+	if len(c.EnvFrom) != 1 || c.EnvFrom[0].SecretRef.Name != "worker-env" {
+		t.Fatalf("envFrom: %+v", c.EnvFrom)
+	}
+}
+
+func TestRenderCronJob(t *testing.T) {
+	r := mustRender(t, cronInput(), nil)
+	if len(r.Objects) != 1 || r.Objects[0].Kind != "CronJob" {
+		t.Fatalf("want exactly one CronJob, got %+v", r.Objects)
+	}
+	var cj batchv1.CronJob
+	if err := json.Unmarshal(r.Objects[0].JSON, &cj); err != nil {
+		t.Fatal(err)
+	}
+	if cj.APIVersion != "batch/v1" || cj.Kind != "CronJob" {
+		t.Fatalf("TypeMeta: %s/%s", cj.APIVersion, cj.Kind)
+	}
+	if cj.Spec.Schedule != "0 3 * * *" {
+		t.Fatalf("schedule: %q", cj.Spec.Schedule)
+	}
+	if cj.Spec.ConcurrencyPolicy != batchv1.ForbidConcurrent {
+		t.Fatalf("concurrencyPolicy: %q", cj.Spec.ConcurrencyPolicy)
+	}
+	if cj.Spec.SuccessfulJobsHistoryLimit == nil || *cj.Spec.SuccessfulJobsHistoryLimit != 3 {
+		t.Fatalf("successfulJobsHistoryLimit: %v", cj.Spec.SuccessfulJobsHistoryLimit)
+	}
+	if cj.Spec.FailedJobsHistoryLimit == nil || *cj.Spec.FailedJobsHistoryLimit != 3 {
+		t.Fatalf("failedJobsHistoryLimit: %v", cj.Spec.FailedJobsHistoryLimit)
+	}
+	jobSpec := cj.Spec.JobTemplate.Spec
+	if jobSpec.BackoffLimit == nil || *jobSpec.BackoffLimit != 2 {
+		t.Fatalf("backoffLimit: %v", jobSpec.BackoffLimit)
+	}
+	pod := jobSpec.Template.Spec
+	if pod.RestartPolicy != corev1.RestartPolicyOnFailure {
+		t.Fatalf("restartPolicy: %q", pod.RestartPolicy)
+	}
+	c := pod.Containers[0]
+	if len(c.Ports) != 0 {
+		t.Fatalf("want no container ports for cron, got %+v", c.Ports)
+	}
+}
+
+func TestRenderCronJobWithEnvAndResources(t *testing.T) {
+	in := cronInput()
+	in.CPUMilli, in.MemoryMB = 250, 256
+	r, err := Render(in, map[string]string{"K": "v"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Objects) != 2 || r.Objects[0].Kind != "Secret" || r.Objects[1].Kind != "CronJob" {
+		t.Fatalf("want Secret+CronJob, got %+v", r.Objects)
+	}
+	var cj batchv1.CronJob
+	json.Unmarshal(r.Objects[1].JSON, &cj)
+	c := cj.Spec.JobTemplate.Spec.Template.Spec.Containers[0]
+	if len(c.EnvFrom) != 1 || c.EnvFrom[0].SecretRef.Name != "nightly-env" {
+		t.Fatalf("envFrom: %+v", c.EnvFrom)
+	}
+	if _, ok := c.Resources.Requests[corev1.ResourceCPU]; !ok {
+		t.Fatal("want cpu request present in cron pod template")
+	}
+	if _, ok := c.Resources.Requests[corev1.ResourceMemory]; !ok {
+		t.Fatal("want memory request present in cron pod template")
+	}
+}
+
+func TestRenderHealthPathIgnoredForNonWebKinds(t *testing.T) {
+	w := workerInput()
+	w.HealthPath = "/healthz"
+	r := mustRender(t, w, nil)
+	var d appsv1.Deployment
+	json.Unmarshal(r.Objects[0].JSON, &d)
+	c := d.Spec.Template.Spec.Containers[0]
+	if c.ReadinessProbe != nil || c.LivenessProbe != nil {
+		t.Fatalf("want no probes for worker even with HealthPath set: %+v", c)
+	}
+
+	cr := cronInput()
+	cr.HealthPath = "/healthz"
+	r2 := mustRender(t, cr, nil)
+	var cj batchv1.CronJob
+	json.Unmarshal(r2.Objects[0].JSON, &cj)
+	cc := cj.Spec.JobTemplate.Spec.Template.Spec.Containers[0]
+	if cc.ReadinessProbe != nil || cc.LivenessProbe != nil {
+		t.Fatalf("want no probes for cron even with HealthPath set: %+v", cc)
+	}
+}
+
+func TestRenderWorkerAndCronRequireOnlyCoreFields(t *testing.T) {
+	w := workerInput()
+	w.AppName = ""
+	if _, err := Render(w, nil); err == nil {
+		t.Fatal("want error for empty AppName")
+	}
+
+	// Host/Port are NOT required for worker/cron.
+	c := cronInput()
+	if c.Host != "" || c.Port != 0 {
+		t.Fatalf("test input should have no host/port set: %+v", c)
+	}
+	if _, err := Render(c, nil); err != nil {
+		t.Fatalf("cron render should succeed without Host/Port: %v", err)
+	}
+}
+
+func TestOverrideCronJobRoundTrip(t *testing.T) {
+	base := mustRender(t, cronInput(), nil)
+	baseYAML, err := YAML(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	edited := cronInput()
+	edited.Schedule = "0 4 * * *"
+	editedRendered := mustRender(t, edited, nil)
+	editedYAML, err := YAML(editedRendered)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	patch, err := ComputeOverride("CronJob", baseYAML, editedYAML)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	in := cronInput()
+	in.Overrides = map[string]string{"CronJob": patch}
+	out, err := Render(in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cj batchv1.CronJob
+	json.Unmarshal(objByKind(t, out, "CronJob"), &cj)
+	if cj.Spec.Schedule != "0 4 * * *" {
+		t.Fatalf("want overridden schedule, got %q", cj.Spec.Schedule)
 	}
 }
 

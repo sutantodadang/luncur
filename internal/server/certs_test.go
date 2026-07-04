@@ -77,7 +77,7 @@ func seedDomain(t *testing.T, st *store.Store, hostname string) (store.Project, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := st.CreateApp(p.ID, "web", 8080)
+	a, err := st.CreateApp(p.ID, "web", 8080, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}

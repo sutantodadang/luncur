@@ -8,7 +8,7 @@ func TestSetOverrideRejectsDangerousDeploymentFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestSetOverrideRejectsIngressHostHijack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestSetOverrideRejectsMetadataNameNamespaceOnAnyKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestSetOverrideRejectsServiceExternalIPHijack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestSetOverrideAllowsBenignPatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}

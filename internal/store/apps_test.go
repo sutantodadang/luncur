@@ -19,7 +19,7 @@ func TestAppCRUD(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)
 
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,13 +27,13 @@ func TestAppCRUD(t *testing.T) {
 		t.Fatalf("bad app defaults: %+v", a)
 	}
 
-	if _, err := s.CreateApp(p.ID, "api", 3000); err == nil {
+	if _, err := s.CreateApp(p.ID, "api", 3000, "web", ""); err == nil {
 		t.Fatal("want duplicate app name error")
 	}
-	if _, err := s.CreateApp(p.ID, "Bad_Name", 3000); err == nil {
+	if _, err := s.CreateApp(p.ID, "Bad_Name", 3000, "web", ""); err == nil {
 		t.Fatal("want invalid name error")
 	}
-	if _, err := s.CreateApp(p.ID, "ok", 0); err == nil {
+	if _, err := s.CreateApp(p.ID, "ok", 0, "web", ""); err == nil {
 		t.Fatal("want invalid port error")
 	}
 
@@ -64,7 +64,7 @@ func TestAppCRUD(t *testing.T) {
 func TestGetAppByID(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestCreateGitApp(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)
 
-	a, err := s.CreateGitApp(p.ID, "web", 8080, "https://example.com/repo.git", "")
+	a, err := s.CreateGitApp(p.ID, "web", 8080, "https://example.com/repo.git", "", "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,11 +98,11 @@ func TestCreateGitApp(t *testing.T) {
 		t.Fatalf("get after create: %+v", got)
 	}
 
-	if _, err := s.CreateGitApp(p.ID, "web2", 8080, "", "main"); err == nil {
+	if _, err := s.CreateGitApp(p.ID, "web2", 8080, "", "main", "web", ""); err == nil {
 		t.Fatal("want error for empty git url")
 	}
 
-	explicit, err := s.CreateGitApp(p.ID, "web3", 8080, "https://example.com/repo2.git", "develop")
+	explicit, err := s.CreateGitApp(p.ID, "web3", 8080, "https://example.com/repo2.git", "develop", "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestCreateAppSourceType(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)
 
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestCreateAppSourceType(t *testing.T) {
 func TestDeployments(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestDeployments(t *testing.T) {
 func TestAppEjected(t *testing.T) {
 	s := openTest(t)
 	p, _ := s.CreateProject("proj")
-	a, _ := s.CreateApp(p.ID, "web", 8080)
+	a, _ := s.CreateApp(p.ID, "web", 8080, "web", "")
 	if a.Ejected {
 		t.Fatal("new app born ejected")
 	}
@@ -196,7 +196,7 @@ func TestAppEjected(t *testing.T) {
 func TestSetAppAdopted(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)
-	a, err := s.CreateApp(p.ID, "web", 8080)
+	a, err := s.CreateApp(p.ID, "web", 8080, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestSetAppAdopted(t *testing.T) {
 func TestSetResources(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,10 +267,64 @@ func TestSetResources(t *testing.T) {
 	}
 }
 
+func TestCreateAppKindMatrix(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+
+	// worker with a port is invalid.
+	if _, err := s.CreateApp(p.ID, "w1", 8080, "worker", ""); err == nil {
+		t.Fatal("want error: worker apps do not take a port")
+	}
+	// cron without a schedule is invalid.
+	if _, err := s.CreateApp(p.ID, "c1", 0, "cron", ""); err == nil {
+		t.Fatal("want error: cron apps require a schedule")
+	}
+	// web with a schedule is invalid.
+	if _, err := s.CreateApp(p.ID, "web1", 8080, "web", "* * * * *"); err == nil {
+		t.Fatal("want error: schedule only valid for cron")
+	}
+	// unknown kind is invalid.
+	if _, err := s.CreateApp(p.ID, "bad1", 0, "bogus", ""); err == nil {
+		t.Fatal("want error: invalid kind")
+	}
+
+	// worker happy path.
+	w, err := s.CreateApp(p.ID, "worker1", 0, "worker", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Kind != "worker" || w.Port != 0 {
+		t.Fatalf("bad worker app: %+v", w)
+	}
+
+	// cron happy path.
+	c, err := s.CreateApp(p.ID, "cron1", 0, "cron", "0 3 * * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Kind != "cron" || c.Schedule != "0 3 * * *" {
+		t.Fatalf("bad cron app: %+v", c)
+	}
+
+	// "" kind normalizes to web.
+	def, err := s.CreateApp(p.ID, "defaultkind", 8080, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.Kind != "web" {
+		t.Fatalf("want kind normalized to web, got %+v", def)
+	}
+
+	got, err := s.GetApp(p.ID, "cron1")
+	if err != nil || got.Kind != "cron" || got.Schedule != "0 3 * * *" {
+		t.Fatalf("get after create: %+v %v", got, err)
+	}
+}
+
 func TestSetHealthPath(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,7 @@ func TestCreateDeploymentAttribution(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := st.CreateProject("web")
-	a, _ := st.CreateApp(p.ID, "api", 8080)
+	a, _ := st.CreateApp(p.ID, "api", 8080, "web", "")
 
 	d, err := st.CreateDeployment(a.ID, "building", "", u.ID)
 	if err != nil {
@@ -38,7 +38,7 @@ func TestCreateDeploymentAttribution(t *testing.T) {
 func TestListDeployments(t *testing.T) {
 	st := openTest(t)
 	p, _ := st.CreateProject("web")
-	a, _ := st.CreateApp(p.ID, "api", 8080)
+	a, _ := st.CreateApp(p.ID, "api", 8080, "web", "")
 	d1, _ := st.CreateDeployment(a.ID, "failed", "img:1", 0)
 	d2, _ := st.CreateDeployment(a.ID, "live", "img:2", 0)
 	list, err := st.ListDeployments(a.ID)
@@ -53,7 +53,7 @@ func TestListDeployments(t *testing.T) {
 func TestRollbackDeployment(t *testing.T) {
 	st := openTest(t)
 	p, _ := st.CreateProject("proj")
-	a, _ := st.CreateApp(p.ID, "web", 8080)
+	a, _ := st.CreateApp(p.ID, "web", 8080, "web", "")
 	u, err := st.CreateUser("rollback@example.com", "password123", "member")
 	if err != nil {
 		t.Fatal(err)
@@ -83,8 +83,8 @@ func TestRollbackDeployment(t *testing.T) {
 func TestCountDeployments(t *testing.T) {
 	st := openTest(t)
 	p, _ := st.CreateProject("web")
-	a, _ := st.CreateApp(p.ID, "api", 8080)
-	empty, _ := st.CreateApp(p.ID, "empty", 8081)
+	a, _ := st.CreateApp(p.ID, "api", 8080, "web", "")
+	empty, _ := st.CreateApp(p.ID, "empty", 8081, "web", "")
 
 	if _, err := st.CreateDeployment(a.ID, "failed", "img:1", 0); err != nil {
 		t.Fatal(err)

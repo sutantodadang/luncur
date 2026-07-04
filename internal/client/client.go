@@ -179,6 +179,8 @@ type AppInfo struct {
 	URL      string `json:"url"`
 	Status   string `json:"status,omitempty"`
 	Image    string `json:"image,omitempty"`
+	Kind     string `json:"kind,omitempty"`
+	Schedule string `json:"schedule,omitempty"`
 }
 
 type DeployResult struct {
@@ -205,10 +207,10 @@ func (c *Client) AddMember(project, email string) error {
 		map[string]string{"email": email}, nil)
 }
 
-func (c *Client) CreateApp(project, name string, port int) (AppInfo, error) {
+func (c *Client) CreateApp(project, name string, port int, kind, schedule string) (AppInfo, error) {
 	var out AppInfo
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
-		map[string]interface{}{"name": name, "port": port}, &out)
+		map[string]interface{}{"name": name, "port": port, "kind": kind, "schedule": schedule}, &out)
 	return out, err
 }
 
@@ -292,10 +294,13 @@ func (c *Client) DeployLogs(project, app string, id int64) ([]byte, error) {
 }
 
 // CreateGitApp registers an app whose source is a git repo, built at deploy time.
-func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch string) (AppInfo, error) {
+func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch, kind, schedule string) (AppInfo, error) {
 	var out AppInfo
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
-		map[string]any{"name": name, "port": port, "git_url": gitURL, "git_branch": branch}, &out)
+		map[string]any{
+			"name": name, "port": port, "git_url": gitURL, "git_branch": branch,
+			"kind": kind, "schedule": schedule,
+		}, &out)
 	return out, err
 }
 
