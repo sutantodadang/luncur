@@ -1500,3 +1500,107 @@ func TestUITokensPage(t *testing.T) {
 		t.Fatalf("after session revoke: want 303 to login, got %d", code)
 	}
 }
+
+// TestUIVolumeAddAndRemove exercises the Volumes section end to end: add via
+// the UI form (303 back to the app page), listed on the page, removed via the
+// remove form (purge unchecked -> no kube needed).
+func TestUIVolumeAddAndRemove(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":3000}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	appPage := func(t *testing.T) string {
+		t.Helper()
+		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(ck)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET app page: want 200, got %d", resp.StatusCode)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	// Section (and its downtime note) shows for a web app.
+	if body := appPage(t); !strings.Contains(body, "<h2>Volumes</h2>") || !strings.Contains(body, "volume data is not in luncur backup") {
+		t.Fatalf("app page: want Volumes section with note, got: %s", body)
+	}
+
+	addForm := url.Values{"path": {"/var/lib/data"}, "size_gb": {"5"}}
+	addResp := uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/volumes", csrfCk, ck, addForm)
+	addResp.Body.Close()
+	if addResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST volumes: want 303, got %d", addResp.StatusCode)
+	}
+
+	if body := appPage(t); !strings.Contains(body, "<td>data</td>") || !strings.Contains(body, "/var/lib/data") || !strings.Contains(body, "5GB") {
+		t.Fatalf("app page after add: want volume row, got: %s", body)
+	}
+
+	delForm := url.Values{"name": {"data"}} // purge unchecked
+	delResp := uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/volumes/remove", csrfCk, ck, delForm)
+	delResp.Body.Close()
+	if delResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST volumes/remove: want 303, got %d", delResp.StatusCode)
+	}
+
+	if body := appPage(t); strings.Contains(body, "<td>data</td>") {
+		t.Fatalf("app page after remove: want volume row gone, got: %s", body)
+	}
+}
+
+// TestUIVolumeSectionHiddenForCron verifies the Volumes section never renders
+// on a cron app's page.
+func TestUIVolumeSectionHiddenForCron(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"nightly","kind":"cron","schedule":"0 3 * * *"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/nightly", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET cron app page: want 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "<h2>Volumes</h2>") {
+		t.Fatalf("cron app page must not show Volumes section, got: %s", body)
+	}
+}

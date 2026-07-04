@@ -485,6 +485,43 @@ func (c *Client) RetryDomain(project, app, hostname string) error {
 	return c.do("POST", fmt.Sprintf("/v1/projects/%s/apps/%s/domains/%s/retry", project, app, hostname), nil, nil)
 }
 
+// VolumeInfo is one per-app persistent volume as returned by the API.
+// Warning is only set on create (Recreate-strategy / not-in-backup notice).
+type VolumeInfo struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	SizeGB  int    `json:"size_gb"`
+	Warning string `json:"warning,omitempty"`
+}
+
+// AddVolume attaches a persistent volume to an app. name may be empty (the
+// server defaults it to the last path segment).
+func (c *Client) AddVolume(project, app, name, path string, sizeGB int) (VolumeInfo, error) {
+	var out VolumeInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/volumes",
+		map[string]any{"name": name, "path": path, "size_gb": sizeGB}, &out)
+	return out, err
+}
+
+func (c *Client) ListVolumes(project, app string) ([]VolumeInfo, error) {
+	var out struct {
+		Volumes []VolumeInfo `json:"volumes"`
+	}
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/volumes", nil, &out)
+	return out.Volumes, err
+}
+
+// RemoveVolume detaches a volume from an app. With purge, the cluster PVC
+// (and its data) is deleted too; without it the PVC is left in place.
+func (c *Client) RemoveVolume(project, app, name string, purge bool) error {
+	path := "/v1/projects/" + url.PathEscape(project) + "/apps/" + url.PathEscape(app) + "/volumes/" + url.PathEscape(name)
+	if purge {
+		path += "?purge=true"
+	}
+	return c.do("DELETE", path, nil, nil)
+}
+
 // AddonCreate is CreateAddon's request body: Name/Version/SizeGB default on
 // the server when empty/zero. App optionally attaches the new addon to an
 // app in the same call (the CLI's `addon add` sugar).

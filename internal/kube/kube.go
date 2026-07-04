@@ -179,6 +179,18 @@ func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) er
 	return nil
 }
 
+// DeletePVC removes a single PersistentVolumeClaim (an app volume's purge
+// path). NotFound is fine — the claim may never have been applied.
+func (c *Client) DeletePVC(ctx context.Context, namespace, name string) error {
+	err := c.dyn.Resource(gvrByKind["PersistentVolumeClaim"]).Namespace(namespace).Delete(
+		ctx, name, metav1.DeleteOptions{},
+	)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete PersistentVolumeClaim/%s: %w", name, err)
+	}
+	return nil
+}
+
 // DeleteAddonObjects removes an addon instance's StatefulSet, headless
 // Service, and credentials Secret, and (unless keepData) its PVC.
 // NotFound is fine — deletion must be idempotent.

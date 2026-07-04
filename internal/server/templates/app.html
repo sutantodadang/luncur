@@ -95,6 +95,31 @@
 </form>
 {{end}}
 
+{{if and (not .App.Ejected) (ne .App.Kind "cron")}}
+<h2>Volumes</h2>
+<table><tr><th>Name</th><th>Path</th><th>Size</th><th></th></tr>
+{{range .Volumes}}<tr>
+  <td>{{.Name}}</td>
+  <td><code>{{.Path}}</code></td>
+  <td>{{.SizeGB}}GB</td>
+  <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/volumes/remove">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="name" value="{{.Name}}">
+    <label><input type="checkbox" name="purge" value="1"> purge data</label>
+    <button type="submit">remove</button>
+  </form></td>
+</tr>{{end}}
+</table>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/volumes">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input name="path" placeholder="/data" required>
+  <input type="number" name="size_gb" min="1" max="1000" placeholder="size (GB)" required>
+  <input name="name" placeholder="name (optional)">
+  <button type="submit">add volume</button>
+</form>
+<p>apps with volumes redeploy with brief downtime; volume data is not in luncur backup</p>
+{{end}}
+
 <h2>Addons</h2>
 {{if not .Addons}}<p>No addons attached.</p>{{end}}
 <table><tr><th>Name</th><th>Type</th><th>Version</th><th></th></tr>

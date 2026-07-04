@@ -470,3 +470,113 @@ func TestRenderCustomDomains(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderVolumes(t *testing.T) {
+	in := testInput()
+	in.Volumes = []Volume{
+		{Name: "data", Path: "/data", SizeGB: 10},
+		{Name: "cache", Path: "/var/cache", SizeGB: 1},
+	}
+	r := mustRender(t, in, nil)
+
+	// PVCs come before the Deployment.
+	kinds := make([]string, 0, len(r.Objects))
+	for _, o := range r.Objects {
+		kinds = append(kinds, o.Kind)
+	}
+	pvcCount, depIdx, lastPVCIdx := 0, -1, -1
+	for i, k := range kinds {
+		if k == "PersistentVolumeClaim" {
+			pvcCount++
+			lastPVCIdx = i
+		}
+		if k == "Deployment" {
+			depIdx = i
+		}
+	}
+	if pvcCount != 2 {
+		t.Fatalf("want 2 PVCs, got %d (%v)", pvcCount, kinds)
+	}
+	if depIdx == -1 || lastPVCIdx > depIdx {
+		t.Fatalf("PVCs must precede Deployment: %v", kinds)
+	}
+
+	var pvc corev1.PersistentVolumeClaim
+	if err := json.Unmarshal(r.Objects[0].JSON, &pvc); err != nil {
+		t.Fatal(err)
+	}
+	if pvc.Name != "api-data" {
+		t.Fatalf("pvc name = %q, want api-data", pvc.Name)
+	}
+	if len(pvc.Spec.AccessModes) != 1 || pvc.Spec.AccessModes[0] != corev1.ReadWriteOnce {
+		t.Fatalf("access modes: %v", pvc.Spec.AccessModes)
+	}
+	want := resource.MustParse("10Gi")
+	if got := pvc.Spec.Resources.Requests[corev1.ResourceStorage]; got.Cmp(want) != 0 {
+		t.Fatalf("storage request = %s, want 10Gi", got.String())
+	}
+
+	var d appsv1.Deployment
+	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+	if d.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
+		t.Fatalf("strategy = %q, want Recreate", d.Spec.Strategy.Type)
+	}
+	pod := d.Spec.Template.Spec
+	if len(pod.Volumes) != 2 {
+		t.Fatalf("pod volumes: %+v", pod.Volumes)
+	}
+	if pod.Volumes[0].PersistentVolumeClaim == nil || pod.Volumes[0].PersistentVolumeClaim.ClaimName != "api-data" {
+		t.Fatalf("pod volume claim: %+v", pod.Volumes[0])
+	}
+	mounts := pod.Containers[0].VolumeMounts
+	if len(mounts) != 2 || mounts[0].Name != "data" || mounts[0].MountPath != "/data" ||
+		mounts[1].Name != "cache" || mounts[1].MountPath != "/var/cache" {
+		t.Fatalf("mounts: %+v", mounts)
+	}
+}
+
+func TestRenderNoVolumesMeansNoStrategyNoPVC(t *testing.T) {
+	r := mustRender(t, testInput(), nil)
+	for _, o := range r.Objects {
+		if o.Kind == "PersistentVolumeClaim" {
+			t.Fatal("PVC rendered without volumes")
+		}
+	}
+	var d appsv1.Deployment
+	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+	if d.Spec.Strategy.Type != "" {
+		t.Fatalf("strategy should be unset without volumes, got %q", d.Spec.Strategy.Type)
+	}
+}
+
+func TestRenderWorkerWithVolume(t *testing.T) {
+	in := workerInput()
+	in.Volumes = []Volume{{Name: "state", Path: "/state", SizeGB: 2}}
+	r := mustRender(t, in, nil)
+	if len(r.Objects) != 2 || r.Objects[0].Kind != "PersistentVolumeClaim" {
+		t.Fatalf("want PVC+Deployment for worker with volume, got %+v", r.Objects)
+	}
+	var d appsv1.Deployment
+	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+	if d.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
+		t.Fatalf("strategy = %q, want Recreate", d.Spec.Strategy.Type)
+	}
+	if len(d.Spec.Template.Spec.Containers[0].VolumeMounts) != 1 {
+		t.Fatalf("mounts: %+v", d.Spec.Template.Spec.Containers[0].VolumeMounts)
+	}
+}
+
+func TestRenderCronIgnoresVolumes(t *testing.T) {
+	in := cronInput()
+	in.Volumes = []Volume{{Name: "data", Path: "/data", SizeGB: 1}}
+	r := mustRender(t, in, nil)
+	if len(r.Objects) != 1 || r.Objects[0].Kind != "CronJob" {
+		t.Fatalf("cron must ignore volumes, got %+v", r.Objects)
+	}
+	var cj batchv1.CronJob
+	json.Unmarshal(r.Objects[0].JSON, &cj)
+	pod := cj.Spec.JobTemplate.Spec.Template.Spec
+	if len(pod.Volumes) != 0 || len(pod.Containers[0].VolumeMounts) != 0 {
+		t.Fatalf("cron pod picked up volumes: %+v %+v", pod.Volumes, pod.Containers[0].VolumeMounts)
+	}
+}

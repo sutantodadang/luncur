@@ -47,6 +47,7 @@ Changed your mind? **Adopt** it back. No lock-in in either direction.
 | ⏱️ **App kinds** | `web` (Deployment+Service+Ingress), `worker` (Deployment only, no URL), and `cron` (Kubernetes CronJob, `Forbid` concurrency) — `luncur logs` streams all three |
 | 🔒 **Automatic HTTPS** | Built-in ACME (Let's Encrypt) — HTTP-01 out of the box, **DNS-01 + wildcard certs** (`*.example.com`) via Cloudflare, Route53, or RFC2136/nsupdate |
 | 🐘 **Managed addons** | Postgres & Redis as StatefulSets: create, attach (`DATABASE_URL` injected), in-place version upgrades, per-addon logical dumps in every backup |
+| 📀 **Persistent volumes** | `luncur volume add myapp /data --size 5` mounts an RWO PVC into a web/worker app — survives redeploys, never deleted implicitly (`--purge` to delete data) |
 | 💾 **Backups & restore** | One-command snapshot (SQLite + sealer key + addon dumps) to any S3-compatible bucket — stdlib SigV4 client, no SDK. `luncur restore` rebuilds a box from an archive |
 | 🖥️ **Web panel** | Server-rendered UI: deploys, live log streaming (SSE), scaling (with per-app CPU/memory limits), env vars, domains, rollbacks, YAML overrides, user & token management — zero JS frameworks |
 | ⏪ **Instant rollback** | Redeploy any previous image in seconds, lineage tracked, from CLI or UI |
@@ -126,6 +127,7 @@ separate docs site; this README is it.
 - [Custom domains & TLS](#custom-domains--tls)
 - [Wildcard domains & DNS-01](#wildcard-domains--dns-01)
 - [Addons (Postgres/Redis)](#addons-postgresredis)
+- [Volumes](#volumes)
 - [Backups](#backups)
 - [Restoring](#restoring)
 - [Ejecting an app](#ejecting-an-app)
@@ -469,6 +471,39 @@ The web UI mirrors all of this: each project page has an Addons table
 addons list (detach buttons) plus an attach form listing the project's
 addons.
 
+### Volumes
+
+```sh
+luncur volume add myapp /data --project myproj --size 5              # 5GB PVC mounted at /data
+luncur volume add myapp /var/cache --project myproj --size 1 --name cache
+luncur volume list myapp --project myproj                            # NAME, PATH, SIZE
+luncur volume remove myapp cache --project myproj                    # detach; PVC + data kept
+luncur volume remove myapp cache --project myproj --purge            # detach AND delete the PVC
+```
+
+Volumes attach a `ReadWriteOnce` PersistentVolumeClaim (K3s local-path by
+default) to a `web` or `worker` app — `cron` apps don't take volumes. The
+name defaults to the last path segment; size is 1–1000 GB.
+
+Honest constraints, stated up front:
+
+- **Max 1 replica.** RWO local-path storage binds to one node/pod. Adding a
+  volume to an app running more than one replica is refused (409), as is
+  scaling a volumed app above 1.
+- **Brief downtime per deploy.** A volumed app's Deployment uses the
+  `Recreate` strategy (the old pod must release the volume before the new
+  one can mount it), so every deploy stops the app for a few seconds.
+- **Not in backups.** `luncur backup` snapshots luncur's own state and addon
+  dumps — app volume data is *not* included. Back up volume contents
+  yourself if they matter.
+- **Never deleted implicitly.** `volume remove` only detaches; the PVC and
+  its data survive until you pass `--purge`. Destroying an app also leaves
+  its PVCs behind — run `volume remove --purge` first, or clean up later
+  with `kubectl delete pvc -n <namespace> <app>-<volume>`.
+
+The app page in the web UI has a matching Volumes section (add form,
+per-row remove with a "purge data" checkbox), hidden for cron apps.
+
 ### Backups
 
 `luncur backup create` (admin) snapshots luncur's whole state into a
@@ -665,6 +700,8 @@ rest with AES-256-GCM; the sealed settings are write-only through the API
 - Cron schedules are validated as syntactically-correct 5-field cron expressions only (field count + per-position numeric bounds); Kubernetes' CronJob controller is what actually evaluates them at runtime.
 - CronJob history limits (`successfulJobsHistoryLimit`/`failedJobsHistoryLimit`: 3/3, `backoffLimit`: 2) are fixed, not configurable — same escape hatch as above.
 - `CronJob` joined `Deployment`/`Service`/`Ingress` as an overridable manifest kind — the YAML override editor works for cron apps too.
+- App volumes force the Deployment's `Recreate` strategy because an RWO node-local PVC can't be mounted by the old and new pod simultaneously — a rolling update would deadlock waiting for a volume the outgoing pod still holds.
+- App volumes share the addons' never-implicit-delete philosophy: removing a volume (or destroying the app) leaves the PVC and its data in the cluster; only an explicit `--purge` deletes it. PVCs are not an overridable manifest kind.
 
 Every feature shipped with a written spec, a TDD implementation plan, and
 a full test suite that runs without a cluster or network.

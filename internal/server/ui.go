@@ -42,6 +42,8 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/delete", s.uiPage(s.handleUIEnvUnset))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains", s.uiPage(s.handleUIDomainAdd))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/delete", s.uiPage(s.handleUIDomainDelete))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/volumes", s.uiPage(s.handleUIVolumeAdd))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/volumes/remove", s.uiPage(s.handleUIVolumeRemove))
 	mux.HandleFunc("POST /ui/projects/{project}/addons", s.uiPage(s.handleUIAddonCreate))
 	mux.HandleFunc("POST /ui/projects/{project}/addons/delete", s.uiPage(s.handleUIAddonDelete))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/addons/attach", s.uiPage(s.handleUIAddonAttach))
@@ -386,6 +388,13 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 		return
 	}
 
+	volumes, err := s.st.ListVolumes(a.ID)
+	if err != nil {
+		log.Printf("ui app volumes: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	attached, err := s.st.AddonsForApp(a.ID)
 	if err != nil {
 		log.Printf("ui app addons: %v", err)
@@ -411,7 +420,7 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 		"Status": status, "LatestID": latestID, "URL": "http://" + hostFor(a.Name, s.externalIP),
 		"History": history, "EnvKeys": envKeys,
 		"IsGit":   a.SourceType == "git",
-		"Domains": domains, "Warning": r.URL.Query().Get("warn"),
+		"Domains": domains, "Volumes": volumes, "Warning": r.URL.Query().Get("warn"),
 		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	})
@@ -630,6 +639,83 @@ func (s *server) handleUIDomainDelete(w http.ResponseWriter, r *http.Request, u 
 		return
 	}
 	s.syncIfLive(r.Context(), p, a)
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIVolumeAdd is handleAddVolume's UI twin: same shared addVolume
+// core, redirect instead of JSON.
+func (s *server) handleUIVolumeAdd(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	size, err := strconv.Atoi(r.PostFormValue("size_gb"))
+	if err != nil {
+		http.Error(w, "invalid size", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := s.addVolume(r.Context(), p, a, r.PostFormValue("name"), r.PostFormValue("path"), size); err != nil {
+		var rc *volumeReplicaConflictError
+		var ke *kindMismatchError
+		var ve *store.ValidationError
+		switch {
+		case errors.Is(err, errAppEjected):
+			http.Error(w, err.Error(), http.StatusConflict)
+		case errors.As(err, &rc):
+			http.Error(w, rc.Error(), http.StatusConflict)
+		case errors.As(err, &ke):
+			http.Error(w, ke.Error(), http.StatusBadRequest)
+		case errors.As(err, &ve):
+			http.Error(w, ve.Error(), http.StatusBadRequest)
+		default:
+			log.Printf("ui add volume: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIVolumeRemove is handleDeleteVolume's UI twin: same shared
+// removeVolume core (purge via checkbox), redirect instead of JSON.
+func (s *server) handleUIVolumeRemove(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	purge := r.PostFormValue("purge") != ""
+	if err := s.removeVolume(r.Context(), p, a, r.PostFormValue("name"), purge); err != nil {
+		switch {
+		case errors.Is(err, errAppEjected):
+			http.Error(w, err.Error(), http.StatusConflict)
+		case errors.Is(err, errKubeUnavailable):
+			http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		case errors.Is(err, store.ErrNotFound):
+			http.Error(w, "no such volume", http.StatusNotFound)
+		default:
+			log.Printf("ui remove volume: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
 	uiRedirect(w, r, p, a)
 }
 

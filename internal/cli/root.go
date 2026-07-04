@@ -39,6 +39,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(sshKeyCmd())
 	root.AddCommand(pushHookCmd())
 	root.AddCommand(domainCmd())
+	root.AddCommand(volumeCmd())
 	root.AddCommand(configCmd())
 	root.AddCommand(rollbackCmd())
 	root.AddCommand(tokenCmd())
