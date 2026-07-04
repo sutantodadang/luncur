@@ -55,6 +55,10 @@ var settableKeys = map[string]func(string) bool{
 	"dns_rfc2136_tsig_name":   func(v string) bool { return v != "" },
 	"dns_rfc2136_tsig_secret": func(v string) bool { return v != "" },
 	"dns_rfc2136_tsig_algo":   func(v string) bool { return v != "" },
+	"notify_url":             func(v string) bool { return v != "" },
+	"notify_format":          func(v string) bool { return notifyFormats[v] },
+	"notify_telegram_chat":   func(v string) bool { return v != "" },
+	"notify_events":          validNotifyEvents,
 }
 
 // sealedKeys are write-only secrets: sealed at rest with the install
@@ -65,6 +69,7 @@ var sealedKeys = map[string]bool{
 	"dns_cloudflare_token":    true,
 	"dns_route53_secret_key":  true,
 	"dns_rfc2136_tsig_secret": true,
+	"notify_url":              true,
 }
 
 func (s *server) handleGetSetting(w http.ResponseWriter, r *http.Request, _ store.User) {

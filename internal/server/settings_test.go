@@ -322,3 +322,113 @@ func TestSettingsDNSKeys(t *testing.T) {
 		t.Fatalf("token read = %q, want (set)", out.Value)
 	}
 }
+
+// TestSettingsNotifyURLSealed mirrors TestSettingsSMTPPassSealed for
+// notify_url: 503 without a sealer; sealed at rest; GET masks to "(set)".
+func TestSettingsNotifyURLSealed(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/notify_url", admin, `{"value":"https://hooks.example.com/x"}`)
+	if resp.StatusCode != 503 {
+		t.Fatalf("put without sealer: want 503, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st2 := newTestStore(t)
+	srv2 := newHTTPTest(t, Deps{Store: st2, Sealer: sealer})
+	admin2 := seedUserToken(t, st2, "root@b.co", "admin")
+
+	resp = doAuthed(t, "PUT", srv2.URL+"/v1/settings/notify_url", admin2, `{"value":"https://hooks.example.com/x"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("put with sealer: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "GET", srv2.URL+"/v1/settings/notify_url", admin2, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("get: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.Value != "(set)" {
+		t.Fatalf("get value = %q, want (set)", out.Value)
+	}
+
+	raw, err := st2.GetSetting("notify_url")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(raw, "sealed:") {
+		t.Fatalf("raw notify_url = %q, want sealed: prefix", raw)
+	}
+}
+
+// TestSettingsNotifyFormatAndEvents: notify_format enum enforced;
+// notify_events validated as a CSV subset of known event names.
+func TestSettingsNotifyFormatAndEvents(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/notify_format", admin, `{"value":"bogus"}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("bad format: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	for _, v := range []string{"generic", "discord", "slack", "telegram"} {
+		resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/notify_format", admin, `{"value":"`+v+`"}`)
+		if resp.StatusCode != 204 {
+			t.Fatalf("format %s: want 204, got %d", v, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/notify_events", admin, `{"value":"deploy_failed,bogus_event"}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("bad events: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/notify_events", admin, `{"value":""}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("empty events: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/notify_events", admin, `{"value":"deploy_success, cert_failed"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("valid events: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "GET", srv.URL+"/v1/settings/notify_events", admin, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("get: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.Value != "deploy_success, cert_failed" {
+		t.Fatalf("notify_events roundtrip = %q", out.Value)
+	}
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/notify_telegram_chat", admin, `{"value":"123456"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("put telegram chat: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
