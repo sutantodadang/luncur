@@ -32,6 +32,14 @@ type scaleReplicasError struct{ err error }
 func (e *scaleReplicasError) Error() string { return e.err.Error() }
 func (e *scaleReplicasError) Unwrap() error { return e.err }
 
+// kindMismatchError wraps a validation failure caused by an operation not
+// being supported for the app's kind (e.g. scaling replicas on a cron app,
+// adding a domain to a worker). Callers map it to 400 kind_mismatch.
+type kindMismatchError struct{ err error }
+
+func (e *kindMismatchError) Error() string { return e.err.Error() }
+func (e *kindMismatchError) Unwrap() error { return e.err }
+
 func (s *server) appJSON(a store.App) map[string]any {
 	return map[string]any{
 		"id":          a.ID,
@@ -39,6 +47,8 @@ func (s *server) appJSON(a store.App) map[string]any {
 		"port":        a.Port,
 		"replicas":    a.Replicas,
 		"health_path": a.HealthPath,
+		"kind":        a.Kind,
+		"schedule":    a.Schedule,
 		"url":         "http://" + hostFor(a.Name, s.externalIP),
 	}
 }
@@ -69,6 +79,8 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		Port      int    `json:"port"`
 		GitURL    string `json:"git_url"`
 		GitBranch string `json:"git_branch"`
+		Kind      string `json:"kind"`
+		Schedule  string `json:"schedule"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -77,9 +89,9 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 	var a store.App
 	var err error
 	if req.GitURL != "" {
-		a, err = s.st.CreateGitApp(p.ID, req.Name, req.Port, req.GitURL, req.GitBranch)
+		a, err = s.st.CreateGitApp(p.ID, req.Name, req.Port, req.GitURL, req.GitBranch, req.Kind, req.Schedule)
 	} else {
-		a, err = s.st.CreateApp(p.ID, req.Name, req.Port)
+		a, err = s.st.CreateApp(p.ID, req.Name, req.Port, req.Kind, req.Schedule)
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -484,6 +496,9 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 	if req.Replicas == nil && req.CPUMilli == nil && req.MemoryMB == nil {
 		return store.App{}, &scaleReplicasError{fmt.Errorf("nothing to change")}
 	}
+	if a.Kind == "cron" && req.Replicas != nil {
+		return store.App{}, &kindMismatchError{fmt.Errorf("cron apps do not scale")}
+	}
 	d, err := s.st.LatestDeployment(a.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return store.App{}, err
@@ -564,11 +579,14 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 	updated, err := s.scaleApp(r.Context(), p, a, req)
 	if err != nil {
 		var re *scaleReplicasError
+		var ke *kindMismatchError
 		switch {
 		case errors.Is(err, errAppEjected):
 			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
 		case errors.Is(err, errKubeUnavailable):
 			writeError(w, http.StatusServiceUnavailable, "kubernetes_unavailable", "kubernetes is not configured")
+		case errors.As(err, &ke):
+			writeError(w, http.StatusBadRequest, "kind_mismatch", ke.Error())
 		case errors.As(err, &re):
 			writeError(w, http.StatusBadRequest, "bad_request", re.Error())
 		default:

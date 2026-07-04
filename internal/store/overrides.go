@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 )
 
-var overridableKinds = map[string]bool{"Deployment": true, "Service": true, "Ingress": true}
+var overridableKinds = map[string]bool{"Deployment": true, "Service": true, "Ingress": true, "CronJob": true}
 
 // dangerousDeploymentKeys are pod-spec fields that let an override escape
 // the app's own namespace/pod boundary (host filesystem/network/PID/IPC
@@ -44,7 +44,9 @@ func rejectDangerousOverride(kind string, patch map[string]any) error {
 		}
 	}
 
-	if kind == "Deployment" {
+	// CronJob nests the same pod spec (spec.jobTemplate.spec.template.spec),
+	// so it gets the same escape-hatch scan.
+	if kind == "Deployment" || kind == "CronJob" {
 		for _, key := range collectKeys(patch) {
 			if field, bad := dangerousDeploymentKeys[key]; bad {
 				return validationErrorf("override may not set %q", field)
@@ -83,7 +85,7 @@ func collectKeys(v any) []string {
 
 func (s *Store) SetOverride(appID int64, kind, patchJSON string) error {
 	if !overridableKinds[kind] {
-		return validationErrorf("unsupported kind %q (Deployment, Service, or Ingress)", kind)
+		return validationErrorf("unsupported kind %q (Deployment, Service, Ingress, or CronJob)", kind)
 	}
 	var obj map[string]any
 	if err := json.Unmarshal([]byte(patchJSON), &obj); err != nil || obj == nil {

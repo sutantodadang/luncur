@@ -73,6 +73,9 @@ func (s *server) addDomain(ctx context.Context, p store.Project, a store.App, ho
 	if a.Ejected {
 		return store.Domain{}, "", errAppEjected
 	}
+	if a.Kind != "web" {
+		return store.Domain{}, "", &kindMismatchError{fmt.Errorf("domains are only supported for web apps")}
+	}
 	isWildcard := strings.HasPrefix(strings.TrimSpace(hostname), "*.")
 	if isWildcard && s.dnsProviderName() == "none" {
 		return store.Domain{}, "", errWildcardNeedsDNS
@@ -116,11 +119,15 @@ func (s *server) handleAddDomain(w http.ResponseWriter, r *http.Request, u store
 	}
 	d, warning, err := s.addDomain(r.Context(), p, a, req.Hostname)
 	if err != nil {
-		if errors.Is(err, errAppEjected) {
+		var ke *kindMismatchError
+		switch {
+		case errors.Is(err, errAppEjected):
 			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
-			return
+		case errors.As(err, &ke):
+			writeError(w, http.StatusBadRequest, "kind_mismatch", ke.Error())
+		default:
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		}
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, domainJSON(d, warning))

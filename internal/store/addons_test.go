@@ -8,8 +8,8 @@ import (
 func TestAddonLifecycle(t *testing.T) {
 	s := openTest(t)
 	p, _ := s.CreateProject("proj")
-	a1, _ := s.CreateApp(p.ID, "web", 8080)
-	a2, _ := s.CreateApp(p.ID, "worker", 8080)
+	a1, _ := s.CreateApp(p.ID, "web", 8080, "web", "")
+	a2, _ := s.CreateApp(p.ID, "worker", 8080, "web", "")
 
 	ad, err := s.CreateAddon(p.ID, "postgres", "db1", "16", 1, []byte("sealed"))
 	if err != nil {

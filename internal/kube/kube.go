@@ -36,6 +36,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"Secret":                {Group: "", Version: "v1", Resource: "secrets"},
 	"Namespace":             {Group: "", Version: "v1", Resource: "namespaces"},
 	"Job":                   {Group: "batch", Version: "v1", Resource: "jobs"},
+	"CronJob":               {Group: "batch", Version: "v1", Resource: "cronjobs"},
 	"PersistentVolumeClaim": {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
 	"ServiceAccount":        {Group: "", Version: "v1", Resource: "serviceaccounts"},
 	"ClusterRole":           {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"},
@@ -155,13 +156,16 @@ func (c *Client) Apply(ctx context.Context, namespace string, objs []render.Obje
 	return nil
 }
 
-// DeleteAppObjects removes everything Render produces for an app.
-// NotFound is fine — destroy must be idempotent.
+// DeleteAppObjects removes everything Render produces for an app, across
+// every kind (web/worker/cron): the target list is a superset, and
+// NotFound (a kind's object was never rendered for this app) is fine —
+// destroy must be idempotent.
 func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) error {
 	targets := []struct{ kind, name string }{
 		{"Deployment", app},
 		{"Service", app},
 		{"Ingress", app},
+		{"CronJob", app},
 		{"Secret", render.SecretName(app)},
 	}
 	for _, t := range targets {

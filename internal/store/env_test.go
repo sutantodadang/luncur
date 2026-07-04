@@ -8,7 +8,7 @@ import (
 func seedApp(t *testing.T, s *Store) App {
 	t.Helper()
 	p := seedProject(t, s)
-	a, err := s.CreateApp(p.ID, "api", 3000)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}

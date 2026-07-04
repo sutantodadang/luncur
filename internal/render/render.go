@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -26,12 +27,16 @@ type Input struct {
 	Host      string
 	Port      int32
 	Replicas  int32
+	// Kind is one of web|worker|cron; "" means web (back-compat default).
+	Kind string
+	// Schedule is a 5-field cron expression; cron kind only.
+	Schedule string
 	// CPUMilli and MemoryMB are the container's requests==limits (Guaranteed
 	// QoS); 0 means unset — no resources block is rendered for that resource.
 	CPUMilli int64
 	MemoryMB int64
 	// HealthPath is the HTTP path probed for readiness/liveness; "" means
-	// unset — no probes are rendered.
+	// unset — no probes are rendered. Ignored for non-web kinds.
 	HealthPath string
 	// Overrides maps Kind -> strategic-merge-patch JSON. Applied by Task 6.
 	Overrides map[string]string
@@ -42,6 +47,8 @@ type Input struct {
 	// TLS is set as spec.tls verbatim (secret refs per issued domain).
 	TLS []netv1.IngressTLS
 }
+
+func int32Ptr(n int32) *int32 { return &n }
 
 type Object struct {
 	Kind string
@@ -62,6 +69,8 @@ func dataStructFor(kind string) (any, error) {
 		return corev1.Service{}, nil
 	case "Ingress":
 		return netv1.Ingress{}, nil
+	case "CronJob":
+		return batchv1.CronJob{}, nil
 	default:
 		return nil, fmt.Errorf("kind %q cannot be overridden", kind)
 	}
@@ -94,6 +103,8 @@ func roundTrip(kind string, raw []byte) ([]byte, error) {
 		v = &corev1.Service{}
 	case "Ingress":
 		v = &netv1.Ingress{}
+	case "CronJob":
+		v = &batchv1.CronJob{}
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -121,10 +132,22 @@ func meta(in Input, name string) metav1.ObjectMeta {
 }
 
 // Render builds the manifest set for one app. env is plaintext (the caller
-// unseals); empty env omits the Secret entirely.
+// unseals); empty env omits the Secret entirely. Kind selects the object
+// set: web (default, "") gets Deployment+Service+Ingress; worker gets a
+// Deployment only (no ports); cron gets a batch/v1 CronJob.
 func Render(in Input, env map[string]string) (Rendered, error) {
-	if in.AppName == "" || in.Namespace == "" || in.Image == "" || in.Host == "" || in.Port < 1 {
-		return Rendered{}, fmt.Errorf("render: AppName, Namespace, Image, Host, and Port are required")
+	kind := in.Kind
+	if kind == "" {
+		kind = "web"
+	}
+	if in.AppName == "" || in.Namespace == "" || in.Image == "" {
+		return Rendered{}, fmt.Errorf("render: AppName, Namespace, and Image are required")
+	}
+	if kind == "web" && (in.Host == "" || in.Port < 1) {
+		return Rendered{}, fmt.Errorf("render: Host and Port are required for web apps")
+	}
+	if kind != "web" && kind != "worker" && kind != "cron" {
+		return Rendered{}, fmt.Errorf("render: unknown kind %q", kind)
 	}
 
 	var objs []Object
@@ -152,7 +175,9 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 	container := corev1.Container{
 		Name:  "app",
 		Image: in.Image,
-		Ports: []corev1.ContainerPort{{ContainerPort: in.Port}},
+	}
+	if kind == "web" {
+		container.Ports = []corev1.ContainerPort{{ContainerPort: in.Port}}
 	}
 	if len(env) > 0 {
 		container.EnvFrom = []corev1.EnvFromSource{{
@@ -171,7 +196,7 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 		}
 		container.Resources = corev1.ResourceRequirements{Requests: res, Limits: res}
 	}
-	if in.HealthPath != "" {
+	if in.HealthPath != "" && kind == "web" {
 		probe := func() *corev1.Probe {
 			return &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{Path: in.HealthPath, Port: intstr.FromInt32(in.Port)},
@@ -196,67 +221,103 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			},
 		},
 	}
-	if err := add("Deployment", dep); err != nil {
-		return Rendered{}, err
-	}
 
-	svc := &corev1.Service{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
-		ObjectMeta: meta(in, in.AppName),
-		Spec: corev1.ServiceSpec{
-			Selector: selector(in.AppName),
-			Ports: []corev1.ServicePort{{
-				Port:       80,
-				TargetPort: intstr.FromInt32(in.Port),
-			}},
-		},
-	}
-	if err := add("Service", svc); err != nil {
-		return Rendered{}, err
-	}
+	switch kind {
+	case "web":
+		if err := add("Deployment", dep); err != nil {
+			return Rendered{}, err
+		}
 
-	pathType := netv1.PathTypePrefix
-	rule := func(host string) netv1.IngressRule {
-		return netv1.IngressRule{
-			Host: host,
-			IngressRuleValue: netv1.IngressRuleValue{
-				HTTP: &netv1.HTTPIngressRuleValue{
-					Paths: []netv1.HTTPIngressPath{{
-						Path:     "/",
-						PathType: &pathType,
-						Backend: netv1.IngressBackend{
-							Service: &netv1.IngressServiceBackend{
-								Name: in.AppName,
-								Port: netv1.ServiceBackendPort{Number: 80},
+		svc := &corev1.Service{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+			ObjectMeta: meta(in, in.AppName),
+			Spec: corev1.ServiceSpec{
+				Selector: selector(in.AppName),
+				Ports: []corev1.ServicePort{{
+					Port:       80,
+					TargetPort: intstr.FromInt32(in.Port),
+				}},
+			},
+		}
+		if err := add("Service", svc); err != nil {
+			return Rendered{}, err
+		}
+
+		pathType := netv1.PathTypePrefix
+		rule := func(host string) netv1.IngressRule {
+			return netv1.IngressRule{
+				Host: host,
+				IngressRuleValue: netv1.IngressRuleValue{
+					HTTP: &netv1.HTTPIngressRuleValue{
+						Paths: []netv1.HTTPIngressPath{{
+							Path:     "/",
+							PathType: &pathType,
+							Backend: netv1.IngressBackend{
+								Service: &netv1.IngressServiceBackend{
+									Name: in.AppName,
+									Port: netv1.ServiceBackendPort{Number: 80},
+								},
+							},
+						}},
+					},
+				},
+			}
+		}
+		rules := []netv1.IngressRule{rule(in.Host)}
+		for _, h := range in.ExtraHosts {
+			rules = append(rules, rule(h))
+		}
+		ingMeta := meta(in, in.AppName)
+		if len(in.IngressAnnotations) > 0 {
+			ingMeta.Annotations = in.IngressAnnotations
+		}
+		ing := &netv1.Ingress{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
+			ObjectMeta: ingMeta,
+			Spec: netv1.IngressSpec{
+				Rules: rules,
+				TLS:   in.TLS,
+			},
+		}
+		if err := add("Ingress", ing); err != nil {
+			return Rendered{}, err
+		}
+
+	case "worker":
+		if err := add("Deployment", dep); err != nil {
+			return Rendered{}, err
+		}
+
+	case "cron":
+		cj := &batchv1.CronJob{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "batch/v1", Kind: "CronJob"},
+			ObjectMeta: meta(in, in.AppName),
+			Spec: batchv1.CronJobSpec{
+				Schedule:                   in.Schedule,
+				ConcurrencyPolicy:          batchv1.ForbidConcurrent,
+				SuccessfulJobsHistoryLimit: int32Ptr(3),
+				FailedJobsHistoryLimit:     int32Ptr(3),
+				JobTemplate: batchv1.JobTemplateSpec{
+					Spec: batchv1.JobSpec{
+						BackoffLimit: int32Ptr(2),
+						Template: corev1.PodTemplateSpec{
+							ObjectMeta: metav1.ObjectMeta{Labels: labels(in.AppName)},
+							Spec: corev1.PodSpec{
+								RestartPolicy: corev1.RestartPolicyOnFailure,
+								Containers:    []corev1.Container{container},
 							},
 						},
-					}},
+					},
 				},
 			},
 		}
-	}
-	rules := []netv1.IngressRule{rule(in.Host)}
-	for _, h := range in.ExtraHosts {
-		rules = append(rules, rule(h))
-	}
-	ingMeta := meta(in, in.AppName)
-	if len(in.IngressAnnotations) > 0 {
-		ingMeta.Annotations = in.IngressAnnotations
-	}
-	ing := &netv1.Ingress{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
-		ObjectMeta: ingMeta,
-		Spec: netv1.IngressSpec{
-			Rules: rules,
-			TLS:   in.TLS,
-		},
-	}
-	if err := add("Ingress", ing); err != nil {
-		return Rendered{}, err
+		if err := add("CronJob", cj); err != nil {
+			return Rendered{}, err
+		}
 	}
 
-	for kind := range in.Overrides {
-		if _, err := dataStructFor(kind); err != nil {
+	for overrideKind := range in.Overrides {
+		if _, err := dataStructFor(overrideKind); err != nil {
 			return Rendered{}, err
 		}
 	}

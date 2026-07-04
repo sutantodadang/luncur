@@ -34,6 +34,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/tokens/revoke", s.uiPage(s.handleUITokenRevoke))
 	mux.HandleFunc("GET /ui/", s.uiPage(s.handleUIProjects))
 	mux.HandleFunc("GET /ui/projects/{project}", s.uiPage(s.handleUIApps))
+	mux.HandleFunc("POST /ui/projects/{project}/apps", s.uiPage(s.handleUICreateApp))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}", s.uiPage(s.handleUIApp))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/scale", s.uiPage(s.handleUIScale))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/health", s.uiPage(s.handleUIHealth))
@@ -54,7 +55,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 
 // editableKinds are the manifest kinds the YAML editor accepts — the same
 // set render.dataStructFor (via SetOverride) understands.
-var editableKinds = map[string]bool{"Deployment": true, "Service": true, "Ingress": true}
+var editableKinds = map[string]bool{"Deployment": true, "Service": true, "Ingress": true, "CronJob": true}
 
 // uiUser resolves the session cookie to a user.
 func (s *server) uiUser(r *http.Request) (store.User, bool) {
@@ -257,6 +258,8 @@ func (s *server) handleUIProjects(w http.ResponseWriter, r *http.Request, u stor
 // derived public URL.
 type uiAppRow struct {
 	Name     string
+	Kind     string
+	Schedule string
 	Replicas int
 	URL      string
 	Ejected  bool
@@ -275,7 +278,14 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	}
 	rows := make([]uiAppRow, 0, len(list))
 	for _, a := range list {
-		rows = append(rows, uiAppRow{Name: a.Name, Replicas: a.Replicas, URL: "http://" + hostFor(a.Name, s.externalIP), Ejected: a.Ejected})
+		url := "http://" + hostFor(a.Name, s.externalIP)
+		if a.Kind != "web" {
+			url = ""
+		}
+		rows = append(rows, uiAppRow{
+			Name: a.Name, Kind: a.Kind, Schedule: a.Schedule,
+			Replicas: a.Replicas, URL: url, Ejected: a.Ejected,
+		})
 	}
 	addons, err := s.addonRows(r.Context(), p)
 	if err != nil {
@@ -287,6 +297,45 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		"User": u, "Project": p, "Apps": rows, "Addons": addons,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	})
+}
+
+// handleUICreateApp is handleCreateApp's UI twin: same store CreateApp/
+// CreateGitApp core, plain-text 400 + redirect back to the create form
+// instead of a JSON envelope.
+func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	port := 0
+	if v := r.PostFormValue("port"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			http.Error(w, "invalid port", http.StatusBadRequest)
+			return
+		}
+		port = n
+	}
+	name := r.PostFormValue("name")
+	kind := r.PostFormValue("kind")
+	schedule := r.PostFormValue("schedule")
+	gitURL := r.PostFormValue("git_url")
+
+	var err error
+	if gitURL != "" {
+		_, err = s.st.CreateGitApp(p.ID, name, port, gitURL, r.PostFormValue("git_branch"), kind, schedule)
+	} else {
+		_, err = s.st.CreateApp(p.ID, name, port, kind, schedule)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
 func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -387,10 +436,16 @@ func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.U
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
-	replicas, err := strconv.Atoi(r.PostFormValue("replicas"))
-	if err != nil {
-		http.Error(w, "invalid replicas", http.StatusBadRequest)
-		return
+	// cron apps don't scale replicas (the form omits the input for them);
+	// only parse it for kinds that take it.
+	var replicasPtr *int
+	if a.Kind != "cron" {
+		replicas, err := strconv.Atoi(r.PostFormValue("replicas"))
+		if err != nil {
+			http.Error(w, "invalid replicas", http.StatusBadRequest)
+			return
+		}
+		replicasPtr = &replicas
 	}
 	cpu, err := parseCPUMilli(r.PostFormValue("cpu"))
 	if err != nil {
@@ -403,13 +458,16 @@ func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.U
 		return
 	}
 
-	if _, err := s.scaleApp(r.Context(), p, a, scaleChange{Replicas: &replicas, CPUMilli: &cpu, MemoryMB: &mem}); err != nil {
+	if _, err := s.scaleApp(r.Context(), p, a, scaleChange{Replicas: replicasPtr, CPUMilli: &cpu, MemoryMB: &mem}); err != nil {
 		var re *scaleReplicasError
+		var ke *kindMismatchError
 		switch {
 		case errors.Is(err, errAppEjected):
 			http.Error(w, err.Error(), http.StatusConflict)
 		case errors.Is(err, errKubeUnavailable):
 			http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		case errors.As(err, &ke):
+			http.Error(w, ke.Error(), http.StatusBadRequest)
 		case errors.As(err, &re):
 			http.Error(w, re.Error(), http.StatusBadRequest)
 		default:

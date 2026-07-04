@@ -15,6 +15,7 @@ func appCmd() *cobra.Command {
 	var project string
 	var port int
 	var gitURL, branch string
+	var kind, schedule string
 
 	create := &cobra.Command{
 		Use:   "create <name>",
@@ -27,23 +28,27 @@ func appCmd() *cobra.Command {
 			}
 			var a client.AppInfo
 			if gitURL != "" {
-				a, err = c.CreateGitApp(project, args[0], port, gitURL, branch)
+				a, err = c.CreateGitApp(project, args[0], port, gitURL, branch, kind, schedule)
 			} else {
-				a, err = c.CreateApp(project, args[0], port)
+				a, err = c.CreateApp(project, args[0], port, kind, schedule)
 			}
 			if err != nil {
 				return err
 			}
-			cmd.Printf("created %s (port %d)\n", a.Name, a.Port)
+			cmd.Printf("created %s (kind %s, port %d)\n", a.Name, a.Kind, a.Port)
 			return nil
 		},
 	}
 	create.Flags().StringVar(&project, "project", "", "project name")
 	create.MarkFlagRequired("project")
-	create.Flags().IntVar(&port, "port", 0, "container port")
-	create.MarkFlagRequired("port")
+	// port is validated server-side: required for web, must be 0 for
+	// worker/cron. Not marked required here so worker/cron creation doesn't
+	// need a throwaway --port.
+	create.Flags().IntVar(&port, "port", 0, "container port (web apps only)")
 	create.Flags().StringVar(&gitURL, "git-url", "", "git repo URL (creates a git-source app)")
 	create.Flags().StringVar(&branch, "branch", "", "git branch (default: main)")
+	create.Flags().StringVar(&kind, "kind", "web", "app kind: web, worker, or cron")
+	create.Flags().StringVar(&schedule, "schedule", "", "cron schedule, 5-field (cron kind only)")
 
 	var listProject string
 	list := &cobra.Command{
@@ -60,7 +65,11 @@ func appCmd() *cobra.Command {
 				return err
 			}
 			for _, a := range apps {
-				cmd.Printf("%s\t%s\n", a.Name, a.URL)
+				url := a.URL
+				if a.Kind != "web" {
+					url = "-"
+				}
+				cmd.Printf("%s\t%s\t%s\n", a.Name, a.Kind, url)
 			}
 			return nil
 		},
@@ -82,7 +91,11 @@ func appCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cmd.Printf("%s\tstatus=%s\turl=%s\timage=%s\n", a.Name, a.Status, a.URL, a.Image)
+			cmd.Printf("%s\tkind=%s\tstatus=%s\turl=%s\timage=%s", a.Name, a.Kind, a.Status, a.URL, a.Image)
+			if a.Kind == "cron" {
+				cmd.Printf("\tschedule=%s", a.Schedule)
+			}
+			cmd.Println()
 			return nil
 		},
 	}

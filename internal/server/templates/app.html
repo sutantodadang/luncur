@@ -1,13 +1,14 @@
 {{define "app.html"}}
 {{template "head" .}}{{template "nav" .}}
 <p><a href="/ui/projects/{{.Project.Name}}">&larr; {{.Project.Name}}</a></p>
-<h1>{{.App.Name}} <span class="status-{{.Status}}">{{.Status}}</span>{{if .App.Ejected}} <span class="status-failed">ejected</span>{{end}}</h1>
+<h1>{{.App.Name}} <span class="status-{{.Status}}">{{.Status}}</span>{{if .App.Ejected}} <span class="status-failed">ejected</span>{{end}}{{if ne .App.Kind "web"}} <span class="status-pending">{{.App.Kind}}</span>{{end}}</h1>
+{{if eq .App.Kind "cron"}}<p>schedule: <code>{{.App.Schedule}}</code></p>{{end}}
 <p>{{if .Metrics.Available}}cpu {{.Metrics.CPUMillicores}}m &middot; mem {{.Metrics.MemoryMiB}}Mi &middot; {{end}}{{.Metrics.ReadyReplicas}}/{{.Metrics.DesiredReplicas}} ready &middot; {{.Metrics.DeployCount}} deploys</p>
-<p><a href="{{.URL}}">{{.URL}}</a> &middot;
+<p>{{if eq .App.Kind "web"}}<a href="{{.URL}}">{{.URL}}</a> &middot;{{end}}
    <a href="/v1/projects/{{.Project.Name}}/apps/{{.App.Name}}/raw">raw YAML</a>{{if not .App.Ejected}} &middot;
-   edit: <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a> &middot;
+   edit: {{if eq .App.Kind "web"}}<a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a> &middot;
    <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Service">Service</a> &middot;
-   <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Ingress">Ingress</a>{{end}}</p>
+   <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Ingress">Ingress</a>{{else if eq .App.Kind "worker"}}<a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a>{{else if eq .App.Kind "cron"}}<a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/CronJob">CronJob</a>{{end}}{{end}}</p>
 {{if .Warning}}<p class="err">{{.Warning}}</p>{{end}}
 
 {{if .App.Ejected}}
@@ -20,18 +21,20 @@
 <h2>Scale</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/scale">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <input type="number" name="replicas" min="0" value="{{.App.Replicas}}">
+  {{if ne .App.Kind "cron"}}<input type="number" name="replicas" min="0" value="{{.App.Replicas}}">{{end}}
   <label>cpu <input name="cpu" placeholder="250m" value="{{if .App.CPUMilli}}{{.App.CPUMilli}}m{{end}}"></label>
   <label>memory <input name="memory" placeholder="256Mi" value="{{if .App.MemoryMB}}{{.App.MemoryMB}}Mi{{end}}"></label>
   <button type="submit">scale</button>
 </form>
 
+{{if eq .App.Kind "web"}}
 <h2>Health check</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/health">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <label>path <input name="health_path" placeholder="/healthz" value="{{.App.HealthPath}}"></label>
   <button type="submit">save</button>
 </form>
+{{end}}
 
 {{if .IsGit}}
 <h2>Deploy</h2>
@@ -72,7 +75,7 @@
 </tr>{{end}}
 </table>
 
-{{if not .App.Ejected}}
+{{if and (not .App.Ejected) (eq .App.Kind "web")}}
 <h2>Domains</h2>
 <table><tr><th>Hostname</th><th>Cert</th><th>Expires</th><th></th></tr>
 {{range .Domains}}<tr>

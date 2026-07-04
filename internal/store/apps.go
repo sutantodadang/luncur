@@ -20,48 +20,68 @@ type App struct {
 	CPUMilli   int64
 	MemoryMB   int64
 	HealthPath string
+	// Kind is one of web|worker|cron; "" normalizes to "web" on create.
+	Kind string
+	// Schedule is a 5-field cron expression; only set (and required) for
+	// cron apps.
+	Schedule string
 }
 
-func (s *Store) CreateApp(projectID int64, name string, port int) (App, error) {
+// normalizeAppKind defaults an empty kind to "web" for back-compat with
+// callers written before app kinds existed.
+func normalizeAppKind(kind string) string {
+	if kind == "" {
+		return "web"
+	}
+	return kind
+}
+
+// validateAppKind enforces the port/schedule matrix per app kind: web needs
+// a port and no schedule; worker needs neither; cron needs a validated
+// schedule and no port.
+func validateAppKind(kind string, port int, schedule string) error {
+	switch kind {
+	case "web":
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("invalid port %d", port)
+		}
+		if schedule != "" {
+			return fmt.Errorf("schedule is only valid for cron apps")
+		}
+	case "worker":
+		if port != 0 {
+			return fmt.Errorf("worker apps do not take a port")
+		}
+		if schedule != "" {
+			return fmt.Errorf("schedule is only valid for cron apps")
+		}
+	case "cron":
+		if port != 0 {
+			return fmt.Errorf("cron apps do not take a port")
+		}
+		if schedule == "" {
+			return fmt.Errorf("cron apps require a schedule")
+		}
+		if err := validCronSpec(schedule); err != nil {
+			return fmt.Errorf("invalid schedule: %w", err)
+		}
+	default:
+		return fmt.Errorf("invalid kind %q (want web, worker, or cron)", kind)
+	}
+	return nil
+}
+
+func (s *Store) CreateApp(projectID int64, name string, port int, kind, schedule string) (App, error) {
 	if !validName(name) {
 		return App{}, fmt.Errorf("invalid app name %q (lowercase letters, digits, dashes; max 40 chars)", name)
 	}
-	if port < 1 || port > 65535 {
-		return App{}, fmt.Errorf("invalid port %d", port)
-	}
-	res, err := s.db.Exec(
-		`INSERT INTO apps (project_id, name, source_type, port) VALUES (?, ?, 'tarball', ?)`,
-		projectID, name, port,
-	)
-	if err != nil {
-		return App{}, fmt.Errorf("insert app: %w", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
+	kind = normalizeAppKind(kind)
+	if err := validateAppKind(kind, port, schedule); err != nil {
 		return App{}, err
 	}
-	return App{ID: id, ProjectID: projectID, Name: name, Port: port, Replicas: 1, SourceType: "tarball"}, nil
-}
-
-// CreateGitApp registers an app whose source is a git repo cloned at deploy
-// time. Phase 1 supports public repos / token-in-URL only; the git_token_enc
-// column stays unused until private-repo token sealing lands.
-func (s *Store) CreateGitApp(projectID int64, name string, port int, gitURL, gitBranch string) (App, error) {
-	if !validName(name) {
-		return App{}, fmt.Errorf("invalid app name %q (lowercase letters, digits, dashes; max 40 chars)", name)
-	}
-	if port < 1 || port > 65535 {
-		return App{}, fmt.Errorf("invalid port %d", port)
-	}
-	if gitURL == "" {
-		return App{}, fmt.Errorf("git url is required")
-	}
-	if gitBranch == "" {
-		gitBranch = "main"
-	}
 	res, err := s.db.Exec(
-		`INSERT INTO apps (project_id, name, source_type, git_url, git_branch, port) VALUES (?, ?, 'git', ?, ?, ?)`,
-		projectID, name, gitURL, gitBranch, port,
+		`INSERT INTO apps (project_id, name, source_type, port, kind, schedule) VALUES (?, ?, 'tarball', ?, ?, ?)`,
+		projectID, name, port, kind, schedule,
 	)
 	if err != nil {
 		return App{}, fmt.Errorf("insert app: %w", err)
@@ -72,7 +92,41 @@ func (s *Store) CreateGitApp(projectID int64, name string, port int, gitURL, git
 	}
 	return App{
 		ID: id, ProjectID: projectID, Name: name, Port: port, Replicas: 1,
-		SourceType: "git", GitURL: gitURL, GitBranch: gitBranch,
+		SourceType: "tarball", Kind: kind, Schedule: schedule,
+	}, nil
+}
+
+// CreateGitApp registers an app whose source is a git repo cloned at deploy
+// time. Phase 1 supports public repos / token-in-URL only; the git_token_enc
+// column stays unused until private-repo token sealing lands.
+func (s *Store) CreateGitApp(projectID int64, name string, port int, gitURL, gitBranch, kind, schedule string) (App, error) {
+	if !validName(name) {
+		return App{}, fmt.Errorf("invalid app name %q (lowercase letters, digits, dashes; max 40 chars)", name)
+	}
+	kind = normalizeAppKind(kind)
+	if err := validateAppKind(kind, port, schedule); err != nil {
+		return App{}, err
+	}
+	if gitURL == "" {
+		return App{}, fmt.Errorf("git url is required")
+	}
+	if gitBranch == "" {
+		gitBranch = "main"
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO apps (project_id, name, source_type, git_url, git_branch, port, kind, schedule) VALUES (?, ?, 'git', ?, ?, ?, ?, ?)`,
+		projectID, name, gitURL, gitBranch, port, kind, schedule,
+	)
+	if err != nil {
+		return App{}, fmt.Errorf("insert app: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return App{}, err
+	}
+	return App{
+		ID: id, ProjectID: projectID, Name: name, Port: port, Replicas: 1,
+		SourceType: "git", GitURL: gitURL, GitBranch: gitBranch, Kind: kind, Schedule: schedule,
 	}, nil
 }
 
@@ -80,9 +134,9 @@ func (s *Store) GetApp(projectID int64, name string) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path FROM apps WHERE project_id = ? AND name = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule FROM apps WHERE project_id = ? AND name = ?`,
 		projectID, name,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -101,9 +155,9 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path FROM apps WHERE id = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule FROM apps WHERE id = ?`,
 		id,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -117,7 +171,7 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 
 func (s *Store) ListApps(projectID int64) ([]App, error) {
 	rows, err := s.db.Query(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path FROM apps WHERE project_id = ? ORDER BY name`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule FROM apps WHERE project_id = ? ORDER BY name`,
 		projectID,
 	)
 	if err != nil {
@@ -128,7 +182,7 @@ func (s *Store) ListApps(projectID int64) ([]App, error) {
 	for rows.Next() {
 		var a App
 		var gitURL, gitBranch sql.NullString
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule); err != nil {
 			return nil, err
 		}
 		a.GitURL = gitURL.String

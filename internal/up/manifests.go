@@ -86,7 +86,7 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 			rule([]string{""}, []string{"pods/exec"}, "create"),
 			rule([]string{"apps"}, []string{"deployments", "statefulsets"}, full...),
 			rule([]string{"apps"}, []string{"replicasets"}, read...),
-			rule([]string{"batch"}, []string{"jobs"}, full...),
+			rule([]string{"batch"}, []string{"jobs", "cronjobs"}, full...),
 			rule([]string{"networking.k8s.io"}, []string{"ingresses"}, full...),
 			rule([]string{"helm.cattle.io"}, []string{"helmchartconfigs"}, manage...),
 			rule([]string{"cert-manager.io"}, []string{"clusterissuers"}, manage...),
