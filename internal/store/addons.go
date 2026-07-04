@@ -97,6 +97,19 @@ func (s *Store) AddonsForApp(appID int64) ([]Addon, error) {
 		 WHERE t.app_id = ? ORDER BY a.id`, appID)
 }
 
+// SetAddonVersion updates an addon's recorded version. The caller is
+// responsible for re-rendering and applying the addon's manifests.
+func (s *Store) SetAddonVersion(id int64, version string) error {
+	res, err := s.db.Exec(`UPDATE addons SET version = ? WHERE id = ?`, version, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) DeleteAddon(id int64) error {
 	res, err := s.db.Exec(`DELETE FROM addons WHERE id = ?`, id)
 	if err != nil {

@@ -191,3 +191,38 @@ func TestAppEjected(t *testing.T) {
 		t.Fatalf("missing app: %v", err)
 	}
 }
+
+func TestSetAppAdopted(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	a, err := s.CreateApp(p.ID, "web", 8080)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetAppEjected(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetApp(p.ID, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Ejected {
+		t.Fatal("want ejected after SetAppEjected")
+	}
+
+	if err := s.SetAppAdopted(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetApp(p.ID, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Ejected {
+		t.Fatal("want not ejected after SetAppAdopted")
+	}
+
+	if err := s.SetAppAdopted(99999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+}
