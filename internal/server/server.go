@@ -180,6 +180,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{project}/addons/{name}/attach", s.authed(s.handleAttachAddon))
 	mux.HandleFunc("POST /v1/projects/{project}/addons/{name}/detach", s.authed(s.handleDetachAddon))
 	mux.HandleFunc("DELETE /v1/projects/{project}/addons/{name}", s.authed(s.handleDeleteAddon))
+	mux.HandleFunc("POST /v1/projects/{project}/addons/{name}/upgrade", s.authed(s.handleUpgradeAddon))
 	mux.HandleFunc("POST /v1/backups", s.adminOnly(s.handleCreateBackup))
 	mux.HandleFunc("GET /v1/backups", s.adminOnly(s.handleListBackups))
 	mux.HandleFunc("POST /v1/backups/prune", s.adminOnly(s.handlePruneBackups))

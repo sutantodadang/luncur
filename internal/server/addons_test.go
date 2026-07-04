@@ -224,3 +224,65 @@ func TestAddonSecondSameTypeSuffix(t *testing.T) {
 		t.Fatalf("expected suffixed second addon key: %s", sec)
 	}
 }
+
+func TestAddonUpgrade(t *testing.T) {
+	_, srv, st, actions := addonTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/addons", admin,
+		`{"type":"postgres","name":"pg1"}`).Body.Close()
+
+	*actions = nil
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/proj/addons/pg1/upgrade", admin,
+		`{"version":"17"}`)
+	if resp.StatusCode != 200 {
+		t.Fatalf("upgrade: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+		Warning string `json:"warning"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.Version != "17" {
+		t.Fatalf("version = %q, want 17", out.Version)
+	}
+	if !strings.Contains(out.Warning, "take a backup") {
+		t.Fatalf("warning = %q, want migration warning", out.Warning)
+	}
+
+	p, err := st.GetProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.GetAddon(p.ID, "pg1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Version != "17" {
+		t.Fatalf("stored version = %q, want 17", a.Version)
+	}
+
+	applied := strings.Join(*actions, ",")
+	if !strings.Contains(applied, "statefulsets") {
+		t.Fatalf("no StatefulSet apply recorded, actions: %s", applied)
+	}
+
+	// Missing addon -> 404.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/proj/addons/nope/upgrade", admin,
+		`{"version":"17"}`)
+	resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatalf("missing addon: want 404, got %d", resp.StatusCode)
+	}
+
+	// Empty version -> 400.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/proj/addons/pg1/upgrade", admin, `{}`)
+	resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("empty version: want 400, got %d", resp.StatusCode)
+	}
+}
