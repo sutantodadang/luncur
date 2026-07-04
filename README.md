@@ -238,6 +238,37 @@ Set the ACME account email (used by the `builtin` provider and passed to
 luncur config set acme_email you@example.com
 ```
 
+### Wildcard domains & DNS-01
+
+`domain add` also accepts `*.example.com` (one leading `*.`). Wildcards
+can't be validated over HTTP-01, so they need a DNS provider luncur can
+publish TXT records through:
+
+```sh
+luncur config set dns_provider cloudflare       # cloudflare | route53 | rfc2136 | none (default)
+luncur config set dns_cloudflare_token ...      # write-only: reads show "(set)"
+
+# route53
+luncur config set dns_route53_access_key AKIA...
+luncur config set dns_route53_secret_key ...    # write-only
+luncur config set dns_route53_region us-east-1  # optional
+
+# rfc2136 (nsupdate + TSIG, e.g. BIND)
+luncur config set dns_rfc2136_server ns1.example.com
+luncur config set dns_rfc2136_tsig_name luncur-key
+luncur config set dns_rfc2136_tsig_secret ...   # write-only
+luncur config set dns_rfc2136_tsig_algo hmac-sha256  # optional, default
+```
+
+With a provider configured, the `builtin` cert manager validates every
+domain via DNS-01 (a TXT record at `_acme-challenge.<domain>`, polling the
+zone's authoritative nameservers with a ~2 minute timeout) instead of
+HTTP-01 — wildcards require it, plain hostnames just use it. A wildcard
+without a configured `dns_provider` is refused with a 400. `traefik` and
+`cert-manager` providers are unchanged — they own their own solving.
+Failures behave like HTTP-01: the domain shows `cert_status failed` with
+the message and the app keeps serving.
+
 ## Addons (Postgres/Redis)
 
 ```sh
@@ -470,5 +501,6 @@ mirrored in a hidden `_csrf` field, checked on every POST before it runs.
 - Invite email is best-effort — unconfigured SMTP or a send failure never blocks invite creation; the API returns `emailed:false` plus a warning and the `/ui/register?token=...` link can still be shared out of band.
 - Registration marks the invite used *after* creating the user (two non-atomic statements against a single-instance SQLite server); a burned-but-unused invite can't happen, since validation failures abort before the user is created and a duplicate-email failure aborts before the invite is marked used.
 - Registry GC's "bytes reclaimed" figure is measured with `du -sk` inside the registry pod before/after `garbage-collect` (busybox `du`, KiB resolution) rather than precise blob accounting; the manifest-delete phase always runs and is counted accurately regardless, and when the exec phase itself fails (no kube, no pod, exec error) bytes reclaimed is reported as unknown (`-1`) rather than blocking the sweep.
+- RFC2136 DNS support shells out to `nsupdate` (bind-tools, in the release image); the TSIG secret rides the script on stdin, never argv (which would be visible in `ps`). It's a runtime binary, not a Go module — the no-new-dependencies rule is about Go modules (`git`, `pg_dump`, `nsupdate` are all selected on demand).
 
 Design docs: `docs/superpowers/specs/`. Plans: `docs/superpowers/plans/`.
