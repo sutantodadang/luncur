@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -262,6 +263,48 @@ func TestSetResources(t *testing.T) {
 	}
 
 	if err := s.SetResources(99999, 100, 100); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+}
+
+func TestSetHealthPath(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	a, err := s.CreateApp(p.ID, "api", 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.HealthPath != "" {
+		t.Fatalf("want unset health path by default, got %+v", a)
+	}
+
+	if err := s.SetHealthPath(a.ID, "/healthz"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetApp(p.ID, "api")
+	if err != nil || got.HealthPath != "/healthz" {
+		t.Fatalf("get after set health path: %+v %v", got, err)
+	}
+
+	if err := s.SetHealthPath(a.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetApp(p.ID, "api")
+	if err != nil || got.HealthPath != "" {
+		t.Fatalf("get after clear health path: %+v %v", got, err)
+	}
+
+	if err := s.SetHealthPath(a.ID, "healthz"); err == nil {
+		t.Fatal("want error for missing leading slash")
+	}
+	if err := s.SetHealthPath(a.ID, "/"+strings.Repeat("a", 256)); err == nil {
+		t.Fatal("want error for path over 256 chars")
+	}
+	if err := s.SetHealthPath(a.ID, "/health z"); err == nil {
+		t.Fatal("want error for embedded space")
+	}
+
+	if err := s.SetHealthPath(99999, "/healthz"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown id: %v, want ErrNotFound", err)
 	}
 }

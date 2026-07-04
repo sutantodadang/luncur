@@ -26,6 +26,13 @@
   <button type="submit">scale</button>
 </form>
 
+<h2>Health check</h2>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/health">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <label>path <input name="health_path" placeholder="/healthz" value="{{.App.HealthPath}}"></label>
+  <button type="submit">save</button>
+</form>
+
 {{if .IsGit}}
 <h2>Deploy</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/deploy">

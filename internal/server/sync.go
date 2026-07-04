@@ -114,6 +114,7 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 		Replicas:           int32(a.Replicas),
 		CPUMilli:           a.CPUMilli,
 		MemoryMB:           a.MemoryMB,
+		HealthPath:         a.HealthPath,
 		Overrides:          overrides,
 		ExtraHosts:         extraHosts,
 		IngressAnnotations: annotations,

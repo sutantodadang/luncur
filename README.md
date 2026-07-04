@@ -219,6 +219,13 @@ luncur scale myapp --project myproj --cpu 250m --memory 256Mi   # requests==limi
 luncur scale myapp --project myproj --cpu "" --memory ""        # clear
 ```
 
+**Per-app HTTP health checks:**
+```sh
+luncur health myapp --project myproj --path /healthz   # readiness+liveness probes
+luncur health myapp --project myproj --off
+```
+Readiness gates rollouts and Service endpoints (zero-downtime deploys), while liveness restarts a wedged container.
+
 **Rollback:**
 ```sh
 luncur rollback myapp --project myproj               # back to the previous live deploy
@@ -640,6 +647,7 @@ rest with AES-256-GCM; the sealed settings are write-only through the API
 - Registry GC's "bytes reclaimed" figure is measured with `du -sk` inside the registry pod before/after `garbage-collect` (busybox `du`, KiB resolution) rather than precise blob accounting; the manifest-delete phase always runs and is counted accurately regardless, and when the exec phase itself fails (no kube, no pod, exec error) bytes reclaimed is reported as unknown (`-1`) rather than blocking the sweep.
 - RFC2136 DNS support shells out to `nsupdate` (bind-tools, in the release image); the TSIG secret rides the script on stdin, never argv (which would be visible in `ps`). It's a runtime binary, not a Go module — the no-new-dependencies rule is about Go modules (`git`, `pg_dump`, `nsupdate` are all selected on demand).
 - Per-app CPU/memory limits set requests==limits (Guaranteed QoS) deliberately, rather than exposing separate requests/limits fields — the YAML override editor is the escape hatch for anyone who needs a split.
+- Health check probe timings (readiness period/threshold, liveness initial delay/period/threshold) are fixed, not configurable — the YAML override editor is the escape hatch for anyone who needs to tune them.
 
 Every feature shipped with a written spec, a TDD implementation plan, and
 a full test suite that runs without a cluster or network.

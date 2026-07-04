@@ -28,6 +28,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(appCmd())
 	root.AddCommand(deployCmd())
 	root.AddCommand(scaleCmd())
+	root.AddCommand(healthCmd())
 	root.AddCommand(destroyCmd())
 	root.AddCommand(envCmd())
 	root.AddCommand(editCmd())

@@ -253,6 +253,44 @@ func TestScaleCommand(t *testing.T) {
 	}
 }
 
+// TestHealthCommand exercises healthCmd's flag matrix: --path sets, --off
+// clears, and neither/both are rejected before hitting the API.
+func TestHealthCommand(t *testing.T) {
+	srv := testEnv(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "app", "create", "web", "--project", "p", "--port", "8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "health", "web", "--project", "p", "--path", "/healthz")
+	if err != nil {
+		t.Fatalf("health --path: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "health check: /healthz") {
+		t.Fatalf("--path output: %q", out)
+	}
+
+	out, err = run(t, "health", "web", "--project", "p", "--off")
+	if err != nil {
+		t.Fatalf("health --off: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "health check: off") {
+		t.Fatalf("--off output: %q", out)
+	}
+
+	if _, err := run(t, "health", "web", "--project", "p"); err == nil {
+		t.Fatal("want error when neither --path nor --off is given")
+	}
+	if _, err := run(t, "health", "web", "--project", "p", "--path", "/healthz", "--off"); err == nil {
+		t.Fatal("want error when both --path and --off are given")
+	}
+}
+
 func TestSSHKeyCommands(t *testing.T) {
 	srv := testEnv(t)
 
