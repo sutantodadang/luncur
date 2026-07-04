@@ -7,9 +7,11 @@
 *Deploys as simple as Heroku, on hardware you own — one Go binary, SQLite,
 and real Kubernetes underneath, with an escape hatch when you outgrow it.*
 
+[![CI](https://github.com/sutantodadang/luncur/actions/workflows/ci.yml/badge.svg)](https://github.com/sutantodadang/luncur/actions/workflows/ci.yml)
+[![Release](https://github.com/sutantodadang/luncur/actions/workflows/release.yml/badge.svg)](https://github.com/sutantodadang/luncur/actions/workflows/release.yml)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/sutantodadang/luncur?include_prereleases)](https://github.com/sutantodadang/luncur/releases)
+[![Latest release](https://img.shields.io/github/v/release/sutantodadang/luncur?include_prereleases)](https://github.com/sutantodadang/luncur/releases)
 [![Sponsor](https://img.shields.io/badge/❤-Sponsor-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/sutantodadang)
 
 [Quickstart](#-quickstart) · [Features](#-features) · [How it works](#-how-it-works) · [Documentation](#-documentation) · [Roadmap](#-roadmap) · [Sponsor](#-sponsor-luncur)
@@ -632,16 +634,14 @@ rest with AES-256-GCM; the sealed settings are write-only through the API
 - Registry GC's "bytes reclaimed" figure is measured with `du -sk` inside the registry pod before/after `garbage-collect` (busybox `du`, KiB resolution) rather than precise blob accounting; the manifest-delete phase always runs and is counted accurately regardless, and when the exec phase itself fails (no kube, no pod, exec error) bytes reclaimed is reported as unknown (`-1`) rather than blocking the sweep.
 - RFC2136 DNS support shells out to `nsupdate` (bind-tools, in the release image); the TSIG secret rides the script on stdin, never argv (which would be visible in `ps`). It's a runtime binary, not a Go module — the no-new-dependencies rule is about Go modules (`git`, `pg_dump`, `nsupdate` are all selected on demand).
 
-Design docs: [`docs/superpowers/specs/`](docs/superpowers/specs/) ·
-Implementation plans: [`docs/superpowers/plans/`](docs/superpowers/plans/) —
-every feature shipped with a written spec, a TDD implementation plan, and a
-full test suite that runs without a cluster or network.
+Every feature shipped with a written spec, a TDD implementation plan, and
+a full test suite that runs without a cluster or network.
 
 </details>
 
 ## 🗺️ Roadmap
 
-**Shipped** (Phases 1–4 — every phase has a design spec + implementation plans in `docs/superpowers/`):
+**Shipped:**
 
 - [x] One-command install on a fresh VPS (`luncur up`), safe to re-run
 - [x] Deploys: image, local source, git URL, `git push` over SSH
