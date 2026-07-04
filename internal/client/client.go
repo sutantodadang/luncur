@@ -317,6 +317,13 @@ func (c *Client) Scale(project, app string, replicas *int, cpu, memory *string) 
 		body, nil)
 }
 
+// SetHealth sets (or, with path == "", clears) the app's HTTP health check
+// path used for readiness/liveness probes.
+func (c *Client) SetHealth(project, app, path string) error {
+	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/health",
+		map[string]string{"path": path}, nil)
+}
+
 func (c *Client) EnvSet(project, app, key, value string) error {
 	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env",
 		map[string]string{"key": key, "value": value}, nil)

@@ -30,6 +30,9 @@ type Input struct {
 	// QoS); 0 means unset — no resources block is rendered for that resource.
 	CPUMilli int64
 	MemoryMB int64
+	// HealthPath is the HTTP path probed for readiness/liveness; "" means
+	// unset — no probes are rendered.
+	HealthPath string
 	// Overrides maps Kind -> strategic-merge-patch JSON. Applied by Task 6.
 	Overrides map[string]string
 	// ExtraHosts adds Ingress rules (same backend) for custom domains.
@@ -167,6 +170,18 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			res[corev1.ResourceMemory] = *resource.NewQuantity(in.MemoryMB*1024*1024, resource.BinarySI)
 		}
 		container.Resources = corev1.ResourceRequirements{Requests: res, Limits: res}
+	}
+	if in.HealthPath != "" {
+		probe := func() *corev1.Probe {
+			return &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{Path: in.HealthPath, Port: intstr.FromInt32(in.Port)},
+			}}
+		}
+		r := probe()
+		r.PeriodSeconds, r.FailureThreshold = 5, 3
+		l := probe()
+		l.InitialDelaySeconds, l.PeriodSeconds, l.FailureThreshold = 15, 20, 3
+		container.ReadinessProbe, container.LivenessProbe = r, l
 	}
 	replicas := in.Replicas
 	dep := &appsv1.Deployment{

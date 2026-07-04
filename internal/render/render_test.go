@@ -211,6 +211,48 @@ func TestRenderResourcesNeitherMeansNoResourcesKey(t *testing.T) {
 	}
 }
 
+func TestRenderHealthPath(t *testing.T) {
+	in := testInput()
+	in.HealthPath = "/healthz"
+	r := mustRender(t, in, nil)
+	var d appsv1.Deployment
+	if err := json.Unmarshal(objByKind(t, r, "Deployment"), &d); err != nil {
+		t.Fatal(err)
+	}
+	c := d.Spec.Template.Spec.Containers[0]
+	if c.ReadinessProbe == nil || c.LivenessProbe == nil {
+		t.Fatalf("want both probes set: %+v", c)
+	}
+	rp := c.ReadinessProbe
+	if rp.HTTPGet == nil || rp.HTTPGet.Path != "/healthz" || rp.HTTPGet.Port.IntValue() != 3000 {
+		t.Fatalf("readiness httpGet: %+v", rp.HTTPGet)
+	}
+	if rp.PeriodSeconds != 5 || rp.FailureThreshold != 3 {
+		t.Fatalf("readiness timing: period=%d failureThreshold=%d", rp.PeriodSeconds, rp.FailureThreshold)
+	}
+	lp := c.LivenessProbe
+	if lp.HTTPGet == nil || lp.HTTPGet.Path != "/healthz" || lp.HTTPGet.Port.IntValue() != 3000 {
+		t.Fatalf("liveness httpGet: %+v", lp.HTTPGet)
+	}
+	if lp.InitialDelaySeconds != 15 || lp.PeriodSeconds != 20 || lp.FailureThreshold != 3 {
+		t.Fatalf("liveness timing: initialDelay=%d period=%d failureThreshold=%d", lp.InitialDelaySeconds, lp.PeriodSeconds, lp.FailureThreshold)
+	}
+}
+
+func TestRenderHealthPathUnsetMeansNoProbes(t *testing.T) {
+	r := mustRender(t, testInput(), nil)
+	var d appsv1.Deployment
+	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+	c := d.Spec.Template.Spec.Containers[0]
+	if c.ReadinessProbe != nil || c.LivenessProbe != nil {
+		t.Fatalf("want no probes when health path unset: %+v", c)
+	}
+	raw := objByKind(t, r, "Deployment")
+	if strings.Contains(string(raw), "readinessProbe") || strings.Contains(string(raw), "livenessProbe") {
+		t.Fatalf("raw JSON should not contain probe keys:\n%s", raw)
+	}
+}
+
 func TestRenderCustomDomains(t *testing.T) {
 	in := Input{
 		AppName: "web", Namespace: "proj", Image: "img:1",

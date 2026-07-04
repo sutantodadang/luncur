@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type App struct {
@@ -18,6 +19,7 @@ type App struct {
 	Ejected    bool
 	CPUMilli   int64
 	MemoryMB   int64
+	HealthPath string
 }
 
 func (s *Store) CreateApp(projectID int64, name string, port int) (App, error) {
@@ -78,9 +80,9 @@ func (s *Store) GetApp(projectID int64, name string) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb FROM apps WHERE project_id = ? AND name = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path FROM apps WHERE project_id = ? AND name = ?`,
 		projectID, name,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -99,9 +101,9 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb FROM apps WHERE id = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path FROM apps WHERE id = ?`,
 		id,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -115,7 +117,7 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 
 func (s *Store) ListApps(projectID int64) ([]App, error) {
 	rows, err := s.db.Query(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb FROM apps WHERE project_id = ? ORDER BY name`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path FROM apps WHERE project_id = ? ORDER BY name`,
 		projectID,
 	)
 	if err != nil {
@@ -126,7 +128,7 @@ func (s *Store) ListApps(projectID int64) ([]App, error) {
 	for rows.Next() {
 		var a App
 		var gitURL, gitBranch sql.NullString
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath); err != nil {
 			return nil, err
 		}
 		a.GitURL = gitURL.String
@@ -193,6 +195,32 @@ func (s *Store) SetResources(id int64, cpuMilli, memoryMB int64) error {
 		return fmt.Errorf("cpu/memory must be >= 0, got cpu=%d memory=%d", cpuMilli, memoryMB)
 	}
 	res, err := s.db.Exec(`UPDATE apps SET cpu_milli = ?, memory_mb = ? WHERE id = ?`, cpuMilli, memoryMB, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetHealthPath sets the HTTP path probed for readiness/liveness.
+// "" clears (no probes rendered).
+func (s *Store) SetHealthPath(id int64, path string) error {
+	if path != "" {
+		if !strings.HasPrefix(path, "/") {
+			return fmt.Errorf("health path must start with '/', got %q", path)
+		}
+		if len(path) > 256 {
+			return fmt.Errorf("health path must be at most 256 characters, got %d", len(path))
+		}
+		for _, r := range path {
+			if r <= ' ' || r == 0x7f {
+				return fmt.Errorf("health path must not contain whitespace or control characters")
+			}
+		}
+	}
+	res, err := s.db.Exec(`UPDATE apps SET health_path = ? WHERE id = ?`, path, id)
 	if err != nil {
 		return err
 	}

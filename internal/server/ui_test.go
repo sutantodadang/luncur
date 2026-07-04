@@ -460,6 +460,57 @@ func TestUIScaleResourcesPersistAndPrefill(t *testing.T) {
 	}
 }
 
+// TestUIHealthPersistsAndPrefill posts a health path through the health
+// form, checks it persists, then loads the app page and checks the form
+// shows the new value back (value=, pre-filled).
+func TestUIHealthPersistsAndPrefill(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+	form := url.Values{"health_path": {"/healthz"}}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/web/apps/api/health", csrfCk, ck, form)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST health: want 303, got %d", resp.StatusCode)
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.HealthPath != "/healthz" {
+		t.Fatalf("health path not persisted: %+v", a)
+	}
+
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web/apps/api", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	page, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer page.Body.Close()
+	body, err := io.ReadAll(page.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `value="/healthz"`) {
+		t.Fatalf("want health path pre-filled with /healthz, got:\n%s", body)
+	}
+}
+
 // TestUIDeployGitAppWithoutKube503 guards the UI git-deploy path when the
 // server has no kube client: it must answer 503 (mirroring the API's
 // kubernetes_unavailable), NOT silently redirect, and must not create a
