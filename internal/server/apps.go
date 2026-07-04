@@ -318,11 +318,13 @@ func (s *server) applyImageDeploy(ctx context.Context, p store.Project, a store.
 		if e := s.st.SetDeploymentStatus(d.ID, "failed"); e != nil {
 			log.Printf("mark deploy %d failed: %v", d.ID, e)
 		}
+		s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Err: err.Error()})
 		return err
 	}
 	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
 		log.Printf("mark deploy %d live (apply already succeeded): %v", d.ID, err)
 	}
+	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, URL: "http://" + hostFor(a.Name, s.externalIP)})
 	return nil
 }
 

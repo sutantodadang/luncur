@@ -7,8 +7,11 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
+	"io"
 	"math/big"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -341,5 +344,105 @@ func TestIssueDNS01PickedForWildcard(t *testing.T) {
 	if !hasPatch(*patches, "secrets", p.Namespace, certSecretName(a.Name, d.Hostname),
 		`"type":"kubernetes.io/tls"`) {
 		t.Fatalf("no applied TLS secret found in patches: %+v", *patches)
+	}
+}
+
+// notifyCaptureServer starts an httptest server that captures each POSTed
+// body onto a channel.
+func notifyCaptureServer(t *testing.T) (*httptest.Server, chan []byte) {
+	t.Helper()
+	ch := make(chan []byte, 4)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		ch <- body
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(ts.Close)
+	return ts, ch
+}
+
+// TestCertIssueNotifiesOnSuccess extends TestCertManagerIssuesAndRenews with
+// a notify_url receiver: a successful issuance must deliver a cert_issued
+// notification carrying the domain's hostname.
+func TestCertIssueNotifiesOnSuccess(t *testing.T) {
+	srv, st, _, _ := certTestServer(t)
+	p, a, d := seedDomain(t, st, "www.example.com")
+
+	mux := httptest.NewServer(srv.handler())
+	t.Cleanup(mux.Close)
+	fakeDir := acmetest.New(t, strings.TrimPrefix(mux.URL, "http://"))
+	srv.certs.directoryURL = fakeDir.DirectoryURL()
+
+	ts, ch := notifyCaptureServer(t)
+	sealNotifyURL(t, srv, ts.URL)
+	if err := st.SetSetting("notify_events", "cert_issued"); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	srv.certs.issue(ctx, certJob{p, a, d})
+
+	got, err := st.ListDomains(a.ID)
+	if err != nil || len(got) != 1 || got[0].CertStatus != "issued" {
+		t.Fatalf("domain not issued: %+v err=%v", got, err)
+	}
+
+	select {
+	case body := <-ch:
+		var out struct {
+			Event string `json:"event"`
+			URL   string `json:"url"`
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.Event != "cert_issued" || out.URL != d.Hostname {
+			t.Fatalf("got %+v", out)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for cert_issued notification")
+	}
+}
+
+// TestCertIssueNotifiesOnFailure extends TestCertManagerFailureMarksDomain
+// with a notify_url receiver: a failed issuance must deliver a cert_failed
+// notification carrying the hostname and a non-empty error.
+func TestCertIssueNotifiesOnFailure(t *testing.T) {
+	srv, st, _, _ := certTestServer(t)
+	p, a, d := seedDomain(t, st, "www.example.com")
+
+	fakeDir := acmetest.New(t, "127.0.0.1:1")
+	srv.certs.directoryURL = fakeDir.DirectoryURL()
+
+	ts, ch := notifyCaptureServer(t)
+	sealNotifyURL(t, srv, ts.URL)
+	if err := st.SetSetting("notify_events", "cert_failed"); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	srv.certs.issue(ctx, certJob{p, a, d})
+
+	got, err := st.ListDomains(a.ID)
+	if err != nil || len(got) != 1 || got[0].CertStatus != "failed" {
+		t.Fatalf("domain not failed: %+v err=%v", got, err)
+	}
+
+	select {
+	case body := <-ch:
+		var out struct {
+			Event string `json:"event"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.Event != "cert_failed" || out.Error == "" {
+			t.Fatalf("got %+v", out)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for cert_failed notification")
 	}
 }

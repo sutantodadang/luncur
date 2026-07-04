@@ -142,6 +142,7 @@ func (m *certManager) issue(ctx context.Context, j certJob) {
 		if e := st.SetDomainCert(j.d.ID, "failed", err.Error(), ""); e != nil {
 			log.Printf("mark cert failed: %v", e)
 		}
+		m.s.notify(notifyEvent{Event: "cert_failed", Project: j.p.Name, App: j.a.Name, URL: j.d.Hostname, Err: err.Error()})
 	}
 	if err := st.SetDomainCert(j.d.ID, "pending", "", j.d.CertExpiresAt); err != nil {
 		fail(err)
@@ -218,6 +219,7 @@ func (m *certManager) issue(ctx context.Context, j certJob) {
 		log.Printf("sync after cert %s: %v", j.d.Hostname, err)
 	}
 	log.Printf("cert issued for %s (expires %s)", j.d.Hostname, notAfter.Format(time.RFC3339))
+	m.s.notify(notifyEvent{Event: "cert_issued", Project: j.p.Name, App: j.a.Name, URL: j.d.Hostname})
 }
 
 // readbackExpiry fills cert_expires_at for cert-manager-managed domains by

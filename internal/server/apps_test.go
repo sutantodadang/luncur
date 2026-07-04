@@ -2,11 +2,14 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -431,4 +434,141 @@ func TestDeployLogsReturnsStoredBytes(t *testing.T) {
 	if string(body) != string(want) {
 		t.Fatalf("logs=%q want %q", body, want)
 	}
+}
+
+// applyImageDeployServer builds a bare *server (fake dynamic client, sealer,
+// no HTTP mux) for exercising applyImageDeploy directly. failApply makes
+// every dynamic-client action error, so the render+apply path fails.
+func applyImageDeployServer(t *testing.T, failApply bool) (*server, *store.Store) {
+	t.Helper()
+	st := newTestStore(t)
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		if failApply {
+			return true, nil, fmt.Errorf("apply boom")
+		}
+		return true, nil, nil
+	})
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newServer(Deps{Store: st, Sealer: sealer, Kube: kube.NewFromDynamic(dyn), ExternalIP: "1.2.3.4"})
+	return srv, st
+}
+
+// sealNotifyURL seals url into notify_url directly against srv's own
+// sealer/store (these fixtures aren't wrapped in an HTTP mux).
+func sealNotifyURL(t *testing.T, srv *server, url string) {
+	t.Helper()
+	sealed, err := srv.sealer.Seal([]byte(url))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.st.SetSetting("notify_url", "sealed:"+hex.EncodeToString(sealed)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestApplyImageDeployNotifies covers deploy_success/deploy_failed delivery
+// out of applyImageDeploy — the render+apply core shared by the prebuilt
+// image deploy path and rollback (rollback.go's rollback calls the same
+// function), so this test doubles as coverage for both callers.
+func TestApplyImageDeployNotifies(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		srv, st := applyImageDeployServer(t, false)
+		ch := make(chan []byte, 4)
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			ch <- body
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(ts.Close)
+		sealNotifyURL(t, srv, ts.URL)
+		if err := st.SetSetting("notify_events", "deploy_success"); err != nil {
+			t.Fatal(err)
+		}
+
+		p, err := st.CreateProject("web")
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := st.CreateDeployment(a.ID, "deploying", "nginx:1", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := srv.applyImageDeploy(context.Background(), p, a, d, "nginx:1"); err != nil {
+			t.Fatalf("applyImageDeploy: %v", err)
+		}
+
+		select {
+		case body := <-ch:
+			var out struct {
+				Event string `json:"event"`
+				URL   string `json:"url"`
+			}
+			if err := json.Unmarshal(body, &out); err != nil {
+				t.Fatal(err)
+			}
+			if out.Event != "deploy_success" || out.URL != "http://api.1-2-3-4.sslip.io" {
+				t.Fatalf("got %+v", out)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for deploy_success notification")
+		}
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		srv, st := applyImageDeployServer(t, true)
+		ch := make(chan []byte, 4)
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			ch <- body
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(ts.Close)
+		sealNotifyURL(t, srv, ts.URL)
+		if err := st.SetSetting("notify_events", "deploy_failed"); err != nil {
+			t.Fatal(err)
+		}
+
+		p, err := st.CreateProject("web")
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := st.CreateDeployment(a.ID, "deploying", "nginx:1", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := srv.applyImageDeploy(context.Background(), p, a, d, "nginx:1"); err == nil {
+			t.Fatal("applyImageDeploy: want error when apply fails")
+		}
+
+		select {
+		case body := <-ch:
+			var out struct {
+				Event string `json:"event"`
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(body, &out); err != nil {
+				t.Fatal(err)
+			}
+			if out.Event != "deploy_failed" || out.Error == "" {
+				t.Fatalf("got %+v", out)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for deploy_failed notification")
+		}
+	})
 }

@@ -551,6 +551,26 @@ unconfigured SMTP) never blocks invite creation — the API returns
 `emailed:false` plus a warning, and the invite link can be copied as
 before.
 
+**Notifications (deploy & cert events):**
+
+```sh
+luncur config set notify_url https://discord.com/api/webhooks/...   # write-only: reads show "(set)"
+luncur config set notify_format discord      # generic (default) | discord | slack | telegram
+luncur config set notify_events deploy_success,deploy_failed,cert_failed
+# telegram: notify_url = https://api.telegram.org/bot<token>/sendMessage
+luncur config set notify_telegram_chat 123456789
+```
+
+Unset `notify_url` disables the feature entirely. `notify_events` is a CSV
+subset of `deploy_success`, `deploy_failed`, `cert_issued`, `cert_failed`;
+default when unset is `deploy_failed,cert_failed`. Delivery is best-effort:
+one attempt, a 5s timeout, failures logged — a notification never blocks a
+deploy or cert issuance. The `generic` format POSTs
+`{"event","project","app","deploy_id","status","url","error","time"}`
+(`deploy_id` omitted for cert events, `url`/`error` omitted when empty, `time`
+RFC3339); `discord`/`slack` POST `{"content"|"text": <message>}`; `telegram`
+adds `"chat_id"` from `notify_telegram_chat`.
+
 **Security note:** archives contain the sealer key — whoever can read a
 backup can unseal your env vars and addon credentials. The S3 bucket is
 the trust boundary; scope its access accordingly.
@@ -692,6 +712,7 @@ rest with AES-256-GCM; the sealed settings are write-only through the API
 - CSRF is the stateless double-submit-cookie pattern (a random `luncur_csrf` cookie plus a matching `_csrf` hidden form field, compared with `crypto/subtle`) rather than a server-stored per-session token — same protection for this threat model (browser forms, no JS API), zero schema.
 - Rollback's registry-presence check only applies to images hosted in the embedded registry (ref prefixed with the configured `--registry-host`); externally-hosted image refs are assumed present since luncur has no credentials to check them.
 - Invite email is best-effort — unconfigured SMTP or a send failure never blocks invite creation; the API returns `emailed:false` plus a warning and the `/ui/register?token=...` link can still be shared out of band.
+- Deploy/cert notifications read `notify_*` settings at send time (no restart needed to pick up a change) and make a single delivery attempt — no retry queue by design, matching the rest of the best-effort notification surface (invite email, backup upload).
 - Registration marks the invite used *after* creating the user (two non-atomic statements against a single-instance SQLite server); a burned-but-unused invite can't happen, since validation failures abort before the user is created and a duplicate-email failure aborts before the invite is marked used.
 - Registry GC's "bytes reclaimed" figure is measured with `du -sk` inside the registry pod before/after `garbage-collect` (busybox `du`, KiB resolution) rather than precise blob accounting; the manifest-delete phase always runs and is counted accurately regardless, and when the exec phase itself fails (no kube, no pod, exec error) bytes reclaimed is reported as unknown (`-1`) rather than blocking the sweep.
 - RFC2136 DNS support shells out to `nsupdate` (bind-tools, in the release image); the TSIG secret rides the script on stdin, never argv (which would be visible in `ps`). It's a runtime binary, not a Go module — the no-new-dependencies rule is about Go modules (`git`, `pg_dump`, `nsupdate` are all selected on demand).

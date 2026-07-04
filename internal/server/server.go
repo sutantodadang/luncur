@@ -54,6 +54,10 @@ type server struct {
 	dataDir         string
 	secretKeyPath   string
 
+	// httpClient is used by the deploy/cert notifier (notify.go); tests may
+	// swap it to point at an httptest.Server or a short-timeout client.
+	httpClient *http.Client
+
 	// execer runs commands in pods (addon dumps); s.kube in production,
 	// a fake in tests. nowFn is injectable for deterministic archive names.
 	execer kube.PodExecer
@@ -112,6 +116,7 @@ func newServer(d Deps) *server {
 		dataDir:         d.DataDir,
 		secretKeyPath:   d.SecretKeyPath,
 		nowFn:           time.Now,
+		httpClient:      &http.Client{Timeout: 5 * time.Second},
 	}
 	if d.Kube != nil {
 		s.execer = d.Kube
