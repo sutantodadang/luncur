@@ -54,7 +54,7 @@ luncur whoami
 luncur user add teammate@example.com --password ... [--role admin|member]
 
 # Invite teammates instead of setting a password for them (admin only)
-luncur invite create [--role admin|member]   # prints a one-time /ui/register link
+luncur invite create [--role admin|member] [--email addr]  # prints a one-time /ui/register link; --email sends it via SMTP
 luncur invite list                           # TOKEN, ROLE, EXPIRES, USED
 luncur invite revoke <token>
 ```
@@ -177,7 +177,9 @@ Admins get a **users page** (`/ui/users`) to list every user (email, role,
 created, active token count), delete a user, and mint invites — each invite
 is a single-use, 7-day link (`/ui/register?token=...`) shown as a copyable
 field; anyone who opens it registers their own email/password and is logged
-straight in with the invite's role, no email delivery involved.
+straight in with the invite's role. The invite form takes an optional email
+address: when SMTP is configured (see below) the link is mailed and a note
+reports the outcome; the copyable link works either way.
 
 Every app page also has a **YAML override editor**: `edit: Deployment ·
 Service · Ingress` links open the currently-rendered manifest for that kind
@@ -306,6 +308,21 @@ With `backup_schedule daily`, the server takes and prunes backups
 automatically. An upload failure keeps the local archive and surfaces a
 warning.
 
+**Invite email (SMTP):**
+
+```sh
+luncur config set smtp_host mail.example.com   # unset = invite emails disabled
+luncur config set smtp_port 587                # optional, default 587
+luncur config set smtp_user luncur@example.com # optional; enables PLAIN auth
+luncur config set smtp_pass ...                # write-only: reads show "(set)"
+luncur config set smtp_from luncur@example.com # optional, defaults to smtp_user
+```
+
+STARTTLS is used when the server offers it. A send failure (or
+unconfigured SMTP) never blocks invite creation — the API returns
+`emailed:false` plus a warning, and the invite link can be copied as
+before.
+
 **Security note:** archives contain the sealer key — whoever can read a
 backup can unseal your env vars and addon credentials. The S3 bucket is
 the trust boundary; scope its access accordingly.
@@ -415,7 +432,7 @@ mirrored in a hidden `_csrf` field, checked on every POST before it runs.
 - `cert-manager` mode reports domain status as `external`; its cert's expiry is read back from the issued TLS Secret during the daily cert sweep rather than on every request, so `cert_expires_at` can lag briefly right after issuance or renewal.
 - CSRF is the stateless double-submit-cookie pattern (a random `luncur_csrf` cookie plus a matching `_csrf` hidden form field, compared with `crypto/subtle`) rather than a server-stored per-session token — same protection for this threat model (browser forms, no JS API), zero schema.
 - Rollback's registry-presence check only applies to images hosted in the embedded registry (ref prefixed with the configured `--registry-host`); externally-hosted image refs are assumed present since luncur has no credentials to check them.
-- No email delivery for invites — the admin copies the `/ui/register?token=...` link and shares it out of band.
+- Invite email is best-effort — unconfigured SMTP or a send failure never blocks invite creation; the API returns `emailed:false` plus a warning and the `/ui/register?token=...` link can still be shared out of band.
 - Registration marks the invite used *after* creating the user (two non-atomic statements against a single-instance SQLite server); a burned-but-unused invite can't happen, since validation failures abort before the user is created and a duplicate-email failure aborts before the invite is marked used.
 - Registry GC's "bytes reclaimed" figure is measured with `du -sk` inside the registry pod before/after `garbage-collect` (busybox `du`, KiB resolution) rather than precise blob accounting; the manifest-delete phase always runs and is counted accurately regardless, and when the exec phase itself fails (no kube, no pod, exec error) bytes reclaimed is reported as unknown (`-1`) rather than blocking the sweep.
 
