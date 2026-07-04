@@ -29,6 +29,35 @@ func TestSetOverrideRejectsDangerousDeploymentFields(t *testing.T) {
 	}
 }
 
+func TestSetOverrideRejectsDangerousCronJobFields(t *testing.T) {
+	s := openTest(t)
+	p, err := s.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.CreateApp(p.ID, "nightly", 0, "cron", "0 3 * * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dangerous := []string{
+		`{"spec":{"jobTemplate":{"spec":{"template":{"spec":{"volumes":[{"name":"x","hostPath":{"path":"/"}}]}}}}}}`,
+		`{"spec":{"jobTemplate":{"spec":{"template":{"spec":{"containers":[{"name":"app","securityContext":{"privileged":true}}]}}}}}}`,
+		`{"spec":{"jobTemplate":{"spec":{"template":{"spec":{"serviceAccountName":"cluster-admin"}}}}}}`,
+		`{"spec":{"jobTemplate":{"spec":{"template":{"spec":{"hostNetwork":true}}}}}}`,
+	}
+	for _, patch := range dangerous {
+		if err := s.SetOverride(a.ID, "CronJob", patch); err == nil {
+			t.Errorf("patch %s: want error, got nil", patch)
+		}
+	}
+
+	// The schedule itself stays overridable — it's the user's own app.
+	if err := s.SetOverride(a.ID, "CronJob", `{"spec":{"schedule":"*/10 * * * *"}}`); err != nil {
+		t.Errorf("benign schedule override: %v", err)
+	}
+}
+
 func TestSetOverrideRejectsIngressHostHijack(t *testing.T) {
 	s := openTest(t)
 	p, err := s.CreateProject("web")

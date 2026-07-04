@@ -44,7 +44,9 @@ func rejectDangerousOverride(kind string, patch map[string]any) error {
 		}
 	}
 
-	if kind == "Deployment" {
+	// CronJob nests the same pod spec (spec.jobTemplate.spec.template.spec),
+	// so it gets the same escape-hatch scan.
+	if kind == "Deployment" || kind == "CronJob" {
 		for _, key := range collectKeys(patch) {
 			if field, bad := dangerousDeploymentKeys[key]; bad {
 				return validationErrorf("override may not set %q", field)
