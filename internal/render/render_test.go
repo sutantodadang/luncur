@@ -8,6 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 func testInput() Input {
@@ -141,6 +142,72 @@ func TestRenderValidatesInput(t *testing.T) {
 	in.Image = ""
 	if _, err := Render(in, nil); err == nil {
 		t.Fatal("want error for empty image")
+	}
+}
+
+func TestRenderResourcesCPUAndMemory(t *testing.T) {
+	in := testInput()
+	in.CPUMilli = 250
+	in.MemoryMB = 256
+	r := mustRender(t, in, nil)
+	var d appsv1.Deployment
+	if err := json.Unmarshal(objByKind(t, r, "Deployment"), &d); err != nil {
+		t.Fatal(err)
+	}
+	c := d.Spec.Template.Spec.Containers[0]
+	wantCPU := *resource.NewMilliQuantity(250, resource.DecimalSI)
+	wantMem := *resource.NewQuantity(256*1024*1024, resource.BinarySI)
+	if got := c.Resources.Requests[corev1.ResourceCPU]; got.Cmp(wantCPU) != 0 {
+		t.Fatalf("cpu request: got %s want %s", got.String(), wantCPU.String())
+	}
+	if got := c.Resources.Limits[corev1.ResourceCPU]; got.Cmp(wantCPU) != 0 {
+		t.Fatalf("cpu limit: got %s want %s", got.String(), wantCPU.String())
+	}
+	if got := c.Resources.Requests[corev1.ResourceMemory]; got.Cmp(wantMem) != 0 {
+		t.Fatalf("memory request: got %s want %s", got.String(), wantMem.String())
+	}
+	if got := c.Resources.Limits[corev1.ResourceMemory]; got.Cmp(wantMem) != 0 {
+		t.Fatalf("memory limit: got %s want %s", got.String(), wantMem.String())
+	}
+}
+
+func TestRenderResourcesCPUOnly(t *testing.T) {
+	in := testInput()
+	in.CPUMilli = 500
+	r := mustRender(t, in, nil)
+	var d appsv1.Deployment
+	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+	c := d.Spec.Template.Spec.Containers[0]
+	if _, ok := c.Resources.Requests[corev1.ResourceCPU]; !ok {
+		t.Fatal("want cpu request present")
+	}
+	if _, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
+		t.Fatal("want memory request absent")
+	}
+}
+
+func TestRenderResourcesMemoryOnly(t *testing.T) {
+	in := testInput()
+	in.MemoryMB = 512
+	r := mustRender(t, in, nil)
+	var d appsv1.Deployment
+	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+	c := d.Spec.Template.Spec.Containers[0]
+	if _, ok := c.Resources.Requests[corev1.ResourceMemory]; !ok {
+		t.Fatal("want memory request present")
+	}
+	if _, ok := c.Resources.Requests[corev1.ResourceCPU]; ok {
+		t.Fatal("want cpu request absent")
+	}
+}
+
+func TestRenderResourcesNeitherMeansNoResourcesKey(t *testing.T) {
+	r := mustRender(t, testInput(), nil)
+	var d appsv1.Deployment
+	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+	c := d.Spec.Template.Spec.Containers[0]
+	if len(c.Resources.Requests) != 0 || len(c.Resources.Limits) != 0 {
+		t.Fatalf("want empty resources when cpu/memory unset: %+v", c.Resources)
 	}
 }
 

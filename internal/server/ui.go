@@ -391,8 +391,18 @@ func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.U
 		http.Error(w, "invalid replicas", http.StatusBadRequest)
 		return
 	}
+	cpu, err := parseCPUMilli(r.PostFormValue("cpu"))
+	if err != nil {
+		http.Error(w, "cpu: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	mem, err := parseMemoryMB(r.PostFormValue("memory"))
+	if err != nil {
+		http.Error(w, "memory: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 
-	if _, err := s.scaleApp(r.Context(), p, a, replicas); err != nil {
+	if _, err := s.scaleApp(r.Context(), p, a, scaleChange{Replicas: &replicas, CPUMilli: &cpu, MemoryMB: &mem}); err != nil {
 		var re *scaleReplicasError
 		switch {
 		case errors.Is(err, errAppEjected):

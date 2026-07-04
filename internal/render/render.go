@@ -12,6 +12,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
@@ -25,6 +26,10 @@ type Input struct {
 	Host      string
 	Port      int32
 	Replicas  int32
+	// CPUMilli and MemoryMB are the container's requests==limits (Guaranteed
+	// QoS); 0 means unset — no resources block is rendered for that resource.
+	CPUMilli int64
+	MemoryMB int64
 	// Overrides maps Kind -> strategic-merge-patch JSON. Applied by Task 6.
 	Overrides map[string]string
 	// ExtraHosts adds Ingress rules (same backend) for custom domains.
@@ -152,6 +157,16 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 				LocalObjectReference: corev1.LocalObjectReference{Name: SecretName(in.AppName)},
 			},
 		}}
+	}
+	if in.CPUMilli > 0 || in.MemoryMB > 0 {
+		res := corev1.ResourceList{}
+		if in.CPUMilli > 0 {
+			res[corev1.ResourceCPU] = *resource.NewMilliQuantity(in.CPUMilli, resource.DecimalSI)
+		}
+		if in.MemoryMB > 0 {
+			res[corev1.ResourceMemory] = *resource.NewQuantity(in.MemoryMB*1024*1024, resource.BinarySI)
+		}
+		container.Resources = corev1.ResourceRequirements{Requests: res, Limits: res}
 	}
 	replicas := in.Replicas
 	dep := &appsv1.Deployment{

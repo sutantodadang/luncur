@@ -299,9 +299,22 @@ func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch str
 	return out, err
 }
 
-func (c *Client) Scale(project, app string, replicas int) error {
+// Scale posts a partial scale change: nil fields are left unchanged
+// server-side. cpu/memory are quantity strings ("250m", "256Mi"); an empty
+// string clears (back to unset).
+func (c *Client) Scale(project, app string, replicas *int, cpu, memory *string) error {
+	body := map[string]any{}
+	if replicas != nil {
+		body["replicas"] = *replicas
+	}
+	if cpu != nil {
+		body["cpu"] = *cpu
+	}
+	if memory != nil {
+		body["memory"] = *memory
+	}
 	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/scale",
-		map[string]int{"replicas": replicas}, nil)
+		body, nil)
 }
 
 func (c *Client) EnvSet(project, app, key, value string) error {

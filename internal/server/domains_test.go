@@ -99,6 +99,52 @@ func TestCertSecretName(t *testing.T) {
 	}
 }
 
+// TestRenderAppIncludesResources checks renderApp carries an app's stored
+// cpu_milli/memory_mb through to the rendered Deployment's container.
+func TestRenderAppIncludesResources(t *testing.T) {
+	st := newTestStore(t)
+	s := newServer(Deps{Store: st, ExternalIP: "1.2.3.4"})
+
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateApp(p.ID, "web", 8080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetResources(a.ID, 250, 256); err != nil {
+		t.Fatal(err)
+	}
+	a, err = st.GetApp(p.ID, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rendered, err := s.renderApp(p, a, "nginx:1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var depJSON string
+	for _, o := range rendered.Objects {
+		if o.Kind == "Deployment" {
+			depJSON = string(o.JSON)
+		}
+	}
+	if depJSON == "" {
+		t.Fatal("no Deployment object rendered")
+	}
+	if !strings.Contains(depJSON, `"resources"`) {
+		t.Fatalf("want resources block in rendered Deployment:\n%s", depJSON)
+	}
+	if !strings.Contains(depJSON, `"cpu":"250m"`) {
+		t.Fatalf("want cpu 250m in rendered Deployment:\n%s", depJSON)
+	}
+	if !strings.Contains(depJSON, `"memory":"256Mi"`) {
+		t.Fatalf("want memory 256Mi in rendered Deployment:\n%s", depJSON)
+	}
+}
+
 // TestRenderProviderAnnotations calls s.renderApp directly, one provider
 // setting at a time, and inspects the rendered Ingress JSON for the
 // annotations/TLS block each provider is supposed to produce.

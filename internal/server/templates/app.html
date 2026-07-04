@@ -21,6 +21,8 @@
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/scale">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <input type="number" name="replicas" min="0" value="{{.App.Replicas}}">
+  <label>cpu <input name="cpu" placeholder="250m" value="{{if .App.CPUMilli}}{{.App.CPUMilli}}m{{end}}"></label>
+  <label>memory <input name="memory" placeholder="256Mi" value="{{if .App.MemoryMB}}{{.App.MemoryMB}}Mi{{end}}"></label>
   <button type="submit">scale</button>
 </form>
 
