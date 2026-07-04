@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1308,5 +1309,89 @@ func TestUIAdoptButton(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("adopt non-ejected: want 409, got %d", resp.StatusCode)
+	}
+}
+
+// TestUITokensPage: any user sees their own tokens (the web session shows
+// as "session"), revoking an API token removes it, and revoking the
+// session token logs the browser out.
+func TestUITokensPage(t *testing.T) {
+	srv, st := testServer(t)
+	apiTok := seedUserToken(t, st, "u@b.co", "member")
+	_ = apiTok
+
+	u, err := st.GetUserByEmail("u@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := noRedirectClient()
+	ck := uiSessionCookie(t, st, u.ID)
+
+	tokensPage := func(t *testing.T) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest("GET", srv.URL+"/ui/tokens", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(ck)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, string(body)
+	}
+
+	code, body := tokensPage(t)
+	if code != http.StatusOK {
+		t.Fatalf("tokens page: want 200, got %d", code)
+	}
+	if !strings.Contains(body, "session") {
+		t.Fatalf("tokens page missing session token:\n%s", body)
+	}
+	if !strings.Contains(body, `action="/ui/tokens/revoke"`) {
+		t.Fatalf("tokens page missing revoke form:\n%s", body)
+	}
+	// Nav link present.
+	if !strings.Contains(body, `href="/ui/tokens"`) {
+		t.Fatalf("nav missing tokens link:\n%s", body)
+	}
+
+	// Two tokens: seedUserToken's API token (older), then the session
+	// minted by uiSessionCookie (newer). ListTokens is newest-first. (The
+	// helper names its session "test"; the real login flow names it
+	// "session" — the ordering, not the name, identifies it here.)
+	tokens, err := st.ListTokens(u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) != 2 {
+		t.Fatalf("tokens = %+v", tokens)
+	}
+	sessionID, apiID := tokens[0].ID, tokens[1].ID
+
+	csrfCk := uiCSRF(t, client, srv.URL)
+	resp := uiPost(t, client, srv.URL+"/ui/tokens/revoke", csrfCk, ck,
+		url.Values{"id": {strconv.FormatInt(apiID, 10)}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("revoke: want 303, got %d", resp.StatusCode)
+	}
+	if left, _ := st.ListTokens(u.ID); len(left) != 1 {
+		t.Fatalf("tokens after revoke = %+v", left)
+	}
+
+	// Revoking the session token logs the browser out: the next page load
+	// redirects to /ui/login.
+	resp = uiPost(t, client, srv.URL+"/ui/tokens/revoke", csrfCk, ck,
+		url.Values{"id": {strconv.FormatInt(sessionID, 10)}})
+	resp.Body.Close()
+	code, _ = tokensPage(t)
+	if code != http.StatusSeeOther {
+		t.Fatalf("after session revoke: want 303 to login, got %d", code)
 	}
 }
