@@ -95,3 +95,41 @@ func TestPutSurfacesHTTPErrors(t *testing.T) {
 		t.Fatalf("want 403 error, got %v", err)
 	}
 }
+
+func TestGet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/b/backups/x.tar.gz" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") == "" {
+			t.Error("request not signed")
+		}
+		w.Write([]byte("archive-bytes"))
+	}))
+	defer srv.Close()
+	c := &Client{Endpoint: srv.URL, Bucket: "b", AccessKey: "k", SecretKey: "s"}
+
+	body, err := c.Get(context.Background(), "backups/x.tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer body.Close()
+	b, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "archive-bytes" {
+		t.Fatalf("got %q", b)
+	}
+}
+
+func TestGetSurfacesHTTPErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "NoSuchKey", http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := &Client{Endpoint: srv.URL, Bucket: "b", AccessKey: "k", SecretKey: "s"}
+	if _, err := c.Get(context.Background(), "missing"); err == nil || !strings.Contains(err.Error(), "404") {
+		t.Fatalf("want 404 error, got %v", err)
+	}
+}
