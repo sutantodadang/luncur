@@ -43,7 +43,7 @@ Changed your mind? **Adopt** it back. No lock-in in either direction.
 
 | | |
 |---|---|
-| 🚢 **Deploy 3 ways** | `git push luncur main`, `luncur deploy` from local source (Nixpacks or Dockerfile, built in-cluster by BuildKit), or any pre-built image — or auto-deploy on push via a GitHub/GitLab/Gitea webhook |
+| 🚢 **Deploy 3 ways** | `git push luncur main`, `luncur deploy` from local source (Nixpacks or Dockerfile, built in-cluster by BuildKit with a per-app registry-backed layer cache), or any pre-built image — or auto-deploy on push via a GitHub/GitLab/Gitea webhook |
 | ⏱️ **App kinds** | `web` (Deployment+Service+Ingress), `worker` (Deployment only, no URL), and `cron` (Kubernetes CronJob, `Forbid` concurrency) — `luncur logs` streams all three |
 | 🔒 **Automatic HTTPS** | Built-in ACME (Let's Encrypt) — HTTP-01 out of the box, **DNS-01 + wildcard certs** (`*.example.com`) via Cloudflare, Route53, or RFC2136/nsupdate |
 | 🐘 **Managed addons** | Postgres & Redis as StatefulSets: create, attach (`DATABASE_URL` injected), in-place version upgrades, per-addon logical dumps in every backup |
@@ -688,6 +688,16 @@ outright without it.
 
 When you run `luncur deploy` on a local source or git repository, the following happens: source is uploaded (tarball from local cwd or cloned from git URL) → a BuildKit Job runs in the `luncur-system` namespace, applying Nixpacks if no Dockerfile exists or using the Dockerfile if present → the resulting image is pushed to the in-cluster registry (default `registry.luncur-system:5000`) → app manifests are rendered and applied to Kubernetes → the app becomes live at `http://<app>.<ip>.sslip.io`. Build logs are streamed on demand via `luncur logs`.
 
+Builds reuse a per-app BuildKit cache stored as an image manifest in the
+embedded registry (`luncur-cache/<project>-<app>:buildcache`), so repeat
+deploys skip unchanged layers instead of rebuilding from scratch every time.
+Disable it with `luncur config set build_cache off`. Cache manifests are
+kept by registry GC for as long as the app exists and swept once it's
+destroyed, same as any other repo (see [Registry GC](#registry-gc) above).
+Since the cache is exported with `mode=max` (intermediate layers, not just
+the final image), factor that into disk sizing for the registry's PVC
+alongside app images.
+
 **Serve flags for build infrastructure:**
 - `--data-dir` — path where build sources and logs are persisted; becomes a Kubernetes PVC in production (default `./data`)
 - `--builder-image` — OCI image for the build environment (default `luncur/builder:latest`); built by the release pipeline
@@ -749,6 +759,7 @@ shown in plaintext once, in the response to `webhook enable`.
 - A webhook-triggered push is deduped against an in-progress build: if the app's latest deployment is still `building`, the webhook returns the existing deployment id (202) instead of stacking a second build on the same app.
 - The webhook and the `git push luncur` SSH remote are independent trigger paths into the same `deployGitApp` core — an app can have both configured at once (e.g. push to luncur directly for fast iteration, webhook for a mirror hosted on GitHub/GitLab).
 - Re-enabling an already-enabled webhook always rotates the secret rather than offering a separate "rotate" verb — one action, no ambiguity about which secret is currently live.
+- The BuildKit layer cache is registry-backed rather than a shared PVC: concurrent builds across apps share nothing (no RWO contention on a single cache volume), and it piggybacks on registry GC's existing keep-set/sweep logic instead of needing its own retention mechanism.
 
 Every feature shipped with a written spec, a TDD implementation plan, and
 a full test suite that runs without a cluster or network.

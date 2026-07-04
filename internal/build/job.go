@@ -24,6 +24,7 @@ type BuildParams struct {
 	GitURL       string
 	GitBranch    string
 	DeployID     int64
+	CacheRef     string
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -32,21 +33,33 @@ func ImageRef(registryHost, project, app string, deployID int64) string {
 	return fmt.Sprintf("%s/%s-%s:%d", registryHost, project, app, deployID)
 }
 
+// CacheRef returns the per-app BuildKit cache image ref, stored under a
+// nested luncur-cache/ repo so it never collides with the app's own image
+// repo (project-app never contains a slash).
+func CacheRef(registryHost, project, app string) string {
+	return fmt.Sprintf("%s/luncur-cache/%s-%s:buildcache", registryHost, project, app)
+}
+
 func RenderBuildJob(p BuildParams) (render.Object, error) {
 	backoffLimit := int32(0)
 	restartPolicy := corev1.RestartPolicyNever
 
+	env := []corev1.EnvVar{
+		{Name: "LUNCUR_DEPLOY_ID", Value: strconv.FormatInt(p.DeployID, 10)},
+		{Name: "LUNCUR_IMAGE_REF", Value: p.ImageRef},
+		{Name: "LUNCUR_REGISTRY_HOST", Value: p.RegistryHost},
+		{Name: "LUNCUR_SOURCE_TYPE", Value: p.SourceType},
+		{Name: "LUNCUR_GIT_URL", Value: p.GitURL},
+		{Name: "LUNCUR_GIT_BRANCH", Value: p.GitBranch},
+	}
+	if p.CacheRef != "" {
+		env = append(env, corev1.EnvVar{Name: "LUNCUR_CACHE_REF", Value: p.CacheRef})
+	}
+
 	container := corev1.Container{
 		Name:  "builder",
 		Image: p.BuilderImage,
-		Env: []corev1.EnvVar{
-			{Name: "LUNCUR_DEPLOY_ID", Value: strconv.FormatInt(p.DeployID, 10)},
-			{Name: "LUNCUR_IMAGE_REF", Value: p.ImageRef},
-			{Name: "LUNCUR_REGISTRY_HOST", Value: p.RegistryHost},
-			{Name: "LUNCUR_SOURCE_TYPE", Value: p.SourceType},
-			{Name: "LUNCUR_GIT_URL", Value: p.GitURL},
-			{Name: "LUNCUR_GIT_BRANCH", Value: p.GitBranch},
-		},
+		Env:   env,
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "data", MountPath: "/data"},
 		},

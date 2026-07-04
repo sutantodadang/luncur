@@ -101,6 +101,123 @@ func TestRunBuildSuccess(t *testing.T) {
 	}
 }
 
+// captureBuildServer mirrors buildServer, but additionally captures the
+// raw JSON patch body of the applied Build Job so tests can assert on its
+// env vars (e.g. LUNCUR_CACHE_REF).
+func captureBuildServer(t *testing.T) (*server, *store.Store, *[]byte) {
+	t.Helper()
+	st := newTestStore(t)
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	var jobJSON []byte
+
+	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil
+	})
+	dyn.PrependReactor("patch", "jobs", func(a ktesting.Action) (bool, runtime.Object, error) {
+		jobJSON = append([]byte(nil), a.(ktesting.PatchAction).GetPatch()...)
+		return true, nil, nil
+	})
+	dyn.PrependReactor("get", "jobs", func(a ktesting.Action) (bool, runtime.Object, error) {
+		return true, &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "batch/v1", "kind": "Job",
+			"metadata": map[string]any{"name": a.(ktesting.GetAction).GetName(), "namespace": "luncur-system"},
+			"status":   map[string]any{"succeeded": int64(1)},
+		}}, nil
+	})
+
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newServer(Deps{
+		Store:      st,
+		Sealer:     sealer,
+		Kube:       kube.NewFromDynamic(dyn),
+		ExternalIP: "1.2.3.4",
+		DataDir:    t.TempDir(),
+	})
+	return srv, st, &jobJSON
+}
+
+// jobJSONEnv decodes a captured build Job's env vars into a name->value map.
+func jobJSONEnv(t *testing.T, jobJSON []byte) map[string]string {
+	t.Helper()
+	var j struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Env []struct{ Name, Value string } `json:"env"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(jobJSON, &j); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{}
+	for _, e := range j.Spec.Template.Spec.Containers[0].Env {
+		env[e.Name] = e.Value
+	}
+	return env
+}
+
+func TestRunBuildIncludesCacheRefByDefault(t *testing.T) {
+	srv, st, jobJSON := captureBuildServer(t)
+	p, err := st.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := st.CreateDeployment(a.ID, "building", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+		t.Fatalf("runBuild: %v", err)
+	}
+
+	env := jobJSONEnv(t, *jobJSON)
+	want := "registry.luncur-system:5000/luncur-cache/web-api:buildcache"
+	if env["LUNCUR_CACHE_REF"] != want {
+		t.Fatalf("LUNCUR_CACHE_REF=%q, want %q", env["LUNCUR_CACHE_REF"], want)
+	}
+}
+
+func TestRunBuildOmitsCacheRefWhenDisabled(t *testing.T) {
+	srv, st, jobJSON := captureBuildServer(t)
+	if err := st.SetSetting("build_cache", "off"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := st.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := st.CreateDeployment(a.ID, "building", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+		t.Fatalf("runBuild: %v", err)
+	}
+
+	env := jobJSONEnv(t, *jobJSON)
+	if _, ok := env["LUNCUR_CACHE_REF"]; ok {
+		t.Fatalf("LUNCUR_CACHE_REF present, want absent: %+v", env)
+	}
+}
+
 // buildServerFailingJob mirrors buildServer, but the Build Job reports
 // "failed" rather than "succeeded", so runBuild's fail() path fires.
 func buildServerFailingJob(t *testing.T) (*server, *store.Store) {
