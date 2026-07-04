@@ -3,11 +3,74 @@ package build
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/sutantodadang/luncur/internal/render"
 )
 
 func TestImageRef(t *testing.T) {
 	if got := ImageRef("registry.luncur-system:5000", "web", "api", 42); got != "registry.luncur-system:5000/web-api:42" {
 		t.Fatalf("ImageRef=%q", got)
+	}
+}
+
+func TestCacheRef(t *testing.T) {
+	want := "registry.luncur-system:5000/luncur-cache/web-api:buildcache"
+	if got := CacheRef("registry.luncur-system:5000", "web", "api"); got != want {
+		t.Fatalf("CacheRef=%q, want %q", got, want)
+	}
+}
+
+func jobEnv(t *testing.T, obj render.Object) map[string]string {
+	t.Helper()
+	var j struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Env []struct{ Name, Value string } `json:"env"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(obj.JSON, &j); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{}
+	for _, e := range j.Spec.Template.Spec.Containers[0].Env {
+		env[e.Name] = e.Value
+	}
+	return env
+}
+
+func TestRenderBuildJobWithCacheRef(t *testing.T) {
+	obj, err := RenderBuildJob(BuildParams{
+		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
+		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+		CacheRef: "registry.luncur-system:5000/luncur-cache/web-api:buildcache",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := jobEnv(t, obj)
+	if env["LUNCUR_CACHE_REF"] != "registry.luncur-system:5000/luncur-cache/web-api:buildcache" {
+		t.Fatalf("LUNCUR_CACHE_REF=%q", env["LUNCUR_CACHE_REF"])
+	}
+}
+
+func TestRenderBuildJobWithoutCacheRef(t *testing.T) {
+	obj, err := RenderBuildJob(BuildParams{
+		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
+		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := jobEnv(t, obj)
+	if _, ok := env["LUNCUR_CACHE_REF"]; ok {
+		t.Fatalf("LUNCUR_CACHE_REF present, want absent: %+v", env)
 	}
 }
 

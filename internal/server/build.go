@@ -53,6 +53,10 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 	}
 
 	imageRef := build.ImageRef(s.registryHost, projectSlug(p), a.Name, d.ID)
+	cacheRef := build.CacheRef(s.registryHost, projectSlug(p), a.Name)
+	if v, err := s.st.GetSetting("build_cache"); err == nil && v == "off" {
+		cacheRef = ""
+	}
 	job, err := build.RenderBuildJob(build.BuildParams{
 		Namespace:    s.systemNamespace,
 		Name:         buildJobName(d.ID),
@@ -64,6 +68,7 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 		GitURL:       a.GitURL,
 		GitBranch:    a.GitBranch,
 		DeployID:     d.ID,
+		CacheRef:     cacheRef,
 	})
 	if err != nil {
 		return fail(err)

@@ -142,6 +142,38 @@ func TestSettingsRegistryKeep(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestSettingsBuildCache(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/build_cache", admin, `{"value":"bogus"}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("put bogus: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/build_cache", admin, `{"value":"off"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("put off: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "GET", srv.URL+"/v1/settings/build_cache", admin, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("get: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.Value != "off" {
+		t.Fatalf("build_cache = %q, want off", out.Value)
+	}
+}
+
 func TestSettingsBackupS3SecretKey(t *testing.T) {
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")

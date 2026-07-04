@@ -57,6 +57,19 @@ fi
 echo ""
 echo "Building and pushing image..."
 
+# Per-app BuildKit cache, stored as an image manifest in the embedded
+# registry (LUNCUR_CACHE_REF, e.g. luncur-cache/<project>-<app>:buildcache).
+# Unset (build_cache=off, or an app's first build) means no cache flags at
+# all rather than an empty/broken ref.
+CACHE_FLAGS=()
+if [ -n "${LUNCUR_CACHE_REF:-}" ]; then
+  echo "Using build cache: $LUNCUR_CACHE_REF"
+  CACHE_FLAGS+=(
+    --import-cache "type=registry,ref=${LUNCUR_CACHE_REF},registry.insecure=true"
+    --export-cache "type=registry,mode=max,ref=${LUNCUR_CACHE_REF},registry.insecure=true"
+  )
+fi
+
 # Use buildctl-daemonless.sh wrapper to run buildkitd + buildctl in rootless mode.
 # The wrapper is provided by the moby/buildkit:rootless base image.
 #
@@ -72,7 +85,8 @@ buildctl-daemonless.sh buildctl build \
   --frontend dockerfile.v0 \
   --local context=/workspace \
   --local dockerfile="${DOCKERFILE_DIR}" \
-  --output type=image,name="${LUNCUR_IMAGE_REF}",push=true,registry.insecure=true
+  --output type=image,name="${LUNCUR_IMAGE_REF}",push=true,registry.insecure=true \
+  "${CACHE_FLAGS[@]}"
 
 echo ""
 echo "==== build complete ===="

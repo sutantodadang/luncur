@@ -55,10 +55,11 @@ var settableKeys = map[string]func(string) bool{
 	"dns_rfc2136_tsig_name":   func(v string) bool { return v != "" },
 	"dns_rfc2136_tsig_secret": func(v string) bool { return v != "" },
 	"dns_rfc2136_tsig_algo":   func(v string) bool { return v != "" },
-	"notify_url":             func(v string) bool { return v != "" },
-	"notify_format":          func(v string) bool { return notifyFormats[v] },
-	"notify_telegram_chat":   func(v string) bool { return v != "" },
-	"notify_events":          validNotifyEvents,
+	"notify_url":              func(v string) bool { return v != "" },
+	"notify_format":           func(v string) bool { return notifyFormats[v] },
+	"notify_telegram_chat":    func(v string) bool { return v != "" },
+	"notify_events":           validNotifyEvents,
+	"build_cache":             func(v string) bool { return v == "on" || v == "off" },
 }
 
 // sealedKeys are write-only secrets: sealed at rest with the install

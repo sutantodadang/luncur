@@ -180,6 +180,63 @@ func TestRunRegistryGC(t *testing.T) {
 	}
 }
 
+// TestRunRegistryGCKeepsAppCacheAndSweepsGhostCache seeds one app with a
+// live deployment and a build-cache manifest for that app, plus a
+// build-cache repo for an app that no longer exists in the DB. It asserts
+// the existing app's cache manifest survives the sweep while the ghost
+// app's cache repo is deleted, mirroring the fix in T3: without adding
+// cache repos to the keep-set, every cache manifest would be wiped on
+// every sweep since deployRefs only ever sees app image repos.
+func TestRunRegistryGCKeepsAppCacheAndSweepsGhostCache(t *testing.T) {
+	registryHost, deleted := newFakeRegistryServer(t, map[string][]string{
+		"proj/web":               {"1"},
+		"luncur-cache/proj-web":  {"buildcache"},
+		"luncur-cache/ghost-app": {"buildcache"},
+	})
+
+	st := newTestStore(t)
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateApp(p.ID, "web", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateDeployment(a.ID, "live", registryHost+"/proj/web:1", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	cs := k8sfake.NewSimpleClientset(registryPod("luncur-system"))
+	srv := newServer(Deps{Store: st, RegistryHost: registryHost, Kube: kube.NewForTest(nil, cs)})
+	exec := &fakeGCExecer{duOutputs: []string{"1000\t/var/lib/registry\n", "1000\t/var/lib/registry\n"}}
+	srv.execer = exec
+
+	report, err := srv.runRegistryGC(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", report.Warnings)
+	}
+
+	for _, d := range *deleted {
+		if d == "luncur-cache/proj-web@sha256:luncur-cache-proj-web-buildcache" {
+			t.Fatal("existing app's cache manifest must not be deleted")
+		}
+	}
+	wantDeleted := "luncur-cache/ghost-app@sha256:luncur-cache-ghost-app-buildcache"
+	found := false
+	for _, d := range *deleted {
+		if d == wantDeleted {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("ghost app's cache manifest not deleted; deleted=%v", *deleted)
+	}
+}
+
 // TestRegistryGCAPI exercises the admin-only HTTP endpoint: a member is
 // forbidden; an admin gets 200 with the report fields even with no kube
 // configured (the manifest-delete phase still runs; the exec phase warns).

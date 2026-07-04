@@ -93,6 +93,27 @@ func (s *server) runRegistryGC(ctx context.Context) (gcReport, error) {
 	}
 	keepSet := registry.KeepTags(refs, s.registryKeep())
 
+	// Every app's BuildKit cache manifest lives outside deployRefs (it's
+	// never a deployment image), so it must be added to the keep-set
+	// explicitly here or it gets swept on every GC run.
+	projects, err := s.st.ListProjects()
+	if err != nil {
+		return gcReport{}, err
+	}
+	for _, p := range projects {
+		apps, err := s.st.ListApps(p.ID)
+		if err != nil {
+			return gcReport{}, err
+		}
+		for _, a := range apps {
+			cacheRepo := "luncur-cache/" + p.Name + "-" + a.Name
+			if keepSet[cacheRepo] == nil {
+				keepSet[cacheRepo] = map[string]bool{}
+			}
+			keepSet[cacheRepo]["buildcache"] = true
+		}
+	}
+
 	reg := &registry.Client{Host: s.registryHost}
 	repos, err := reg.Repositories(ctx)
 	if err != nil {
