@@ -739,6 +739,36 @@ func (c *Client) AdoptApp(project, app string) (string, error) {
 	return out.Warning, err
 }
 
+// WebhookInfo is a git-source app's deploy webhook state. Secret is only
+// ever populated by WebhookEnable's response — it is never recoverable
+// afterward, only the sealed bytes persist server-side.
+type WebhookInfo struct {
+	Enabled bool   `json:"enabled"`
+	Path    string `json:"path"`
+	Secret  string `json:"secret,omitempty"`
+}
+
+// WebhookEnable turns on (or, if already enabled, rotates) an app's deploy
+// webhook. The returned secret is shown ONLY in this response.
+func (c *Client) WebhookEnable(project, app string) (WebhookInfo, error) {
+	var out WebhookInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/webhook", nil, &out)
+	return out, err
+}
+
+// WebhookShow reports whether an app's webhook is enabled and its path
+// (never its secret).
+func (c *Client) WebhookShow(project, app string) (WebhookInfo, error) {
+	var out WebhookInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/webhook", nil, &out)
+	return out, err
+}
+
+// WebhookDisable turns off an app's deploy webhook.
+func (c *Client) WebhookDisable(project, app string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/webhook", nil, nil)
+}
+
 // RegistryGCReport is one registry GC sweep's result, as returned by POST
 // /v1/registry/gc.
 type RegistryGCReport struct {

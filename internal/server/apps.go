@@ -42,14 +42,15 @@ func (e *kindMismatchError) Unwrap() error { return e.err }
 
 func (s *server) appJSON(a store.App) map[string]any {
 	return map[string]any{
-		"id":          a.ID,
-		"name":        a.Name,
-		"port":        a.Port,
-		"replicas":    a.Replicas,
-		"health_path": a.HealthPath,
-		"kind":        a.Kind,
-		"schedule":    a.Schedule,
-		"url":         "http://" + hostFor(a.Name, s.externalIP),
+		"id":              a.ID,
+		"name":            a.Name,
+		"port":            a.Port,
+		"replicas":        a.Replicas,
+		"health_path":     a.HealthPath,
+		"kind":            a.Kind,
+		"schedule":        a.Schedule,
+		"webhook_enabled": a.WebhookSecret != nil,
+		"url":             "http://" + hostFor(a.Name, s.externalIP),
 	}
 }
 
