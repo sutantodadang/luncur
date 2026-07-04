@@ -25,7 +25,7 @@ pre.logs{background:#111;color:#ddd;padding:1rem;overflow:auto;max-height:24rem;
 <nav>
   <strong><a href="/ui/">luncur</a></strong>
   <a href="/ui/tokens">tokens</a>
-  {{if .IsAdmin}}<a href="/ui/users">users</a>{{end}}
+  {{if .IsAdmin}}<a href="/ui/users">users</a><a href="/ui/audit">audit</a>{{end}}
   <form class="inline" method="post" action="/ui/logout">
     <input type="hidden" name="_csrf" value="{{.CSRF}}">
     <span>{{.User.Email}}</span> <button type="submit">log out</button>

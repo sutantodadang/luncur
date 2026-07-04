@@ -207,6 +207,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/registry/gc", s.adminOnly(s.handleRegistryGC))
 	mux.HandleFunc("GET /v1/tokens", s.authed(s.handleListTokens))
 	mux.HandleFunc("DELETE /v1/tokens/{id}", s.authed(s.handleRevokeToken))
+	mux.HandleFunc("GET /v1/audit", s.adminOnly(s.handleListAudit))
 
 	// ACME HTTP-01 challenge path: served by luncur itself, no auth (the
 	// ACME CA fetches it directly). Nil-guarded: tests may build a server
@@ -233,7 +234,7 @@ func (s *server) handler() http.Handler {
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
 	})
 
-	return mux
+	return s.auditMiddleware(mux)
 }
 
 // New builds the full API handler. Later plans add their routes here.

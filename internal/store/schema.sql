@@ -138,3 +138,13 @@ CREATE TABLE IF NOT EXISTS volumes (
   UNIQUE(app_id, name),
   UNIQUE(app_id, path)
 );
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  user_email TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  target     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);

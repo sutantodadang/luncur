@@ -54,6 +54,7 @@ Changed your mind? **Adopt** it back. No lock-in in either direction.
 | 👥 **Teams** | Projects with members, admin/member roles, single-use invite links (optionally emailed via SMTP), API tokens with self-service revoke |
 | 🪂 **The escape hatch** | `app eject` hands you the raw manifests and stops managing; `app adopt` reverses it. Your cluster, your call |
 | 📦 **One binary** | Server, CLI, installer, and restore tool are the same `luncur` executable. State is one SQLite file. Secrets sealed at rest (AES-256-GCM) |
+| 📝 **Audit trail** | Every successful mutating request — API, web UI, login, webhook-triggered deploy — recorded with who/route/path/when; `luncur audit` and the `/ui/audit` panel, configurable retention |
 
 **Zero-bloat scorecard:** 1 Go module · SQLite (no DB server) · stdlib
 `html/template` UI (no Node, no bundler) · stdlib S3/SigV4/SMTP/DNS-01
@@ -683,6 +684,30 @@ A sweep also runs automatically once a week. The registry container's
 `REGISTRY_STORAGE_DELETE_ENABLED` env var is set to `true` by luncur's own
 system manifests, since the registry's HTTP API rejects manifest DELETEs
 outright without it.
+
+### Audit log
+
+Every successful mutating request records one row: who (email), which route,
+the request path, and when. This covers the API, the web UI (session +
+CSRF-checked form posts), logins, and webhook-triggered deploys (recorded
+under the `webhook` user). Failed and read-only (GET) requests are never
+recorded. Secret values are never stored, and routes whose path carries a
+secret — like `DELETE /v1/invites/{token}` — record the route pattern
+instead of the raw path, so the token itself never lands in the log.
+
+```sh
+luncur audit                              # recent rows: ID, TIME, USER, ACTION, TARGET
+luncur audit --user alice@example.com     # filter by exact user
+luncur audit --contains apps              # filter by substring on action/target
+```
+
+Admins can also browse the log at `/ui/audit`. Rows are pruned
+opportunistically after each recorded mutation, keeping `audit_retention_days`
+(default 90) worth of history; set it to `0` to keep every row forever:
+
+```sh
+luncur config set audit_retention_days 30
+```
 
 ### Build pipeline
 

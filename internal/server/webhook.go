@@ -206,6 +206,11 @@ func (s *server) handleWebhookTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if info := auditFrom(r.Context()); info != nil {
+		info.Email = "webhook"
+		info.Pattern = r.Pattern
+	}
+
 	// Authenticated from here on — failures are ordinary status codes.
 	if r.Header.Get("X-GitHub-Event") == "ping" {
 		writeJSON(w, http.StatusOK, map[string]any{"pong": true})
