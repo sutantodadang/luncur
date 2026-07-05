@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS apps (
 CREATE TABLE IF NOT EXISTS deployments (
   id         INTEGER PRIMARY KEY,
   app_id     INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  seq        INTEGER NOT NULL DEFAULT 0,
   status     TEXT NOT NULL CHECK (status IN ('building','deploying','live','failed')),
   image_ref  TEXT,
   log_path   TEXT,

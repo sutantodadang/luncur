@@ -9,6 +9,7 @@ import (
 type Deployment struct {
 	ID             int64
 	AppID          int64
+	Seq            int64
 	Status         string
 	ImageRef       string
 	LogPath        string
@@ -18,15 +19,19 @@ type Deployment struct {
 }
 
 // CreateDeployment inserts a deployment row. createdBy of 0 is stored as
-// NULL (unattributed).
+// NULL (unattributed). seq is assigned atomically as this app's next
+// number (1, 2, 3, ...) via a subquery in the same INSERT — safe under
+// modernc sqlite's single-writer connection (db.SetMaxOpenConns(1)), no
+// separate transaction needed.
 func (s *Store) CreateDeployment(appID int64, status, imageRef string, createdBy int64) (Deployment, error) {
 	var by any
 	if createdBy != 0 {
 		by = createdBy
 	}
 	res, err := s.db.Exec(
-		`INSERT INTO deployments (app_id, status, image_ref, created_by) VALUES (?, ?, ?, ?)`,
-		appID, status, imageRef, by,
+		`INSERT INTO deployments (app_id, seq, status, image_ref, created_by)
+		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM deployments WHERE app_id = ?), ?, ?, ?)`,
+		appID, appID, status, imageRef, by,
 	)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("insert deployment: %w", err)
@@ -35,8 +40,7 @@ func (s *Store) CreateDeployment(appID int64, status, imageRef string, createdBy
 	if err != nil {
 		return Deployment{}, err
 	}
-	return Deployment{ID: id, AppID: appID, Status: status, ImageRef: imageRef,
-		CreatedBy: sql.NullInt64{Int64: createdBy, Valid: createdBy != 0}}, nil
+	return s.GetDeployment(id)
 }
 
 // CreateRollbackDeployment records a redeploy of an earlier deployment's
@@ -48,9 +52,9 @@ func (s *Store) CreateRollbackDeployment(appID int64, imageRef string, createdBy
 		by = createdBy
 	}
 	res, err := s.db.Exec(
-		`INSERT INTO deployments (app_id, status, image_ref, created_by, rolled_back_from)
-		 VALUES (?, 'deploying', ?, ?, ?)`,
-		appID, imageRef, by, rolledBackFrom,
+		`INSERT INTO deployments (app_id, seq, status, image_ref, created_by, rolled_back_from)
+		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM deployments WHERE app_id = ?), 'deploying', ?, ?, ?)`,
+		appID, appID, imageRef, by, rolledBackFrom,
 	)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("insert rollback deployment: %w", err)
@@ -100,9 +104,9 @@ func (s *Store) GetDeployment(id int64) (Deployment, error) {
 	var img, logp sql.NullString
 	var rolledBackFrom sql.NullInt64
 	err := s.db.QueryRow(
-		`SELECT id, app_id, status, image_ref, log_path, created_by, created_at, rolled_back_from
+		`SELECT id, app_id, seq, status, image_ref, log_path, created_by, created_at, rolled_back_from
 		 FROM deployments WHERE id = ?`, id,
-	).Scan(&d.ID, &d.AppID, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom)
+	).Scan(&d.ID, &d.AppID, &d.Seq, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Deployment{}, ErrNotFound
 	}
@@ -118,9 +122,9 @@ func (s *Store) LatestDeployment(appID int64) (Deployment, error) {
 	var img, logp sql.NullString
 	var rolledBackFrom sql.NullInt64
 	err := s.db.QueryRow(
-		`SELECT id, app_id, status, image_ref, log_path, created_by, created_at, rolled_back_from FROM deployments
+		`SELECT id, app_id, seq, status, image_ref, log_path, created_by, created_at, rolled_back_from FROM deployments
 		 WHERE app_id = ? ORDER BY id DESC LIMIT 1`, appID,
-	).Scan(&d.ID, &d.AppID, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom)
+	).Scan(&d.ID, &d.AppID, &d.Seq, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Deployment{}, ErrNotFound
 	}
@@ -150,7 +154,7 @@ func (s *Store) Ping() error {
 // that a builder job is stuck or the builder image is missing.
 func (s *Store) StuckDeployments(olderThanMin int) ([]Deployment, error) {
 	rows, err := s.db.Query(
-		`SELECT id, app_id, status, image_ref, log_path, created_by, created_at, rolled_back_from
+		`SELECT id, app_id, seq, status, image_ref, log_path, created_by, created_at, rolled_back_from
 		 FROM deployments WHERE status = 'building' AND created_at < datetime('now', ?)
 		 ORDER BY id DESC`, fmt.Sprintf("-%d minutes", olderThanMin))
 	if err != nil {
@@ -162,7 +166,7 @@ func (s *Store) StuckDeployments(olderThanMin int) ([]Deployment, error) {
 		var d Deployment
 		var img, logp sql.NullString
 		var rolledBackFrom sql.NullInt64
-		if err := rows.Scan(&d.ID, &d.AppID, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom); err != nil {
+		if err := rows.Scan(&d.ID, &d.AppID, &d.Seq, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom); err != nil {
 			return nil, err
 		}
 		d.ImageRef, d.LogPath = img.String, logp.String
@@ -178,7 +182,7 @@ func (s *Store) StuckDeployments(olderThanMin int) ([]Deployment, error) {
 // that was driving them died with the process).
 func (s *Store) UnfinishedDeployments() ([]Deployment, error) {
 	rows, err := s.db.Query(
-		`SELECT id, app_id, status, image_ref, log_path, created_by, created_at, rolled_back_from
+		`SELECT id, app_id, seq, status, image_ref, log_path, created_by, created_at, rolled_back_from
 		 FROM deployments WHERE status IN ('building', 'deploying') ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -189,7 +193,7 @@ func (s *Store) UnfinishedDeployments() ([]Deployment, error) {
 		var d Deployment
 		var img, logp sql.NullString
 		var rolledBackFrom sql.NullInt64
-		if err := rows.Scan(&d.ID, &d.AppID, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom); err != nil {
+		if err := rows.Scan(&d.ID, &d.AppID, &d.Seq, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom); err != nil {
 			return nil, err
 		}
 		d.ImageRef, d.LogPath = img.String, logp.String
@@ -203,7 +207,7 @@ func (s *Store) UnfinishedDeployments() ([]Deployment, error) {
 // ponytail: hard cap 50 — paging when someone actually has 51 deploys to read.
 func (s *Store) ListDeployments(appID int64) ([]Deployment, error) {
 	rows, err := s.db.Query(
-		`SELECT id, app_id, status, image_ref, log_path, created_by, created_at, rolled_back_from
+		`SELECT id, app_id, seq, status, image_ref, log_path, created_by, created_at, rolled_back_from
 		 FROM deployments WHERE app_id = ? ORDER BY id DESC LIMIT 50`, appID)
 	if err != nil {
 		return nil, err
@@ -214,7 +218,7 @@ func (s *Store) ListDeployments(appID int64) ([]Deployment, error) {
 		var d Deployment
 		var img, logp sql.NullString
 		var rolledBackFrom sql.NullInt64
-		if err := rows.Scan(&d.ID, &d.AppID, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom); err != nil {
+		if err := rows.Scan(&d.ID, &d.AppID, &d.Seq, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom); err != nil {
 			return nil, err
 		}
 		d.ImageRef, d.LogPath = img.String, logp.String

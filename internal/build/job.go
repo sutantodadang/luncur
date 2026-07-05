@@ -45,8 +45,12 @@ type BuildParams struct {
 
 func ptr[T any](v T) *T { return &v }
 
-func ImageRef(registryHost, project, app string, deployID int64) string {
-	return fmt.Sprintf("%s/%s-%s:%d", registryHost, project, app, deployID)
+// ImageRef builds the app's image tag from its per-app deploy number (seq)
+// — the human-facing deploy number (Heroku-style #1, #2, ...), not the
+// internal global deployments.id. The tag is already namespaced per app
+// repo ("<project>-<app>"), so a per-app seq stays unique as the tag value.
+func ImageRef(registryHost, project, app string, seq int64) string {
+	return fmt.Sprintf("%s/%s-%s:%d", registryHost, project, app, seq)
 }
 
 // CacheRef returns the per-app BuildKit cache image ref, stored under a

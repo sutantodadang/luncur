@@ -42,9 +42,9 @@
 
 <div class="card mb-6">
 <h2>Deploy history</h2>
-<table class="tbl"><tr><th>ID</th><th>Status</th><th>Image</th><th>Actor</th><th>When</th><th></th></tr>
+<table class="tbl"><tr><th>#</th><th>Status</th><th>Image</th><th>Actor</th><th>When</th><th></th></tr>
 {{range .Deploys}}<tr>
-  <td>{{.ID}}</td><td><span class="status-{{.Status}}">{{.Status}}</span></td>
+  <td>{{.Seq}}</td><td><span class="status-{{.Status}}">{{.Status}}</span></td>
   <td><code class="font-mono text-xs" title="{{.ImageRef}}">{{.ImageTag}}</code>{{if .RolledBackFrom}} <em>(rollback of {{.RolledBackFrom}})</em>{{end}}</td>
   <td class="text-xs text-mut">{{.Actor}}</td>
   <td class="text-xs text-mut">{{.CreatedAt}}</td>
@@ -52,7 +52,7 @@
     <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollback">
       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
       <input type="hidden" name="deploy_id" value="{{.ID}}">
-      <button type="submit" class="btn-ghost" hx-confirm="Rollback {{$.App.Name}} to deploy #{{.ID}}?">rollback</button>
+      <button type="submit" class="btn-ghost" hx-confirm="Rollback {{$.App.Name}} to deploy #{{.Seq}}?">rollback</button>
     </form>
   {{end}}</td>
 </tr>{{end}}

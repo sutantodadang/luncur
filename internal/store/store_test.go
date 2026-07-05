@@ -86,6 +86,74 @@ func TestMigrateAddsExpiresAt(t *testing.T) {
 	}
 }
 
+// TestMigrateBackfillsDeploymentSeq covers the seq backfill branch in
+// migrate: a DB created before the per-app deploy numbering column existed
+// has deployments rows with no seq, and Open must both add the column and
+// derive each row's per-app position from insertion (id) order, then land
+// a unique (app_id, seq) index.
+func TestMigrateBackfillsDeploymentSeq(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Legacy pre-seq DDL: deployments without the seq column, two apps with
+	// interleaved deployment ids.
+	if _, err := db.Exec(`
+		CREATE TABLE apps (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+		CREATE TABLE deployments (
+		  id         INTEGER PRIMARY KEY,
+		  app_id     INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+		  status     TEXT NOT NULL,
+		  image_ref  TEXT,
+		  log_path   TEXT,
+		  created_by INTEGER,
+		  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		  rolled_back_from INTEGER
+		);
+		INSERT INTO apps (id, name) VALUES (1, 'api'), (2, 'worker');
+		INSERT INTO deployments (id, app_id, status, image_ref) VALUES
+		  (1, 1, 'live', 'img:1'),  -- api's #1
+		  (2, 2, 'live', 'img:1'),  -- worker's #1
+		  (3, 1, 'live', 'img:2'),  -- api's #2
+		  (4, 1, 'live', 'img:3'),  -- api's #3
+		  (5, 2, 'live', 'img:2'); -- worker's #2
+		`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on legacy DB: %v", err)
+	}
+	defer s.Close()
+
+	wantSeq := map[int64]int64{1: 1, 2: 1, 3: 2, 4: 3, 5: 2}
+	for id, want := range wantSeq {
+		d, err := s.GetDeployment(id)
+		if err != nil {
+			t.Fatalf("GetDeployment(%d): %v", id, err)
+		}
+		if d.Seq != want {
+			t.Errorf("deployment %d: seq = %d, want %d", id, d.Seq, want)
+		}
+	}
+
+	// Re-running Open (migrate again) must stay idempotent: no change, and
+	// the unique index must reject a genuine (app_id, seq) collision.
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("second Open on already-migrated DB: %v", err)
+	}
+	defer s2.Close()
+	if _, err := s.DB().Exec(`INSERT INTO deployments (id, app_id, seq, status) VALUES (99, 1, 1, 'live')`); err == nil {
+		t.Fatal("want unique constraint violation inserting a duplicate (app_id, seq)")
+	}
+}
+
 func TestOpenIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	for i := 0; i < 2; i++ {
