@@ -243,7 +243,14 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 	if err != nil {
 		return fail(err)
 	}
-	if err := s.kube.EnsureNamespace(ctx, s.systemNamespace); err != nil {
+	// baseline, not restricted: rootless BuildKit needs setuid newuidmap to
+	// remap uids inside its user namespace, which "restricted" forbids
+	// outright (it disallows any privilege escalation, setuid included) —
+	// confirmed in production via `FailedCreate: ... violates PodSecurity
+	// "restricted:latest"` Job events. Project/app namespaces stay
+	// restricted; only this system namespace, which runs luncur-operated
+	// build infra rather than tenant apps, is relaxed.
+	if err := s.kube.EnsureNamespaceWithPolicy(ctx, s.systemNamespace, "baseline"); err != nil {
 		return fail(err)
 	}
 	s.buildLogf(d, "applying build job to cluster")

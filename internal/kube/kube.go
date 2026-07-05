@@ -119,10 +119,21 @@ func nameOf(objJSON []byte) (string, error) {
 	return m.Metadata.Name, nil
 }
 
+// EnsureNamespace stamps a project/app namespace at the "restricted"
+// PodSecurity level — the safe default for tenant workloads.
 func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
+	return c.EnsureNamespaceWithPolicy(ctx, name, "restricted")
+}
+
+// EnsureNamespaceWithPolicy server-side-applies a namespace stamped with
+// app.kubernetes.io/managed-by:luncur and pod-security.kubernetes.io/enforce
+// set to policy. Callers that need a laxer profile than "restricted" (e.g.
+// the system namespace hosting BuildKit) pass "baseline" here instead of
+// going through EnsureNamespace.
+func (c *Client) EnsureNamespaceWithPolicy(ctx context.Context, name, policy string) error {
 	ns := fmt.Sprintf(
-		`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q,"labels":{"app.kubernetes.io/managed-by":"luncur","pod-security.kubernetes.io/enforce":"restricted"}}}`,
-		name,
+		`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q,"labels":{"app.kubernetes.io/managed-by":"luncur","pod-security.kubernetes.io/enforce":%q}}}`,
+		name, policy,
 	)
 	_, err := c.dyn.Resource(gvrByKind["Namespace"]).Patch(
 		ctx, name, types.ApplyPatchType, []byte(ns), applyOpts(),

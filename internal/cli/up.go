@@ -152,7 +152,7 @@ func upCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&ip, "ip", "", "public IP (default: detect from the node)")
 	cmd.Flags().StringVar(&image, "image", defaultImage(), "luncur server image")
-	cmd.Flags().StringVar(&builderImage, "builder-image", "luncur/builder:latest", "builder image")
+	cmd.Flags().StringVar(&builderImage, "builder-image", build.DefaultBuilderImage, "builder image")
 	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "target an existing cluster (skips K3s install)")
 	cmd.Flags().StringVar(&certProvider, "cert-provider", "builtin", "TLS cert provider: builtin, traefik, or cert-manager")
 	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "email for Let's Encrypt account registration")

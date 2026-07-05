@@ -157,6 +157,31 @@ func TestEnsureNamespace(t *testing.T) {
 	}
 }
 
+func TestEnsureNamespaceWithPolicyBaseline(t *testing.T) {
+	c, log := fakeClient(t)
+	if err := c.EnsureNamespaceWithPolicy(context.Background(), "luncur-system", "baseline"); err != nil {
+		t.Fatal(err)
+	}
+	rec := (*log)[0]
+	if rec.verb != "patch" || rec.resource != "namespaces" || rec.name != "luncur-system" {
+		t.Fatalf("bad action: %+v", rec)
+	}
+	var body struct {
+		Metadata struct {
+			Labels map[string]string `json:"labels"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(rec.patch, &body); err != nil {
+		t.Fatalf("unmarshal patch body: %v", err)
+	}
+	if body.Metadata.Labels["app.kubernetes.io/managed-by"] != "luncur" {
+		t.Fatalf("managed-by label missing: %+v", body.Metadata.Labels)
+	}
+	if body.Metadata.Labels["pod-security.kubernetes.io/enforce"] != "baseline" {
+		t.Fatalf("pod-security enforce label want baseline: %+v", body.Metadata.Labels)
+	}
+}
+
 func TestDeleteAppObjectsIgnoresNotFound(t *testing.T) {
 	// Default reactor chain (no short-circuit): deleting non-existent
 	// objects from the empty fake tracker returns NotFound, which

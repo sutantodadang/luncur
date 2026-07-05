@@ -99,7 +99,7 @@ func newServer(d Deps) *server {
 	}
 	builderImage := d.BuilderImage
 	if builderImage == "" {
-		builderImage = "luncur/builder:latest"
+		builderImage = build.DefaultBuilderImage
 	}
 	dataPVC := d.DataPVC
 	if dataPVC == "" {

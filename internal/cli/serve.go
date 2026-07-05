@@ -199,7 +199,7 @@ func serveCmd() *cobra.Command {
 		"path to secret sealing key (default luncur.key beside --db)")
 	cmd.Flags().StringVar(&externalIP, "external-ip", "", "external IP advertised to clients")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "./data", "directory for source-build uploads/state")
-	cmd.Flags().StringVar(&builderImage, "builder-image", "luncur/builder:latest", "buildkit builder image")
+	cmd.Flags().StringVar(&builderImage, "builder-image", build.DefaultBuilderImage, "buildkit builder image")
 	cmd.Flags().StringVar(&registryHost, "registry-host", "registry.luncur-system:5000", "in-cluster registry host:port")
 	cmd.Flags().StringVar(&sshListen, "ssh-listen", ":2222", "git-push SSH listen address (empty disables)")
 	cmd.Flags().StringVar(&sshHostKeyFile, "ssh-hostkey-file", "", "SSH host key path (default luncur_host_key beside --db)")
