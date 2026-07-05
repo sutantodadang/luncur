@@ -2,6 +2,7 @@
 {{template "head" .}}{{template "nav" .}}
 <p class="mb-1 font-mono text-[11px] text-mut"><a class="hover:text-inkhi" href="/ui/">&larr; Projects</a></p>
 <h1 class="mb-4 text-xl font-semibold text-inkhi">{{.Project.Name}}</h1>
+{{if .Banner}}<p class="err mb-4">{{.Banner}}</p>{{end}}
 
 <div class="card mb-6">
 <h2>Create app</h2>
@@ -47,16 +48,22 @@ uiKindChange("web");
 {{end}}
 </div>
 
-<div class="card">
+<div class="card mb-6">
 <h2>Addons</h2>
 {{if not .Addons}}<p class="mb-1 text-sm text-mut">No addons yet.</p><div class="cli-echo mb-2">$ <b>luncur addon create postgres</b></div>{{end}}
-<table class="tbl"><tr><th>Name</th><th>Type</th><th>Version</th><th>Ready</th><th>Attached</th><th></th></tr>
+<table class="tbl"><tr><th>Name</th><th>Type</th><th>Version</th><th>Ready</th><th>Attached</th><th></th><th></th></tr>
 {{range .Addons}}<tr>
   <td>{{.Name}}</td>
   <td>{{.Type}}</td>
   <td>{{.Version}}</td>
   <td>{{.Ready}}</td>
   <td>{{range .AttachedTo}}{{.}} {{end}}</td>
+  <td><form class="inline-flex items-center gap-2" method="post" action="/ui/projects/{{$.Project.Name}}/addons/upgrade">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="name" value="{{.Name}}">
+    <input class="input w-20" name="version" placeholder="version" required>
+    <button type="submit" class="btn-ghost" hx-confirm="Upgrade addon {{.Name}}?">upgrade</button>
+  </form></td>
   <td><form class="inline-flex items-center gap-2" method="post" action="/ui/projects/{{$.Project.Name}}/addons/delete">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
     <input type="hidden" name="name" value="{{.Name}}">
@@ -75,6 +82,22 @@ uiKindChange("web");
   <button type="submit" class="btn">create addon</button>
 </form>
 <div class="cli-echo">$ <b>luncur addon create postgres</b></div>
+<div class="cli-echo">$ <b>luncur addon upgrade &lt;name&gt;</b></div>
+</div>
+
+<div class="card">
+<h2>Members</h2>
+<table class="tbl"><tr><th>Email</th><th>Role</th></tr>
+{{range .Members}}<tr><td>{{.Email}}</td><td>{{.Role}}</td></tr>{{end}}
+</table>
+{{if .IsAdmin}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/members" class="mt-3 flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input w-auto flex-1" type="email" name="email" placeholder="email" required>
+  <button type="submit" class="btn">add member</button>
+</form>
+<div class="cli-echo">$ <b>luncur project add-member {{.Project.Name}} &lt;email&gt;</b></div>
+{{end}}
 </div>
 {{template "foot" .}}
 {{end}}

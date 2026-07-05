@@ -27,4 +27,12 @@ func TestMembers(t *testing.T) {
 	if err != nil || got.ID != u.ID {
 		t.Fatalf("GetUserByEmail: %+v %v", got, err)
 	}
+
+	members, err := s.ListMembers(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 1 || members[0].Email != "m@b.co" {
+		t.Fatalf("ListMembers = %+v, want one m@b.co entry", members)
+	}
 }

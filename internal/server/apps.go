@@ -155,6 +155,19 @@ func (s *server) handleGetApp(w http.ResponseWriter, r *http.Request, u store.Us
 	writeJSON(w, http.StatusOK, out)
 }
 
+// destroyApp is handleDeleteApp's and handleUIAppDestroy's shared core: an
+// ejected app's kube objects are no longer luncur's to touch — only the DB
+// row comes out. A non-ejected app deletes its kube objects first; the
+// caller must have already confirmed kube is configured.
+func (s *server) destroyApp(ctx context.Context, p store.Project, a store.App) error {
+	if !a.Ejected {
+		if err := s.kube.DeleteAppObjects(ctx, p.Namespace, a.Name); err != nil {
+			return err
+		}
+	}
+	return s.st.DeleteApp(a.ID)
+}
+
 func (s *server) handleDeleteApp(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.requireProject(w, u, r.PathValue("project"))
 	if !ok {
@@ -165,20 +178,12 @@ func (s *server) handleDeleteApp(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	// An ejected app's kube objects are no longer luncur's to touch — only
-	// the DB rows come out. Non-ejected apps keep the original behavior
-	// (kube required, objects deleted before the row).
-	if !a.Ejected {
-		if !s.requireKube(w) {
-			return
-		}
-		if err := s.kube.DeleteAppObjects(r.Context(), p.Namespace, a.Name); err != nil {
-			log.Printf("delete app objects: %v", err)
-			writeError(w, http.StatusInternalServerError, "internal", "internal error")
-			return
-		}
+	// Non-ejected apps keep the original behavior (kube required, objects
+	// deleted before the row); an ejected app skips straight to destroyApp.
+	if !a.Ejected && !s.requireKube(w) {
+		return
 	}
-	if err := s.st.DeleteApp(a.ID); err != nil {
+	if err := s.destroyApp(r.Context(), p, a); err != nil {
 		log.Printf("delete app: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return

@@ -39,6 +39,27 @@ func (s *Store) IsMember(projectID, userID int64) (bool, error) {
 	return n > 0, err
 }
 
+// ListMembers returns projectID's members (email + role), ordered by email.
+func (s *Store) ListMembers(projectID int64) ([]User, error) {
+	rows, err := s.db.Query(
+		`SELECT u.id, u.email, u.role FROM users u
+		 JOIN project_members m ON m.user_id = u.id WHERE m.project_id = ?
+		 ORDER BY u.email`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Email, &u.Role); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 // ListProjectsFor returns the projects userID is a member of.
 func (s *Store) ListProjectsFor(userID int64) ([]Project, error) {
 	rows, err := s.db.Query(

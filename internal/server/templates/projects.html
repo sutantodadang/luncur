@@ -1,6 +1,18 @@
 {{define "projects.html"}}
 {{template "head" .}}{{template "nav" .}}
 <h1 class="mb-4 text-xl font-semibold text-inkhi">Projects</h1>
+{{if .Banner}}<p class="err mb-4">{{.Banner}}</p>{{end}}
+{{if .IsAdmin}}
+<div class="card mb-6">
+<h2>Create project</h2>
+<form method="post" action="/ui/projects" class="flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input w-auto flex-1" name="name" placeholder="name" required>
+  <button type="submit" class="btn">create project</button>
+</form>
+<div class="cli-echo">$ <b>luncur project create &lt;name&gt;</b></div>
+</div>
+{{end}}
 <div class="card">
 {{if not .Projects}}<p class="mb-1 text-sm text-mut">No projects yet. Create one with <code>luncur project create</code>.</p><div class="cli-echo mb-2">$ <b>luncur project create</b></div>{{end}}
 <table class="tbl"><tr><th>Name</th><th>Namespace</th></tr>

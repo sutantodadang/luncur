@@ -129,7 +129,12 @@
   <td>{{.Hostname}}</td>
   <td><span class="status-{{.CertStatus}}">{{.CertStatus}}</span>{{if .CertError}} — {{.CertError}}{{end}}</td>
   <td>{{.CertExpiresAt}}</td>
-  <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/domains/delete">
+  <td class="flex items-center gap-2">
+    {{if eq .CertStatus "failed"}}<form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/domains/retry">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="hostname" value="{{.Hostname}}"><button type="submit" class="btn-ghost">retry</button>
+  </form>{{end}}
+  <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/domains/delete">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
     <input type="hidden" name="hostname" value="{{.Hostname}}"><button type="submit" class="btn-danger" hx-confirm="Delete domain {{.Hostname}}? This cannot be undone.">remove</button>
   </form></td>
@@ -141,6 +146,7 @@
   <button type="submit" class="btn">add domain</button>
 </form>
 <div class="cli-echo">$ <b>luncur domain add {{.App.Name}} &lt;hostname&gt;</b></div>
+<div class="cli-echo">$ <b>luncur domain retry {{.App.Name}} &lt;hostname&gt;</b></div>
 </div>
 {{end}}
 
@@ -223,6 +229,22 @@
   es.onerror = function () { es.close(); };
 })();
 </script>
+</div>
+
+<div class="card">
+<h2>Danger zone</h2>
+{{if not .App.Ejected}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/eject" class="mb-3">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn-ghost" hx-confirm="Eject {{.App.Name}}? luncur stops managing its manifests — you take over kubectl-applying changes yourself.">eject</button>
+</form>
+<div class="cli-echo mb-3">$ <b>luncur eject {{.App.Name}}</b></div>
+{{end}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/destroy">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn-danger" hx-confirm="Destroy app {{.App.Name}}? Deployments, domains and volumes are deleted. This cannot be undone.">destroy app</button>
+</form>
+<div class="cli-echo">$ <b>luncur app destroy {{.App.Name}}</b></div>
 </div>
 {{template "foot" .}}
 {{end}}
