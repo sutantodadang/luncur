@@ -36,8 +36,8 @@ func TestSystemObjects(t *testing.T) {
 			t.Fatalf("registry Service missing %q:\n%s", want, all)
 		}
 	}
-	if !strings.Contains(all, `"pod-security.kubernetes.io/enforce":"baseline"`) {
-		t.Fatalf("luncur-system Namespace missing baseline PodSecurity label:\n%s", all)
+	if !strings.Contains(all, `"pod-security.kubernetes.io/enforce":"privileged"`) {
+		t.Fatalf("luncur-system Namespace missing privileged PodSecurity label:\n%s", all)
 	}
 	if !strings.Contains(all, `"app.kubernetes.io/managed-by":"luncur"`) {
 		t.Fatalf("luncur-system Namespace missing managed-by label:\n%s", all)

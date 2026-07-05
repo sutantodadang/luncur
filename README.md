@@ -857,7 +857,7 @@ reconciliation (see below).
 **Serve flags for build infrastructure:**
 - `--data-dir` — path where build sources and logs are persisted; becomes a Kubernetes PVC in production (default `./data`)
 - `--builder-image` — OCI image for the build environment (default `ghcr.io/sutantodadang/luncur-builder:latest`); built and published to ghcr.io by the release pipeline
-- The system namespace (`luncur-system`) that build Jobs run in is provisioned at PodSecurity level `baseline`, not `restricted`: rootless BuildKit needs setuid `newuidmap` to remap uids, which `restricted` forbids as privilege escalation. Project/app namespaces are unaffected and stay `restricted`.
+- The system namespace (`luncur-system`) that build Jobs run in is provisioned at PodSecurity level `privileged`, not `restricted`: rootless BuildKit needs setuid `newuidmap` to remap uids (forbidden by `restricted` as privilege escalation) and unconfined seccomp/AppArmor profiles for its mount-namespace setup (forbidden by `baseline`). The build pod itself still runs as the unprivileged uid 1000 — the namespace label only stops Kubernetes from rejecting those profile settings. Project/app namespaces are unaffected and stay `restricted`.
 - `--registry-host` — in-cluster registry address (default `registry.luncur-system:5000`); K3s requires an insecure-registry entry for this host, written to `/etc/rancher/k3s/registries.yaml` by `luncur up`
 
 #### Troubleshooting: build stuck or no logs

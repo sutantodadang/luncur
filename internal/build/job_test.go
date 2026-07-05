@@ -2,6 +2,7 @@ package build
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/sutantodadang/luncur/internal/render"
@@ -71,6 +72,28 @@ func TestRenderBuildJobWithoutCacheRef(t *testing.T) {
 	env := jobEnv(t, obj)
 	if _, ok := env["LUNCUR_CACHE_REF"]; ok {
 		t.Fatalf("LUNCUR_CACHE_REF present, want absent: %+v", env)
+	}
+}
+
+func TestRenderBuildJobRootlessSecurity(t *testing.T) {
+	obj, err := RenderBuildJob(BuildParams{
+		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
+		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(obj.JSON)
+	for _, want := range []string{
+		`"container.apparmor.security.beta.kubernetes.io/builder":"unconfined"`,
+		`"seccompProfile":{"type":"Unconfined"}`,
+		`"runAsUser":1000`,
+		`"runAsGroup":1000`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("build job missing %s:\n%s", want, s)
+		}
 	}
 }
 

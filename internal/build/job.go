@@ -69,7 +69,23 @@ func RenderBuildJob(p BuildParams) (render.Object, error) {
 	container := corev1.Container{
 		Name:  "builder",
 		Image: p.BuilderImage,
-		Env:   env,
+		// Rootless BuildKit's rootlesskit must create user+mount namespaces
+		// and change mount propagation inside them. The runtime's default
+		// seccomp and AppArmor profiles block those syscalls (observed on
+		// Ubuntu hosts as "failed to share mount point: /: permission
+		// denied"), so both are unconfined — the buildkit-documented
+		// requirement for running rootless in Kubernetes. This is why the
+		// system namespace enforces PodSecurity "privileged": the
+		// unconfined profiles violate "baseline". Builds still run as the
+		// unprivileged uid 1000 user.
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  ptr(int64(1000)),
+			RunAsGroup: ptr(int64(1000)),
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeUnconfined,
+			},
+		},
+		Env: env,
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "data", MountPath: "/data"},
 		},
@@ -101,6 +117,16 @@ func RenderBuildJob(p BuildParams) (render.Object, error) {
 			TTLSecondsAfterFinished: ptr(int32(3600)),
 			ActiveDeadlineSeconds:   ptr(int64(900)),
 			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					// AppArmor must be unconfined for rootlesskit's mount
+					// operations (see the container SecurityContext comment).
+					// The annotation form works on every k8s version luncur
+					// targets, including ones without the appArmorProfile
+					// field.
+					Annotations: map[string]string{
+						"container.apparmor.security.beta.kubernetes.io/builder": "unconfined",
+					},
+				},
 				Spec: corev1.PodSpec{
 					RestartPolicy: restartPolicy,
 					Containers:    []corev1.Container{container},

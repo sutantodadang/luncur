@@ -30,18 +30,20 @@ func SystemObjects(dataPVC, registryPVC, registryImage string) ([]render.Object,
 		return nil
 	}
 
-	// baseline, not restricted: rootless BuildKit needs setuid newuidmap,
-	// which the restricted profile forbids outright as privilege escalation
-	// (confirmed in production via Job FailedCreate PodSecurity events). This
+	// privileged, not restricted/baseline: rootless BuildKit needs setuid
+	// newuidmap (restricted forbids it as privilege escalation) AND
+	// unconfined seccomp/AppArmor profiles for rootlesskit's mount setup
+	// (baseline forbids unconfined) — both confirmed in production. This
 	// namespace holds only luncur-operated workloads, not tenant apps —
-	// project/app namespaces (see kube.EnsureNamespace) stay restricted.
+	// project/app namespaces (see kube.EnsureNamespace) stay restricted,
+	// and the build pod itself still runs as unprivileged uid 1000.
 	ns := &corev1.Namespace{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: systemNamespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by":       "luncur",
-				"pod-security.kubernetes.io/enforce": "baseline",
+				"pod-security.kubernetes.io/enforce": "privileged",
 			},
 		},
 	}
