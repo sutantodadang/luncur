@@ -262,6 +262,63 @@ func TestJobPodStatusRunningNoPods(t *testing.T) {
 	}
 }
 
+// TestJobEvents seeds two Job events (an older FailedCreate from a
+// PodSecurity rejection and a newer BackoffLimitExceeded) and checks
+// JobEvents formats both, oldest first. Note: the fake clientset's generic
+// List (see gentype.alsoFakeLister.List) only applies the label selector
+// client-side and discards the field selector, so this doesn't exercise
+// JobEvents' involvedObject FieldSelector filtering against a real API
+// server — it only checks formatting/ordering. The empty case below (no
+// events seeded at all) covers the no-events path without depending on
+// field-selector filtering.
+func TestJobEvents(t *testing.T) {
+	older := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+	newer := metav1.NewTime(time.Now().Add(-1 * time.Minute))
+	e1 := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: "build-1.1", Namespace: "luncur-system"},
+		InvolvedObject: corev1.ObjectReference{Kind: "Job", Name: "build-1"},
+		Type:           "Warning",
+		Reason:         "FailedCreate",
+		Message:        `pods "build-1-" is forbidden: violates PodSecurity "restricted:latest"`,
+		LastTimestamp:  older,
+	}
+	e2 := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: "build-1.2", Namespace: "luncur-system"},
+		InvolvedObject: corev1.ObjectReference{Kind: "Job", Name: "build-1"},
+		Type:           "Warning",
+		Reason:         "BackoffLimitExceeded",
+		Message:        "Job has reached the specified backoff limit",
+		LastTimestamp:  newer,
+	}
+	cs := k8sfake.NewSimpleClientset(e1, e2)
+	c := NewForTest(nil, cs)
+
+	got, err := c.JobEvents(context.Background(), "luncur-system", "build-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`Warning FailedCreate: pods "build-1-" is forbidden: violates PodSecurity "restricted:latest"`,
+		"Warning BackoffLimitExceeded: Job has reached the specified backoff limit",
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("JobEvents = %v, want %v", got, want)
+	}
+}
+
+func TestJobEventsEmpty(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset()
+	c := NewForTest(nil, cs)
+
+	got, err := c.JobEvents(context.Background(), "luncur-system", "build-absent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("JobEvents(no events) = %v, want empty", got)
+	}
+}
+
 func TestAppPodsAndNodeIP(t *testing.T) {
 	cs := k8sfake.NewSimpleClientset(
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{

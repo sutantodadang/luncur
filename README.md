@@ -875,6 +875,21 @@ builder pod", the builder pod itself isn't starting.
   it to a registry the cluster can reach, or rebuild/retag it locally and
   make sure the node has it (`docker save`/`k3s ctr images import` for
   single-node setups).
+- **`no builder pod created yet — job events: ...`** — the Build Job never
+  managed to create a pod at all (PodSecurity admission rejecting the pod
+  spec, a ResourceQuota with no room left, a validating admission webhook,
+  etc.), so `JobPodStatus` never sees a pod to report on. After ~30s of
+  seeing no pod, the log now prints the Job's own recent Kubernetes events —
+  a `Warning FailedCreate: pods "build-<id>-" is forbidden: violates
+  PodSecurity "restricted:latest"` line is the usual PodSecurity case — so
+  the reason for the stall shows up in the LOGS pane instead of nothing.
+  The manual equivalent, if you're at a shell:
+  `kubectl -n luncur-system describe job build-<id>` (its Events section is
+  exactly what gets mirrored into the log).
+- **`pod watcher error: ...`** — the watcher itself couldn't list pods for
+  the Build Job (e.g. missing RBAC on `pods` in `luncur-system`). Logged
+  once, not spammed every poll; fix the permission and the next build's
+  watcher will succeed.
 - **Build never finishes** — it's cut off after `build_timeout_minutes`
   (default 15) and marked failed; raise it with
   `luncur config set build_timeout_minutes <n>` if your builds are simply

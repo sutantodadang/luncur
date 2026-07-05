@@ -66,20 +66,101 @@ func (s *server) buildLogf(d store.Deployment, format string, args ...any) {
 	}
 }
 
+// emptyPodChecksBeforeJobEvents is how many consecutive JobPodStatus checks
+// with no pod and no error must elapse (counting the immediate check) before
+// watchBuildPod asks JobEvents why the Job hasn't produced a pod yet — 7
+// checks at the 5s tick interval is ~30s. A package-level var, not a const,
+// so tests can lower it and drive the diagnostic without a real 30s wait.
+var emptyPodChecksBeforeJobEvents = 7
+
+// jobEventsReemitInterval throttles watchBuildPod's "no builder pod created
+// yet" diagnostic once it has fired once: while the Job stays podless, a
+// fresh JobEvents call is only considered at most this often, and only logged
+// again if its evidence actually changed. A package-level var, not a const,
+// so tests can lower it.
+var jobEventsReemitInterval = 60 * time.Second
+
+// watchBuildPollInterval is how often watchBuildPod polls JobPodStatus
+// (beyond its immediate first check). A package-level var, not a const, so
+// tests can lower it and drive several polls without a real multi-second
+// wait.
+var watchBuildPollInterval = 5 * time.Second
+
 // watchBuildPod polls JobPodStatus every 5s (plus once immediately) and
 // appends a milestone line to the deploy log whenever the phase/reason
 // changes, including the first observation — this is what lets the UI show
 // "builder pod: Pending (ImagePullBackOff)" while the Job is still running,
-// well before WaitJob's own poll would notice anything wrong. Stops as soon
-// as done is closed; callers close it right after their WaitJob call
-// returns.
+// well before WaitJob's own poll would notice anything wrong.
+//
+// Two blind spots this also covers: a Job that never creates a pod at all
+// (PodSecurity rejection, quota, an admission webhook) previously left the
+// log silent forever after "waiting for builder pod" — after
+// emptyPodChecksBeforeJobEvents consecutive empty checks it now fetches and
+// logs the Job's recent events, re-checking (throttled) while the Job stays
+// podless. And a pod-listing error (e.g. missing RBAC) previously returned
+// silently every 5s — it's now logged once, and again only if the error
+// message changes, so a permanent failure is visible without spamming.
+//
+// Stops as soon as done is closed; callers close it right after their
+// WaitJob call returns.
 func (s *server) watchBuildPod(ctx context.Context, d store.Deployment, jobName string, done <-chan struct{}) {
-	var last string
+	var (
+		last               string
+		lastErr            string
+		emptyChecks        int
+		emptyEvidenceSeen  bool
+		lastEmptyLine      string
+		lastEmptyCheckTime time.Time
+	)
+
 	check := func() {
 		phase, reason, err := s.kube.JobPodStatus(ctx, s.systemNamespace, jobName)
-		if err != nil || phase == "" {
+		if err != nil {
+			if msg := err.Error(); msg != lastErr {
+				s.buildLogf(d, "pod watcher error: %v", err)
+				lastErr = msg
+			}
 			return
 		}
+		lastErr = ""
+
+		if phase == "" {
+			emptyChecks++
+			if emptyChecks < emptyPodChecksBeforeJobEvents {
+				return
+			}
+			now := time.Now()
+			if emptyEvidenceSeen && now.Sub(lastEmptyCheckTime) < jobEventsReemitInterval {
+				return
+			}
+			lastEmptyCheckTime = now
+			events, evErr := s.kube.JobEvents(ctx, s.systemNamespace, jobName)
+			if evErr != nil {
+				// Best-effort: try again at the next allowed check.
+				return
+			}
+			current := "no builder pod created yet (no job events reported)"
+			if len(events) > 0 {
+				current = events[len(events)-1]
+			}
+			if emptyEvidenceSeen && current == lastEmptyLine {
+				return
+			}
+			lastEmptyLine = current
+			emptyEvidenceSeen = true
+			if len(events) == 0 {
+				s.buildLogf(d, "no builder pod created yet (no job events reported)")
+			} else {
+				s.buildLogf(d, "no builder pod created yet — job events:")
+				for _, e := range events {
+					s.buildLogf(d, "%s", e)
+				}
+			}
+			return
+		}
+
+		emptyChecks = 0
+		emptyEvidenceSeen = false
 		cur := phase
 		if reason != "" {
 			cur = phase + " (" + reason + ")"
@@ -91,7 +172,7 @@ func (s *server) watchBuildPod(ctx context.Context, d store.Deployment, jobName 
 	}
 
 	check()
-	tick := time.NewTicker(5 * time.Second)
+	tick := time.NewTicker(watchBuildPollInterval)
 	defer tick.Stop()
 	for {
 		select {
