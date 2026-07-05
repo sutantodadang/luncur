@@ -20,6 +20,16 @@ func hostFor(app, externalIP string) string {
 	return app + "." + strings.ReplaceAll(externalIP, ".", "-") + ".sslip.io"
 }
 
+// internalURLFor is the cluster-internal address an internal web app is
+// reachable at: the ClusterIP Service's in-cluster DNS name (same as the
+// Service name render.go assigns — in.AppName), port 80 (the Service port;
+// it forwards to the container port). Reachable from any pod in the
+// cluster, not just the app's own namespace, because it's the full
+// <service>.<namespace> form rather than the short <service> form.
+func internalURLFor(appName, namespace string) string {
+	return fmt.Sprintf("http://%s.%s:80", appName, namespace)
+}
+
 // plainEnv unseals an app's stored env vars to plaintext. Shared by
 // renderApp and addon attach's collision check (addonEnv).
 func (s *server) plainEnv(a store.App) (map[string]string, error) {
@@ -130,6 +140,7 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 		CPUMilli:           a.CPUMilli,
 		MemoryMB:           a.MemoryMB,
 		HealthPath:         a.HealthPath,
+		Internal:           a.Internal,
 		Overrides:          overrides,
 		ExtraHosts:         extraHosts,
 		IngressAnnotations: annotations,

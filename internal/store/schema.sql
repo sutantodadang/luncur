@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS apps (
   schedule      TEXT NOT NULL DEFAULT '',
   webhook_secret BLOB,
   build_path    TEXT NOT NULL DEFAULT '',
+  internal      INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, name)
 );

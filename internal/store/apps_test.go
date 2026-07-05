@@ -395,6 +395,38 @@ func TestSetBuildPath(t *testing.T) {
 	}
 }
 
+func TestSetInternal(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Internal {
+		t.Fatalf("want internal=false by default, got %+v", a)
+	}
+
+	if err := s.SetInternal(a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetApp(p.ID, "api")
+	if err != nil || !got.Internal {
+		t.Fatalf("get after set internal: %+v %v", got, err)
+	}
+
+	if err := s.SetInternal(a.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetApp(p.ID, "api")
+	if err != nil || got.Internal {
+		t.Fatalf("get after clear internal: %+v %v", got, err)
+	}
+
+	if err := s.SetInternal(99999, true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+}
+
 func TestSetWebhookSecret(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)

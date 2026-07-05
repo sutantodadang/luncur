@@ -2,6 +2,7 @@ package render
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -578,5 +579,68 @@ func TestRenderCronIgnoresVolumes(t *testing.T) {
 	pod := cj.Spec.JobTemplate.Spec.Template.Spec
 	if len(pod.Volumes) != 0 || len(pod.Containers[0].VolumeMounts) != 0 {
 		t.Fatalf("cron pod picked up volumes: %+v %+v", pod.Volumes, pod.Containers[0].VolumeMounts)
+	}
+}
+
+// TestRenderInternalWebHasServiceNoIngress covers an internal web app: it
+// still gets a ClusterIP Service (so other in-cluster apps can reach it) but
+// no Ingress at all — no public URL, no domains possible.
+func TestRenderInternalWebHasServiceNoIngress(t *testing.T) {
+	in := testInput()
+	in.Internal = true
+	r := mustRender(t, in, nil)
+	if len(r.Objects) != 2 {
+		t.Fatalf("want Deployment+Service only for internal web, got %+v", r.Objects)
+	}
+	if _, err := findKind(r, "Ingress"); err == nil {
+		t.Fatalf("internal web app must not render an Ingress, got %+v", r.Objects)
+	}
+	var svc corev1.Service
+	json.Unmarshal(objByKind(t, r, "Service"), &svc)
+	if svc.Spec.Ports[0].Port != 80 || svc.Spec.Ports[0].TargetPort.IntValue() != 3000 {
+		t.Fatalf("service ports: %+v", svc.Spec.Ports)
+	}
+}
+
+// findKind reports whether kind is present in r.Objects, without failing the
+// test (unlike objByKind) — used to assert absence.
+func findKind(r Rendered, kind string) (int, error) {
+	for i, o := range r.Objects {
+		if o.Kind == kind {
+			return i, nil
+		}
+	}
+	return -1, fmt.Errorf("no %s in rendered objects", kind)
+}
+
+// TestRenderNonInternalWebUnchanged pins the default (Internal: false, the
+// zero value) web object set: Deployment+Service+Ingress, exactly as before
+// this field existed — byte-identical behavior for internal=0.
+func TestRenderNonInternalWebUnchanged(t *testing.T) {
+	r := mustRender(t, testInput(), nil)
+	if len(r.Objects) != 3 {
+		t.Fatalf("want Deployment+Service+Ingress for non-internal web, got %+v", r.Objects)
+	}
+	if _, err := findKind(r, "Ingress"); err != nil {
+		t.Fatalf("non-internal web app must render an Ingress: %v", err)
+	}
+}
+
+// TestRenderInternalIgnoredForWorkerAndCron checks the Internal flag has no
+// effect outside the web case: worker/cron already render no Service, so
+// setting Internal must not change their object set.
+func TestRenderInternalIgnoredForWorkerAndCron(t *testing.T) {
+	w := workerInput()
+	w.Internal = true
+	rw := mustRender(t, w, nil)
+	if len(rw.Objects) != 1 || rw.Objects[0].Kind != "Deployment" {
+		t.Fatalf("internal=true must not change worker's object set, got %+v", rw.Objects)
+	}
+
+	c := cronInput()
+	c.Internal = true
+	rc := mustRender(t, c, nil)
+	if len(rc.Objects) != 1 || rc.Objects[0].Kind != "CronJob" {
+		t.Fatalf("internal=true must not change cron's object set, got %+v", rc.Objects)
 	}
 }

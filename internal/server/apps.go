@@ -40,8 +40,13 @@ type kindMismatchError struct{ err error }
 func (e *kindMismatchError) Error() string { return e.err.Error() }
 func (e *kindMismatchError) Unwrap() error { return e.err }
 
-func (s *server) appJSON(a store.App) map[string]any {
-	return map[string]any{
+// appJSON builds the JSON API's app representation. p is needed for internal
+// apps' cluster-DNS URL (which is namespace-qualified); non-internal apps
+// ignore it beyond that. An internal app gets "internal_url" instead of
+// "url" — its public sslip.io hostname resolves nowhere useful, since no
+// Ingress was ever rendered for it.
+func (s *server) appJSON(p store.Project, a store.App) map[string]any {
+	out := map[string]any{
 		"id":              a.ID,
 		"name":            a.Name,
 		"port":            a.Port,
@@ -50,8 +55,27 @@ func (s *server) appJSON(a store.App) map[string]any {
 		"kind":            a.Kind,
 		"schedule":        a.Schedule,
 		"webhook_enabled": a.WebhookSecret != nil,
-		"url":             "http://" + hostFor(a.Name, s.externalIP),
+		"internal":        a.Internal,
 	}
+	if a.Internal {
+		out["internal_url"] = internalURLFor(a.Name, p.Namespace)
+	} else {
+		out["url"] = "http://" + hostFor(a.Name, s.externalIP)
+	}
+	return out
+}
+
+// validateInternalKind enforces that internal=true only applies to web apps:
+// worker/cron kinds already render no Service, so there is nothing for
+// "internal" to mean for them. kind is the raw request field ("" defaults to
+// web, matching store.normalizeAppKind). Shared by the JSON API
+// (handleCreateApp) and the UI (handleUICreateApp) so both reject before the
+// app row is ever created.
+func validateInternalKind(internal bool, kind string) error {
+	if internal && kind != "" && kind != "web" {
+		return fmt.Errorf("internal only applies to web apps")
+	}
+	return nil
 }
 
 // requireApp loads an app within a project by name. Writes the error
@@ -83,6 +107,7 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		Kind      string `json:"kind"`
 		Schedule  string `json:"schedule"`
 		BuildPath string `json:"build_path"`
+		Internal  bool   `json:"internal"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -91,6 +116,10 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 	buildPath, err := validBuildPath(req.BuildPath)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "build_path: "+err.Error())
+		return
+	}
+	if err := validateInternalKind(req.Internal, req.Kind); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
 	var a store.App
@@ -120,7 +149,15 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		}
 		a.BuildPath = buildPath
 	}
-	writeJSON(w, http.StatusCreated, s.appJSON(a))
+	if req.Internal {
+		if err := s.st.SetInternal(a.ID, true); err != nil {
+			log.Printf("set internal: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		a.Internal = true
+	}
+	writeJSON(w, http.StatusCreated, s.appJSON(p, a))
 }
 
 func (s *server) handleListApps(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -136,7 +173,7 @@ func (s *server) handleListApps(w http.ResponseWriter, r *http.Request, u store.
 	}
 	out := make([]map[string]any, 0, len(list))
 	for _, a := range list {
-		out = append(out, s.appJSON(a))
+		out = append(out, s.appJSON(p, a))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -151,7 +188,7 @@ func (s *server) handleGetApp(w http.ResponseWriter, r *http.Request, u store.Us
 		return
 	}
 
-	out := s.appJSON(a)
+	out := s.appJSON(p, a)
 	d, err := s.st.LatestDeployment(a.ID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):

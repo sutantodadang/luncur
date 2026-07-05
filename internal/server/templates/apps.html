@@ -22,6 +22,7 @@
   </select>
   <span id="port-field"><input class="input w-auto" type="number" name="port" id="port-input" placeholder="port (web only)"></span>
   <span id="schedule-field"><input class="input w-auto flex-1" name="schedule" placeholder="schedule (cron only), e.g. 0 3 * * *"></span>
+  <label id="internal-field" class="flex items-center gap-1 text-xs text-mut"><input type="checkbox" name="internal" value="1"> internal — no public URL, cluster-only</label>
   <input class="input w-auto flex-1" name="git_url" placeholder="git URL (optional)">
   <input class="input w-auto" name="git_branch" placeholder="branch (optional)">
   <input class="input w-auto" name="build_path" placeholder="subdir (monorepo, optional) e.g. backend">
@@ -34,6 +35,7 @@
 function uiKindChange(k) {
   document.getElementById("port-field").style.display = k === "web" ? "" : "none";
   document.getElementById("schedule-field").style.display = k === "cron" ? "" : "none";
+  document.getElementById("internal-field").style.display = k === "web" ? "" : "none";
 }
 uiKindChange("web");
 
@@ -63,10 +65,11 @@ function uiPresetChange(preset) {
     <span class="flex gap-1">
       {{if .Status}}<span class="status-{{.Status}}">{{.Status}}</span>{{else}}<span class="chip chip-muted">no deploys</span>{{end}}
       {{if ne .Kind "web"}}<span class="chip chip-muted">{{.Kind}}</span>{{end}}
+      {{if .Internal}}<span class="chip chip-muted">internal</span>{{end}}
       {{if .Ejected}}<span class="chip chip-bad">ejected</span>{{end}}
     </span>
   </div>
-  {{if .URL}}<p class="truncate text-xs text-inkhi hover:text-signal"><a href="{{.URL}}">{{.URL}}</a></p>{{end}}
+  {{if .Internal}}<p class="truncate text-xs text-mut"><code>{{.InternalURL}}</code></p>{{else if .URL}}<p class="truncate text-xs text-inkhi hover:text-signal"><a href="{{.URL}}">{{.URL}}</a></p>{{end}}
   <p class="text-xs text-mut">{{.Replicas}} replica{{if ne .Replicas 1}}s{{end}}</p>
 </div>
 {{end}}

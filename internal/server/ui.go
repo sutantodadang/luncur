@@ -405,13 +405,15 @@ func (s *server) handleUIAddMember(w http.ResponseWriter, r *http.Request, u sto
 // derived public URL and latest-deploy status (empty when the app has never
 // been deployed — the template renders a "no deploys" chip for that case).
 type uiAppRow struct {
-	Name     string
-	Kind     string
-	Schedule string
-	Replicas int
-	URL      string
-	Ejected  bool
-	Status   string
+	Name        string
+	Kind        string
+	Schedule    string
+	Replicas    int
+	URL         string
+	Internal    bool
+	InternalURL string
+	Ejected     bool
+	Status      string
 }
 
 func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -428,8 +430,12 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	rows := make([]uiAppRow, 0, len(list))
 	for _, a := range list {
 		url := "http://" + hostFor(a.Name, s.externalIP)
+		internalURL := ""
 		if a.Kind != "web" {
 			url = ""
+		} else if a.Internal {
+			url = ""
+			internalURL = internalURLFor(a.Name, p.Namespace)
 		}
 		status := ""
 		if d, err := s.st.LatestDeployment(a.ID); err == nil {
@@ -441,7 +447,8 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		}
 		rows = append(rows, uiAppRow{
 			Name: a.Name, Kind: a.Kind, Schedule: a.Schedule,
-			Replicas: a.Replicas, URL: url, Ejected: a.Ejected, Status: status,
+			Replicas: a.Replicas, URL: url, Internal: a.Internal, InternalURL: internalURL,
+			Ejected: a.Ejected, Status: status,
 		})
 	}
 	addons, err := s.addonRows(r.Context(), p)
@@ -498,6 +505,11 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 		http.Error(w, "build_path: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	internal := r.PostFormValue("internal") != ""
+	if err := validateInternalKind(internal, kind); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	var a store.App
 	if gitURL != "" {
@@ -516,6 +528,14 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 			return
 		}
 		a.BuildPath = buildPath
+	}
+	if internal {
+		if err := s.st.SetInternal(a.ID, true); err != nil {
+			log.Printf("ui create app: set internal: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		a.Internal = true
 	}
 
 	if image == "" {
@@ -708,10 +728,16 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
+	url := "http://" + hostFor(a.Name, s.externalIP)
+	internalURL := ""
+	if a.Internal {
+		internalURL = internalURLFor(a.Name, p.Namespace)
+	}
+
 	chip := chipData(p.Name, a.Name, status)
 	data := map[string]any{
 		"User": u, "Project": p, "App": a,
-		"Status": status, "LatestID": latestID, "URL": "http://" + hostFor(a.Name, s.externalIP),
+		"Status": status, "LatestID": latestID, "URL": url, "InternalURL": internalURL,
 		"Chip": chip, "Building": chip.Building,
 		"Deploys": uiDeployRows(history, 10), "EnvKeys": envKeys,
 		"IsGit":          a.SourceType == "git",

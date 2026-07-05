@@ -332,6 +332,48 @@ func TestUICreateAppBuildPath(t *testing.T) {
 	}
 }
 
+// TestUICreateAppInternalCheckbox covers the create form's "internal"
+// checkbox: checked persists internal=true on a web app (mirroring
+// TestUICreateAppBuildPath's style), and checked with kind=worker is
+// rejected with 400 before the app is created.
+func TestUICreateAppInternalCheckbox(t *testing.T) {
+	srv, st := testServer(t)
+	doAuthed(t, "POST", srv.URL+"/v1/projects", seedUserToken(t, st, "root@b.co", "admin"), `{"name":"web"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	form := url.Values{"name": {"ai"}, "port": {"8001"}, "internal": {"1"}}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/web/apps", csrfCk, ck, form)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create with internal checked: want 303, got %d", resp.StatusCode)
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.Internal {
+		t.Fatalf("want internal=true persisted, got %+v", a)
+	}
+
+	badForm := url.Values{"name": {"w1"}, "kind": {"worker"}, "internal": {"1"}}
+	badResp := uiPost(t, client, srv.URL+"/ui/projects/web/apps", csrfCk, ck, badForm)
+	defer badResp.Body.Close()
+	if badResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("create internal worker: want 400, got %d", badResp.StatusCode)
+	}
+	if _, err := st.GetApp(mustProjectID(t, st, "web"), "w1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("internal worker app should not be created, got %v", err)
+	}
+}
+
 func TestUIAppVisibleOnProjectPage(t *testing.T) {
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
