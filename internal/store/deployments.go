@@ -172,6 +172,33 @@ func (s *Store) StuckDeployments(olderThanMin int) ([]Deployment, error) {
 	return out, rows.Err()
 }
 
+// UnfinishedDeployments returns every deployment still in 'building' or
+// 'deploying', oldest first — the startup reconciliation loop's input for
+// resuming or failing deploys orphaned by a server restart (the goroutine
+// that was driving them died with the process).
+func (s *Store) UnfinishedDeployments() ([]Deployment, error) {
+	rows, err := s.db.Query(
+		`SELECT id, app_id, status, image_ref, log_path, created_by, created_at, rolled_back_from
+		 FROM deployments WHERE status IN ('building', 'deploying') ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Deployment
+	for rows.Next() {
+		var d Deployment
+		var img, logp sql.NullString
+		var rolledBackFrom sql.NullInt64
+		if err := rows.Scan(&d.ID, &d.AppID, &d.Status, &img, &logp, &d.CreatedBy, &d.CreatedAt, &rolledBackFrom); err != nil {
+			return nil, err
+		}
+		d.ImageRef, d.LogPath = img.String, logp.String
+		d.RolledBackFrom = rolledBackFrom.Int64
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // ListDeployments returns an app's deploy history, newest first.
 // ponytail: hard cap 50 — paging when someone actually has 51 deploys to read.
 func (s *Store) ListDeployments(appID int64) ([]Deployment, error) {

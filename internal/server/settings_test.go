@@ -142,6 +142,25 @@ func TestSettingsRegistryKeep(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestSettingsBuildTimeoutMinutes(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	for _, bad := range []string{"0", "800", "abc"} {
+		resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/build_timeout_minutes", admin, `{"value":"`+bad+`"}`)
+		if resp.StatusCode != 400 {
+			t.Fatalf("put %q: want 400, got %d", bad, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/build_timeout_minutes", admin, `{"value":"30"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("put 30: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
 func TestSettingsBuildCache(t *testing.T) {
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")

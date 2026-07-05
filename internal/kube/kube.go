@@ -284,6 +284,55 @@ func (c *Client) WaitJob(ctx context.Context, namespace, name string, poll time.
 	}
 }
 
+// JobExists reports whether the named Job still exists. Used by restart
+// reconciliation to distinguish "the Job survived the restart, still worth
+// waiting on" from "the Job is gone, mark the deployment failed".
+func (c *Client) JobExists(ctx context.Context, namespace, name string) (bool, error) {
+	_, err := c.dyn.Resource(gvrByKind["Job"]).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get job %s: %w", name, err)
+	}
+	return true, nil
+}
+
+// JobPodStatus reports the phase (and, if a container is waiting, its
+// reason — e.g. ImagePullBackOff) of the newest pod backing a Job. Used to
+// surface build-in-progress milestones to the deploy log before the Job
+// itself finishes. No pods yet, or no clientset half configured (some test
+// clients only wire the dynamic half) -> ("", "", nil): callers poll.
+func (c *Client) JobPodStatus(ctx context.Context, namespace, jobName string) (phase, reason string, err error) {
+	if c.cs == nil {
+		return "", "", nil
+	}
+	list, err := c.cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "job-name=" + jobName,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("list pods: %w", err)
+	}
+	if len(list.Items) == 0 {
+		return "", "", nil
+	}
+	newest := list.Items[0]
+	for _, p := range list.Items[1:] {
+		if p.CreationTimestamp.After(newest.CreationTimestamp.Time) {
+			newest = p
+		}
+	}
+	phase = string(newest.Status.Phase)
+	reason = newest.Status.Reason
+	for _, cst := range newest.Status.ContainerStatuses {
+		if cst.State.Waiting != nil && cst.State.Waiting.Reason != "" {
+			reason = cst.State.Waiting.Reason
+			break
+		}
+	}
+	return phase, reason, nil
+}
+
 // AppPods lists pod names carrying the app label Render stamps on
 // every workload (app.kubernetes.io/name=<app>).
 func (c *Client) AppPods(ctx context.Context, namespace, app string) ([]string, error) {

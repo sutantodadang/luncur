@@ -1604,3 +1604,95 @@ func TestUIVolumeSectionHiddenForCron(t *testing.T) {
 		t.Fatalf("cron app page must not show Volumes section, got: %s", body)
 	}
 }
+
+// TestUIProjectsPageShowsCardSummary verifies the projects page renders the
+// card-grid summary line (app/live/building counts) and member count, and
+// gates the inline create-project form to admins only.
+func TestUIProjectsPageShowsCardSummary(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"worker2","port":3001}`).Body.Close()
+
+	liveID := appID(t, st, "web", "api")
+	if _, err := st.CreateDeployment(liveID, "live", "nginx:1", 0); err != nil {
+		t.Fatal(err)
+	}
+	buildingID := appID(t, st, "web", "worker2")
+	if _, err := st.CreateDeployment(buildingID, "building", "nginx:1", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	proj, err := st.GetProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := st.CreateUser("m@b.co", "password123", "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddMember(proj.ID, member.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	adminUser, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminCk := uiSessionCookie(t, st, adminUser.ID)
+
+	client := noRedirectClient()
+	req, err := http.NewRequest("GET", srv.URL+"/ui/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(adminCk)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ui/ as admin: want 200, got %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminBody := string(body)
+	for _, want := range []string{
+		`/ui/projects/web`, "luncur-web", "2 apps", "1 live", "1 building", "members: 1",
+		`action="/ui/projects"`,
+	} {
+		if !strings.Contains(adminBody, want) {
+			t.Fatalf("GET /ui/ as admin: body missing %q, got: %s", want, adminBody)
+		}
+	}
+
+	memberCk := uiSessionCookie(t, st, member.ID)
+	req2, err := http.NewRequest("GET", srv.URL+"/ui/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req2.AddCookie(memberCk)
+	resp2, err := client.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("GET /ui/ as member: want 200, got %d", resp2.StatusCode)
+	}
+	body2, err := io.ReadAll(resp2.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberBody := string(body2)
+	if strings.Contains(memberBody, `action="/ui/projects"`) {
+		t.Fatalf("GET /ui/ as member: create-project form must be admin-only, got: %s", memberBody)
+	}
+	if strings.Contains(memberBody, "+ add") {
+		t.Fatalf("GET /ui/ as member: +add member link must be admin-only, got: %s", memberBody)
+	}
+}

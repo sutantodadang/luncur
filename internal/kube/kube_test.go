@@ -194,6 +194,74 @@ func TestWaitJobSucceeded(t *testing.T) {
 	}
 }
 
+func TestJobExists(t *testing.T) {
+	job := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "batch/v1", "kind": "Job",
+		"metadata": map[string]any{"name": "build-1", "namespace": "luncur-system"},
+	}}
+	dyn := newFakeDyn(t, job)
+	c := NewForTest(dyn, nil)
+
+	ok, err := c.JobExists(context.Background(), "luncur-system", "build-1")
+	if err != nil || !ok {
+		t.Fatalf("JobExists(build-1) = (%v, %v), want (true, nil)", ok, err)
+	}
+
+	ok, err = c.JobExists(context.Background(), "luncur-system", "build-absent")
+	if err != nil || ok {
+		t.Fatalf("JobExists(build-absent) = (%v, %v), want (false, nil)", ok, err)
+	}
+}
+
+func TestJobPodStatusPending(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "build-1-abcde", Namespace: "luncur-system",
+			Labels: map[string]string{"job-name": "build-1"}},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}},
+			}},
+		},
+	}
+	cs := k8sfake.NewSimpleClientset(pod)
+	c := NewForTest(nil, cs)
+
+	phase, reason, err := c.JobPodStatus(context.Background(), "luncur-system", "build-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if phase != "Pending" || reason != "ImagePullBackOff" {
+		t.Fatalf("JobPodStatus = (%q, %q), want (Pending, ImagePullBackOff)", phase, reason)
+	}
+}
+
+func TestJobPodStatusRunningNoPods(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "build-2-fghij", Namespace: "luncur-system",
+			Labels: map[string]string{"job-name": "build-2"}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	cs := k8sfake.NewSimpleClientset(pod)
+	c := NewForTest(nil, cs)
+
+	phase, reason, err := c.JobPodStatus(context.Background(), "luncur-system", "build-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if phase != "Running" || reason != "" {
+		t.Fatalf("JobPodStatus = (%q, %q), want (Running, \"\")", phase, reason)
+	}
+
+	phase, reason, err = c.JobPodStatus(context.Background(), "luncur-system", "build-absent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if phase != "" || reason != "" {
+		t.Fatalf("JobPodStatus(no pods) = (%q, %q), want (\"\", \"\")", phase, reason)
+	}
+}
+
 func TestAppPodsAndNodeIP(t *testing.T) {
 	cs := k8sfake.NewSimpleClientset(
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{

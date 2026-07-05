@@ -271,6 +271,20 @@ func (s *server) uiAddon(w http.ResponseWriter, p store.Project, name string) (s
 	return a, true
 }
 
+// uiProjectCard is projects.html's per-card view model: the project plus its
+// app-count summary (derived the same way handleUIApps derives per-app
+// status: LatestDeployment per app, bucketed into live/building/failed) and
+// its member count.
+type uiProjectCard struct {
+	Name      string
+	Namespace string
+	Apps      int
+	Live      int
+	Building  int
+	Failed    int
+	Members   int
+}
+
 func (s *server) handleUIProjects(w http.ResponseWriter, r *http.Request, u store.User) {
 	list, err := s.visibleProjects(u)
 	if err != nil {
@@ -278,12 +292,51 @@ func (s *server) handleUIProjects(w http.ResponseWriter, r *http.Request, u stor
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	cards := make([]uiProjectCard, 0, len(list))
+	for _, p := range list {
+		apps, err := s.st.ListApps(p.ID)
+		if err != nil {
+			log.Printf("ui projects: list apps: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		var live, building, failed int
+		for _, a := range apps {
+			status := ""
+			if d, err := s.st.LatestDeployment(a.ID); err == nil {
+				status = d.Status
+			} else if !errors.Is(err, store.ErrNotFound) {
+				log.Printf("ui projects: latest deployment: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			switch status {
+			case "live":
+				live++
+			case "building", "deploying", "pending":
+				building++
+			case "failed":
+				failed++
+			}
+		}
+		members, err := s.st.ListMembers(p.ID)
+		if err != nil {
+			log.Printf("ui projects: list members: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		cards = append(cards, uiProjectCard{
+			Name: p.Name, Namespace: p.Namespace,
+			Apps: len(apps), Live: live, Building: building, Failed: failed,
+			Members: len(members),
+		})
+	}
 	var banner string
 	if e := r.URL.Query().Get("err"); e != "" {
 		banner = "error: " + e
 	}
 	s.renderPage(w, "projects.html", map[string]any{
-		"User": u, "Projects": list, "Banner": banner,
+		"User": u, "Projects": cards, "Banner": banner,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	})
 }

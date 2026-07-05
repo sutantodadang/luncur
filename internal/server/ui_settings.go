@@ -68,6 +68,7 @@ var settingGroups = []settingGroup{
 	{Title: "Registry & builds", Fields: []settingField{
 		{Key: "registry_keep"},
 		{Key: "build_cache", Options: []string{"on", "off"}},
+		{Key: "build_timeout_minutes"},
 	}},
 	{Title: "Audit", Fields: []settingField{
 		{Key: "audit_retention_days"},

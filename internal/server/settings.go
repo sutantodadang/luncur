@@ -60,6 +60,10 @@ var settableKeys = map[string]func(string) bool{
 	"notify_telegram_chat":    func(v string) bool { return v != "" },
 	"notify_events":           validNotifyEvents,
 	"build_cache":             func(v string) bool { return v == "on" || v == "off" },
+	"build_timeout_minutes": func(v string) bool {
+		n, err := strconv.Atoi(v)
+		return err == nil && n >= 1 && n <= 720
+	},
 	"audit_retention_days": func(v string) bool {
 		n, err := strconv.Atoi(v)
 		return err == nil && n >= 0
