@@ -167,7 +167,7 @@ luncur serve --db luncur.db \
   --external-ip 10.0.0.1 \
   --secret-key-file luncur.key \
   --data-dir /var/lib/luncur \
-  --builder-image luncur/builder:latest \
+  --builder-image ghcr.io/sutantodadang/luncur-builder:latest \
   --registry-host registry.luncur-system:5000
 ```
 
@@ -856,7 +856,8 @@ reconciliation (see below).
 
 **Serve flags for build infrastructure:**
 - `--data-dir` — path where build sources and logs are persisted; becomes a Kubernetes PVC in production (default `./data`)
-- `--builder-image` — OCI image for the build environment (default `luncur/builder:latest`); built by the release pipeline
+- `--builder-image` — OCI image for the build environment (default `ghcr.io/sutantodadang/luncur-builder:latest`); built and published to ghcr.io by the release pipeline
+- The system namespace (`luncur-system`) that build Jobs run in is provisioned at PodSecurity level `baseline`, not `restricted`: rootless BuildKit needs setuid `newuidmap` to remap uids, which `restricted` forbids as privilege escalation. Project/app namespaces are unaffected and stay `restricted`.
 - `--registry-host` — in-cluster registry address (default `registry.luncur-system:5000`); K3s requires an insecure-registry entry for this host, written to `/etc/rancher/k3s/registries.yaml` by `luncur up`
 
 #### Troubleshooting: build stuck or no logs
@@ -871,10 +872,26 @@ log only ever shows `[luncur]` lines and never progresses past "waiting for
 builder pod", the builder pod itself isn't starting.
 
 - **`builder pod: Pending (ImagePullBackOff)`** — the cluster can't pull the
-  builder image (`--builder-image`, default `luncur/builder:latest`). Publish
-  it to a registry the cluster can reach, or rebuild/retag it locally and
-  make sure the node has it (`docker save`/`k3s ctr images import` for
-  single-node setups).
+  builder image (`--builder-image`, default
+  `ghcr.io/sutantodadang/luncur-builder:latest`, published by the release
+  pipeline). If you're pinning a custom image, publish it to a registry the
+  cluster can reach, or rebuild/retag it locally and make sure the node has it
+  (`docker save`/`k3s ctr images import` for single-node setups).
+- **`no builder pod created yet — job events: ...`** — the Build Job never
+  managed to create a pod at all (PodSecurity admission rejecting the pod
+  spec, a ResourceQuota with no room left, a validating admission webhook,
+  etc.), so `JobPodStatus` never sees a pod to report on. After ~30s of
+  seeing no pod, the log now prints the Job's own recent Kubernetes events —
+  a `Warning FailedCreate: pods "build-<id>-" is forbidden: violates
+  PodSecurity "restricted:latest"` line is the usual PodSecurity case — so
+  the reason for the stall shows up in the LOGS pane instead of nothing.
+  The manual equivalent, if you're at a shell:
+  `kubectl -n luncur-system describe job build-<id>` (its Events section is
+  exactly what gets mirrored into the log).
+- **`pod watcher error: ...`** — the watcher itself couldn't list pods for
+  the Build Job (e.g. missing RBAC on `pods` in `luncur-system`). Logged
+  once, not spammed every poll; fix the permission and the next build's
+  watcher will succeed.
 - **Build never finishes** — it's cut off after `build_timeout_minutes`
   (default 15) and marked failed; raise it with
   `luncur config set build_timeout_minutes <n>` if your builds are simply

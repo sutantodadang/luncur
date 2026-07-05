@@ -30,14 +30,19 @@ func SystemObjects(dataPVC, registryPVC, registryImage string) ([]render.Object,
 		return nil
 	}
 
-	// No pod-security.kubernetes.io/enforce: restricted here — the BuildKit
-	// builder needs latitude the restricted profile denies, and this
-	// namespace holds only luncur-operated workloads, not tenant apps.
+	// baseline, not restricted: rootless BuildKit needs setuid newuidmap,
+	// which the restricted profile forbids outright as privilege escalation
+	// (confirmed in production via Job FailedCreate PodSecurity events). This
+	// namespace holds only luncur-operated workloads, not tenant apps —
+	// project/app namespaces (see kube.EnsureNamespace) stay restricted.
 	ns := &corev1.Namespace{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   systemNamespace,
-			Labels: map[string]string{"app.kubernetes.io/managed-by": "luncur"},
+			Name: systemNamespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by":       "luncur",
+				"pod-security.kubernetes.io/enforce": "baseline",
+			},
 		},
 	}
 	if err := add("Namespace", ns); err != nil {

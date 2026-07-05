@@ -68,3 +68,13 @@ jobs:
           docker build -t "$IMG:${GITHUB_REF_NAME}" -t "$IMG:latest" .
           docker push "$IMG:${GITHUB_REF_NAME}"
           docker push "$IMG:latest"
+
+      # `--builder-image` defaults to ghcr.io/sutantodadang/luncur-builder:latest
+      # (internal/build.DefaultBuilderImage) — publish it alongside the server
+      # image so a fresh `luncur up`/`luncur serve` can actually pull it.
+      - name: Build and push builder image
+        run: |
+          BIMG=ghcr.io/${{ github.repository_owner }}/luncur-builder
+          docker build -t "$BIMG:${GITHUB_REF_NAME}" -t "$BIMG:latest" build/builder
+          docker push "$BIMG:${GITHUB_REF_NAME}"
+          docker push "$BIMG:latest"

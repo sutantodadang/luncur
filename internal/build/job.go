@@ -13,6 +13,12 @@ import (
 	"github.com/sutantodadang/luncur/internal/render"
 )
 
+// DefaultBuilderImage is the builder image ref used when --builder-image is
+// left unset. Published by the release pipeline (.github/workflows/release.yml)
+// to ghcr.io alongside the server image — luncur/builder:latest pointed at a
+// Docker Hub org nobody publishes to and every build failed on pull.
+const DefaultBuilderImage = "ghcr.io/sutantodadang/luncur-builder:latest"
+
 type BuildParams struct {
 	Namespace    string
 	Name         string

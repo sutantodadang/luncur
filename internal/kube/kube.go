@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -118,10 +119,21 @@ func nameOf(objJSON []byte) (string, error) {
 	return m.Metadata.Name, nil
 }
 
+// EnsureNamespace stamps a project/app namespace at the "restricted"
+// PodSecurity level — the safe default for tenant workloads.
 func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
+	return c.EnsureNamespaceWithPolicy(ctx, name, "restricted")
+}
+
+// EnsureNamespaceWithPolicy server-side-applies a namespace stamped with
+// app.kubernetes.io/managed-by:luncur and pod-security.kubernetes.io/enforce
+// set to policy. Callers that need a laxer profile than "restricted" (e.g.
+// the system namespace hosting BuildKit) pass "baseline" here instead of
+// going through EnsureNamespace.
+func (c *Client) EnsureNamespaceWithPolicy(ctx context.Context, name, policy string) error {
 	ns := fmt.Sprintf(
-		`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q,"labels":{"app.kubernetes.io/managed-by":"luncur","pod-security.kubernetes.io/enforce":"restricted"}}}`,
-		name,
+		`{"apiVersion":"v1","kind":"Namespace","metadata":{"name":%q,"labels":{"app.kubernetes.io/managed-by":"luncur","pod-security.kubernetes.io/enforce":%q}}}`,
+		name, policy,
 	)
 	_, err := c.dyn.Resource(gvrByKind["Namespace"]).Patch(
 		ctx, name, types.ApplyPatchType, []byte(ns), applyOpts(),
@@ -331,6 +343,36 @@ func (c *Client) JobPodStatus(ctx context.Context, namespace, jobName string) (p
 		}
 	}
 	return phase, reason, nil
+}
+
+// JobEvents returns up to the 5 most recent Kubernetes events recorded
+// against the named Job (e.g. a Warning/FailedCreate from a PodSecurity or
+// quota rejection that stopped the Job from ever creating a pod), formatted
+// as "<Type> <Reason>: <Message>", oldest first. Used by watchBuildPod to
+// explain a build that never produces a builder pod. No clientset wired
+// (some test clients only wire the dynamic half) -> (nil, nil).
+func (c *Client) JobEvents(ctx context.Context, namespace, jobName string) ([]string, error) {
+	if c.cs == nil {
+		return nil, nil
+	}
+	list, err := c.cs.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
+		FieldSelector: "involvedObject.name=" + jobName + ",involvedObject.kind=Job",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list events: %w", err)
+	}
+	items := list.Items
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].LastTimestamp.Time.Before(items[j].LastTimestamp.Time)
+	})
+	if len(items) > 5 {
+		items = items[len(items)-5:]
+	}
+	out := make([]string, 0, len(items))
+	for _, e := range items {
+		out = append(out, fmt.Sprintf("%s %s: %s", e.Type, e.Reason, e.Message))
+	}
+	return out, nil
 }
 
 // AppPods lists pod names carrying the app label Render stamps on

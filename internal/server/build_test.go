@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,9 +13,12 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 
 	"github.com/sutantodadang/luncur/internal/kube"
@@ -432,6 +436,111 @@ func TestBuildLogfNoopWithoutSource(t *testing.T) {
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st})
 	srv.buildLogf(store.Deployment{ID: 1}, "hello %s", "world")
+}
+
+// watcherTestServer builds a *server wired only with a fake Kubernetes
+// clientset (no dynamic client — watchBuildPod only ever calls
+// JobPodStatus/JobEvents, both of which go through the clientset half), for
+// exercising watchBuildPod directly without a full runBuild.
+func watcherTestServer(t *testing.T, cs *k8sfake.Clientset) (*server, store.Deployment) {
+	t.Helper()
+	st := newTestStore(t)
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newServer(Deps{
+		Store:   st,
+		Sealer:  sealer,
+		Kube:    kube.NewForTest(nil, cs),
+		DataDir: t.TempDir(),
+	})
+	p, err := st.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := st.CreateDeployment(a.ID, "building", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv, d
+}
+
+// TestWatchBuildPodLogsJobEventsWhenNoPod drives the no-pod-ever-created
+// path: a Job with zero pods but a seeded PodSecurity-rejection event.
+// emptyPodChecksBeforeJobEvents is lowered to 1 so the watcher's immediate
+// first check already crosses the threshold, no ticker wait needed.
+func TestWatchBuildPodLogsJobEventsWhenNoPod(t *testing.T) {
+	origChecks, origInterval := emptyPodChecksBeforeJobEvents, jobEventsReemitInterval
+	emptyPodChecksBeforeJobEvents = 1
+	jobEventsReemitInterval = time.Millisecond
+	t.Cleanup(func() {
+		emptyPodChecksBeforeJobEvents = origChecks
+		jobEventsReemitInterval = origInterval
+	})
+
+	ev := &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: "build-1.1", Namespace: "luncur-system"},
+		InvolvedObject: corev1.ObjectReference{Kind: "Job", Name: "build-1"},
+		Type:           "Warning",
+		Reason:         "FailedCreate",
+		Message:        `pods "build-1-" is forbidden: violates PodSecurity "restricted:latest"`,
+		LastTimestamp:  metav1.Now(),
+	}
+	cs := k8sfake.NewSimpleClientset(ev)
+	srv, d := watcherTestServer(t, cs)
+
+	done := make(chan struct{})
+	go srv.watchBuildPod(context.Background(), d, "build-1", done)
+	time.Sleep(150 * time.Millisecond)
+	close(done)
+
+	b, err := os.ReadFile(srv.src.LogPath(d.ID))
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	log := string(b)
+	for _, want := range []string{
+		"no builder pod created yet",
+		`Warning FailedCreate: pods "build-1-" is forbidden: violates PodSecurity "restricted:latest"`,
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("log missing %q, got:\n%s", want, log)
+		}
+	}
+}
+
+// TestWatchBuildPodLogsWatcherErrorOnce drives a persistent pod-listing
+// error (e.g. missing RBAC) across several fast polls and checks it's
+// logged exactly once, not once per poll.
+func TestWatchBuildPodLogsWatcherErrorOnce(t *testing.T) {
+	origPoll := watchBuildPollInterval
+	watchBuildPollInterval = 10 * time.Millisecond
+	t.Cleanup(func() { watchBuildPollInterval = origPoll })
+
+	cs := k8sfake.NewSimpleClientset()
+	cs.PrependReactor("list", "pods", func(a ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("pods is forbidden: User cannot list resource")
+	})
+	srv, d := watcherTestServer(t, cs)
+
+	done := make(chan struct{})
+	go srv.watchBuildPod(context.Background(), d, "build-1", done)
+	time.Sleep(150 * time.Millisecond) // several polls at the 10ms interval
+	close(done)
+
+	b, err := os.ReadFile(srv.src.LogPath(d.ID))
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	log := string(b)
+	if got := strings.Count(log, "pod watcher error:"); got != 1 {
+		t.Fatalf("want exactly 1 \"pod watcher error:\" line, got %d in:\n%s", got, log)
+	}
 }
 
 // TestBuildTimeoutDefaultAndSetting checks buildTimeout falls back to 15
