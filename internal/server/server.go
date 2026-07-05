@@ -136,7 +136,9 @@ func newServer(d Deps) *server {
 		}
 	}
 
-	s.tmpl = template.Must(template.ParseFS(templateFS, "templates/*.html"))
+	s.tmpl = template.Must(template.New("").Funcs(template.FuncMap{
+		"v": func() string { return s.version },
+	}).ParseFS(templateFS, "templates/*.html"))
 
 	if d.Store != nil {
 		s.certs = newCertManager(s, d.ACMEDirectory)

@@ -21,6 +21,7 @@ const sessionCookie = "luncur_session"
 const csrfCookie = "luncur_csrf"
 
 func (s *server) uiRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /ui/static/{file}", s.handleUIStatic)
 	mux.HandleFunc("GET /ui/login", s.handleUILoginPage)
 	mux.HandleFunc("POST /ui/login", s.handleUILogin)
 	mux.HandleFunc("POST /ui/logout", s.handleUILogout)

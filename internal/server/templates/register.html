@@ -1,18 +1,26 @@
 {{define "register.html"}}
 {{template "head" .}}
-<h1>Join luncur</h1>
+<main class="flex flex-1 items-center justify-center">
+<div class="card w-96">
+<h1 class="mb-4 text-lg font-semibold text-white">Join luncur</h1>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 {{if .Valid}}
-<p>You've been invited as <strong>{{.Role}}</strong>.</p>
-<form method="post" action="/ui/register">
+<p class="mb-3 text-sm text-slate-400">You've been invited as <strong class="text-white">{{.Role}}</strong>.</p>
+<form method="post" action="/ui/register" class="flex flex-col gap-3">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <input type="hidden" name="token" value="{{.Token}}">
-  <p><label>email <input type="email" name="email" required autofocus></label></p>
-  <p><label>password <input type="password" name="password" required minlength="8"></label></p>
-  <p><button type="submit">create account</button></p>
+  <label class="flex flex-col gap-1 text-sm text-slate-400">email
+    <input class="input" type="email" name="email" required autofocus>
+  </label>
+  <label class="flex flex-col gap-1 text-sm text-slate-400">password
+    <input class="input" type="password" name="password" required minlength="8">
+  </label>
+  <button type="submit" class="btn mt-1">create account</button>
 </form>
 {{else}}
 <p class="err">This invite is invalid or expired. Ask your admin for a new one.</p>
 {{end}}
+</div>
+</main>
 {{template "foot" .}}
 {{end}}

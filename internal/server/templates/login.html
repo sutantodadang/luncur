@@ -1,12 +1,20 @@
 {{define "login.html"}}
 {{template "head" .}}
-<h1>luncur</h1>
+<main class="flex flex-1 items-center justify-center">
+<div class="card w-80">
+<h1 class="mb-4 text-lg font-semibold text-white">luncur</h1>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
-<form method="post" action="/ui/login">
+<form method="post" action="/ui/login" class="flex flex-col gap-3">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <p><label>email <input type="email" name="email" required autofocus></label></p>
-  <p><label>password <input type="password" name="password" required></label></p>
-  <p><button type="submit">log in</button></p>
+  <label class="flex flex-col gap-1 text-sm text-slate-400">email
+    <input class="input" type="email" name="email" required autofocus>
+  </label>
+  <label class="flex flex-col gap-1 text-sm text-slate-400">password
+    <input class="input" type="password" name="password" required>
+  </label>
+  <button type="submit" class="btn mt-1">log in</button>
 </form>
+</div>
+</main>
 {{template "foot" .}}
 {{end}}

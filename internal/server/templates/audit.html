@@ -1,10 +1,12 @@
 {{define "audit.html"}}
 {{template "head" .}}{{template "nav" .}}
-<h1>Audit log</h1>
-<table><tr><th>Time</th><th>User</th><th>Action</th><th>Target</th></tr>
+<h1 class="mb-4 text-xl font-semibold text-white">Audit log</h1>
+<div class="card">
+<table class="tbl"><tr><th>Time</th><th>User</th><th>Action</th><th>Target</th></tr>
 {{range .Entries}}<tr>
-  <td>{{.CreatedAt}}</td><td>{{.UserEmail}}</td><td>{{.Action}}</td><td>{{.Target}}</td>
+  <td class="text-slate-500">{{.CreatedAt}}</td><td>{{.UserEmail}}</td><td>{{.Action}}</td><td>{{.Target}}</td>
 </tr>{{end}}
 </table>
+</div>
 {{template "foot" .}}
 {{end}}

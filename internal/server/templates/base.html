@@ -1,39 +1,40 @@
 {{define "head"}}
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>luncur</title>
-<style>
-body{font-family:system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem;color:#222}
-nav{display:flex;justify-content:space-between;border-bottom:1px solid #ddd;padding-bottom:.5rem;margin-bottom:1.5rem}
-table{border-collapse:collapse;width:100%}
-th,td{text-align:left;padding:.4rem .6rem;border-bottom:1px solid #eee}
-form.inline{display:inline}
-input,button{font:inherit;padding:.3rem .5rem}
-pre.logs{background:#111;color:#ddd;padding:1rem;overflow:auto;max-height:24rem;font-size:.85rem}
-.err{color:#b00}
-.status-live{color:#080}.status-failed{color:#b00}.status-building,.status-deploying{color:#a60}
-.status-issued{color:#080}.status-pending{color:#a60}.status-none,.status-external{color:#666}
-</style>
+<link rel="stylesheet" href="/ui/static/app.css?v={{v}}">
+<script src="/ui/static/htmx.min.js?v={{v}}" defer></script>
 </head>
-<body>
+<body hx-boost="true" class="bg-slate-950 text-slate-300 min-h-screen antialiased">
+<div class="flex min-h-screen">
 {{end}}
 
 {{define "nav"}}
-<nav>
-  <strong><a href="/ui/">luncur</a></strong>
-  <a href="/ui/tokens">tokens</a>
-  {{if .IsAdmin}}<a href="/ui/users">users</a><a href="/ui/audit">audit</a>{{end}}
-  <form class="inline" method="post" action="/ui/logout">
-    <input type="hidden" name="_csrf" value="{{.CSRF}}">
-    <span>{{.User.Email}}</span> <button type="submit">log out</button>
-  </form>
-</nav>
+<aside class="flex w-56 flex-col gap-1 border-r border-slate-800 p-4">
+  <a href="/ui/" class="mb-4 text-lg font-semibold text-white">luncur</a>
+  <a href="/ui/" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Projects</a>
+  <a href="/ui/tokens" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Tokens</a>
+  {{if .IsAdmin}}
+  <a href="/ui/audit" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Audit</a>
+  <a href="/ui/users" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Users</a>
+  {{end}}
+  <div class="mt-auto flex flex-col gap-2">
+    <span class="truncate text-xs text-slate-500">{{.User.Email}}</span>
+    <form method="post" action="/ui/logout">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <button type="submit" class="btn-ghost w-full">log out</button>
+    </form>
+  </div>
+</aside>
+<main class="max-w-5xl flex-1 p-8">
 {{end}}
 
 {{define "foot"}}
+</main>
+</div>
 </body>
 </html>
 {{end}}

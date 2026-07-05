@@ -1,9 +1,11 @@
 {{define "projects.html"}}
 {{template "head" .}}{{template "nav" .}}
-<h1>Projects</h1>
-{{if not .Projects}}<p>No projects yet. Create one with <code>luncur project create</code>.</p>{{end}}
-<table><tr><th>Name</th><th>Namespace</th></tr>
-{{range .Projects}}<tr><td><a href="/ui/projects/{{.Name}}">{{.Name}}</a></td><td>{{.Namespace}}</td></tr>{{end}}
+<h1 class="mb-4 text-xl font-semibold text-white">Projects</h1>
+<div class="card">
+{{if not .Projects}}<p class="text-sm text-slate-600">No projects yet. Create one with <code>luncur project create</code>.</p>{{end}}
+<table class="tbl"><tr><th>Name</th><th>Namespace</th></tr>
+{{range .Projects}}<tr><td><a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Name}}">{{.Name}}</a></td><td>{{.Namespace}}</td></tr>{{end}}
 </table>
+</div>
 {{template "foot" .}}
 {{end}}

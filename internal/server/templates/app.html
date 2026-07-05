@@ -1,168 +1,196 @@
 {{define "app.html"}}
 {{template "head" .}}{{template "nav" .}}
-<p><a href="/ui/projects/{{.Project.Name}}">&larr; {{.Project.Name}}</a></p>
-<h1>{{.App.Name}} <span class="status-{{.Status}}">{{.Status}}</span>{{if .App.Ejected}} <span class="status-failed">ejected</span>{{end}}{{if ne .App.Kind "web"}} <span class="status-pending">{{.App.Kind}}</span>{{end}}</h1>
-{{if eq .App.Kind "cron"}}<p>schedule: <code>{{.App.Schedule}}</code></p>{{end}}
-<p>{{if .Metrics.Available}}cpu {{.Metrics.CPUMillicores}}m &middot; mem {{.Metrics.MemoryMiB}}Mi &middot; {{end}}{{.Metrics.ReadyReplicas}}/{{.Metrics.DesiredReplicas}} ready &middot; {{.Metrics.DeployCount}} deploys</p>
-<p>{{if eq .App.Kind "web"}}<a href="{{.URL}}">{{.URL}}</a> &middot;{{end}}
-   <a href="/v1/projects/{{.Project.Name}}/apps/{{.App.Name}}/raw">raw YAML</a>{{if not .App.Ejected}} &middot;
-   edit: {{if eq .App.Kind "web"}}<a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a> &middot;
-   <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Service">Service</a> &middot;
-   <a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Ingress">Ingress</a>{{else if eq .App.Kind "worker"}}<a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a>{{else if eq .App.Kind "cron"}}<a href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/CronJob">CronJob</a>{{end}}{{end}}</p>
+<p class="mb-1 text-sm"><a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}">&larr; {{.Project.Name}}</a></p>
+<h1 class="mb-1 flex flex-wrap items-center gap-2 text-xl font-semibold text-white">
+  {{.App.Name}}
+  <span class="status-{{.Status}}">{{.Status}}</span>
+  {{if .App.Ejected}} <span class="status-failed">ejected</span>{{end}}
+  {{if ne .App.Kind "web"}} <span class="status-pending">{{.App.Kind}}</span>{{end}}
+</h1>
+{{if eq .App.Kind "cron"}}<p class="mb-2 text-sm text-slate-400">schedule: <code>{{.App.Schedule}}</code></p>{{end}}
+<p class="mb-1 text-sm text-slate-400">{{if .Metrics.Available}}cpu {{.Metrics.CPUMillicores}}m &middot; mem {{.Metrics.MemoryMiB}}Mi &middot; {{end}}{{.Metrics.ReadyReplicas}}/{{.Metrics.DesiredReplicas}} ready &middot; {{.Metrics.DeployCount}} deploys</p>
+<p class="mb-4 text-sm">{{if eq .App.Kind "web"}}<a class="text-indigo-400 hover:text-indigo-300" href="{{.URL}}">{{.URL}}</a> &middot;{{end}}
+   <a class="text-indigo-400 hover:text-indigo-300" href="/v1/projects/{{.Project.Name}}/apps/{{.App.Name}}/raw">raw YAML</a>{{if not .App.Ejected}} &middot;
+   edit: {{if eq .App.Kind "web"}}<a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a> &middot;
+   <a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Service">Service</a> &middot;
+   <a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Ingress">Ingress</a>{{else if eq .App.Kind "worker"}}<a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a>{{else if eq .App.Kind "cron"}}<a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/CronJob">CronJob</a>{{end}}{{end}}</p>
 {{if .Warning}}<p class="err">{{.Warning}}</p>{{end}}
 
 {{if .App.Ejected}}
-<p>This app is ejected — luncur no longer manages it.</p>
+<div class="card mb-6">
+<p class="mb-3 text-sm text-slate-400">This app is ejected — luncur no longer manages it.</p>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/adopt">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <button type="submit">adopt — luncur manages it again</button>
+  <button type="submit" class="btn">adopt — luncur manages it again</button>
 </form>
+</div>
 {{else}}
+<div class="mb-6 grid gap-4 lg:grid-cols-2">
+<div class="card">
 <h2>Scale</h2>
-<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/scale">
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/scale" class="flex flex-wrap items-end gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  {{if ne .App.Kind "cron"}}<input type="number" name="replicas" min="0" value="{{.App.Replicas}}">{{end}}
-  <label>cpu <input name="cpu" placeholder="250m" value="{{if .App.CPUMilli}}{{.App.CPUMilli}}m{{end}}"></label>
-  <label>memory <input name="memory" placeholder="256Mi" value="{{if .App.MemoryMB}}{{.App.MemoryMB}}Mi{{end}}"></label>
-  <button type="submit">scale</button>
+  {{if ne .App.Kind "cron"}}<label class="flex flex-col gap-1 text-xs text-slate-400">replicas<input class="input w-24" type="number" name="replicas" min="0" value="{{.App.Replicas}}"></label>{{end}}
+  <label class="flex flex-col gap-1 text-xs text-slate-400">cpu<input class="input w-28" name="cpu" placeholder="250m" value="{{if .App.CPUMilli}}{{.App.CPUMilli}}m{{end}}"></label>
+  <label class="flex flex-col gap-1 text-xs text-slate-400">memory<input class="input w-28" name="memory" placeholder="256Mi" value="{{if .App.MemoryMB}}{{.App.MemoryMB}}Mi{{end}}"></label>
+  <button type="submit" class="btn">scale</button>
 </form>
+</div>
 
 {{if eq .App.Kind "web"}}
+<div class="card">
 <h2>Health check</h2>
-<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/health">
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/health" class="flex flex-wrap items-end gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <label>path <input name="health_path" placeholder="/healthz" value="{{.App.HealthPath}}"></label>
-  <button type="submit">save</button>
+  <label class="flex flex-col gap-1 text-xs text-slate-400">path<input class="input w-56" name="health_path" placeholder="/healthz" value="{{.App.HealthPath}}"></label>
+  <button type="submit" class="btn">save</button>
 </form>
+</div>
 {{end}}
 
 {{if .IsGit}}
+<div class="card">
 <h2>Deploy</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/deploy">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <button type="submit">Deploy from git</button>
+  <button type="submit" class="btn">Deploy from git</button>
 </form>
+</div>
 
+<div class="card">
 <h2>Webhook</h2>
 {{if .WebhookSecretOnce}}
-<p>secret shown once — store it now (GitHub/Gitea: "Secret" field; GitLab: "Secret token" field):</p>
-<p><input readonly size="64" value="{{.WebhookSecretOnce}}"></p>
+<p class="mb-2 text-sm text-slate-400">secret shown once — store it now (GitHub/Gitea: "Secret" field; GitLab: "Secret token" field):</p>
+<p class="mb-3"><input class="input font-mono text-xs" readonly size="64" value="{{.WebhookSecretOnce}}"></p>
 {{end}}
 {{if .WebhookEnabled}}
-<p><input readonly size="64" value="{{.WebhookURL}}"></p>
+<p class="mb-3"><input class="input font-mono text-xs" readonly size="64" value="{{.WebhookURL}}"></p>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/webhook/disable">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <button type="submit">disable webhook</button>
+  <button type="submit" class="btn-danger">disable webhook</button>
 </form>
 {{else}}
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/webhook">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <button type="submit">enable webhook</button>
+  <button type="submit" class="btn">enable webhook</button>
 </form>
 {{end}}
+</div>
 {{end}}
+</div>
 
+<div class="card mb-6">
 <h2>Environment</h2>
-<table>{{range .EnvKeys}}<tr><td><code>{{.}}</code></td><td>
+<table class="tbl">{{range .EnvKeys}}<tr><td><code>{{.}}</code></td><td>
   <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/env/delete">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-    <input type="hidden" name="key" value="{{.}}"><button type="submit">unset</button>
+    <input type="hidden" name="key" value="{{.}}"><button type="submit" class="btn-ghost">unset</button>
   </form></td></tr>{{end}}
 </table>
-<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/env">
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/env" class="mt-3 flex flex-wrap items-center gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <input name="key" placeholder="KEY" required>
-  <input name="value" placeholder="value" required>
-  <button type="submit">set</button>
+  <input class="input w-auto flex-1" name="key" placeholder="KEY" required>
+  <input class="input w-auto flex-1" name="value" placeholder="value" required>
+  <button type="submit" class="btn">set</button>
 </form>
+</div>
 {{end}}
 
+<div class="card mb-6">
 <h2>Deploys</h2>
-<table><tr><th>ID</th><th>Status</th><th>Image</th><th>When</th><th></th></tr>
+<table class="tbl"><tr><th>ID</th><th>Status</th><th>Image</th><th>When</th><th></th></tr>
 {{range .History}}<tr>
-  <td>{{.ID}}</td><td class="status-{{.Status}}">{{.Status}}</td>
+  <td>{{.ID}}</td><td><span class="status-{{.Status}}">{{.Status}}</span></td>
   <td><code>{{.ImageRef}}</code>{{if .RolledBackFrom}} <em>(rollback of {{.RolledBackFrom}})</em>{{end}}</td>
   <td>{{.CreatedAt}}</td>
   <td>{{if and .ImageRef (ne .ID $.LatestID) (not $.App.Ejected)}}
     <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollback">
       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
       <input type="hidden" name="deploy_id" value="{{.ID}}">
-      <button type="submit">rollback</button>
+      <button type="submit" class="btn-ghost">rollback</button>
     </form>
   {{end}}</td>
 </tr>{{end}}
 </table>
+</div>
 
 {{if and (not .App.Ejected) (eq .App.Kind "web")}}
+<div class="card mb-6">
 <h2>Domains</h2>
-<table><tr><th>Hostname</th><th>Cert</th><th>Expires</th><th></th></tr>
+<table class="tbl"><tr><th>Hostname</th><th>Cert</th><th>Expires</th><th></th></tr>
 {{range .Domains}}<tr>
   <td>{{.Hostname}}</td>
-  <td class="status-{{.CertStatus}}">{{.CertStatus}}{{if .CertError}} — {{.CertError}}{{end}}</td>
+  <td><span class="status-{{.CertStatus}}">{{.CertStatus}}</span>{{if .CertError}} — {{.CertError}}{{end}}</td>
   <td>{{.CertExpiresAt}}</td>
   <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/domains/delete">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-    <input type="hidden" name="hostname" value="{{.Hostname}}"><button type="submit">remove</button>
+    <input type="hidden" name="hostname" value="{{.Hostname}}"><button type="submit" class="btn-danger">remove</button>
   </form></td>
 </tr>{{end}}
 </table>
-<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/domains">
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/domains" class="mt-3 flex flex-wrap items-center gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <input name="hostname" placeholder="www.example.com" required>
-  <button type="submit">add domain</button>
+  <input class="input w-auto flex-1" name="hostname" placeholder="www.example.com" required>
+  <button type="submit" class="btn">add domain</button>
 </form>
+</div>
 {{end}}
 
 {{if and (not .App.Ejected) (ne .App.Kind "cron")}}
+<div class="card mb-6">
 <h2>Volumes</h2>
-<table><tr><th>Name</th><th>Path</th><th>Size</th><th></th></tr>
+<table class="tbl"><tr><th>Name</th><th>Path</th><th>Size</th><th></th></tr>
 {{range .Volumes}}<tr>
   <td>{{.Name}}</td>
   <td><code>{{.Path}}</code></td>
   <td>{{.SizeGB}}GB</td>
-  <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/volumes/remove">
+  <td><form class="inline-flex items-center gap-2" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/volumes/remove">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
     <input type="hidden" name="name" value="{{.Name}}">
-    <label><input type="checkbox" name="purge" value="1"> purge data</label>
-    <button type="submit">remove</button>
+    <label class="text-xs text-slate-400"><input type="checkbox" name="purge" value="1"> purge data</label>
+    <button type="submit" class="btn-danger">remove</button>
   </form></td>
 </tr>{{end}}
 </table>
-<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/volumes">
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/volumes" class="mt-3 flex flex-wrap items-center gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <input name="path" placeholder="/data" required>
-  <input type="number" name="size_gb" min="1" max="1000" placeholder="size (GB)" required>
-  <input name="name" placeholder="name (optional)">
-  <button type="submit">add volume</button>
+  <input class="input w-auto flex-1" name="path" placeholder="/data" required>
+  <input class="input w-auto" type="number" name="size_gb" min="1" max="1000" placeholder="size (GB)" required>
+  <input class="input w-auto" name="name" placeholder="name (optional)">
+  <button type="submit" class="btn">add volume</button>
 </form>
-<p>apps with volumes redeploy with brief downtime; volume data is not in luncur backup</p>
+<p class="mt-2 text-xs text-slate-600">apps with volumes redeploy with brief downtime; volume data is not in luncur backup</p>
+</div>
 {{end}}
 
+<div class="card mb-6">
 <h2>Addons</h2>
-{{if not .Addons}}<p>No addons attached.</p>{{end}}
-<table><tr><th>Name</th><th>Type</th><th>Version</th><th></th></tr>
+{{if not .Addons}}<p class="text-sm text-slate-600">No addons attached.</p>{{end}}
+<table class="tbl"><tr><th>Name</th><th>Type</th><th>Version</th><th></th></tr>
 {{range .Addons}}<tr>
   <td>{{.Name}}</td>
   <td>{{.Type}}</td>
   <td>{{.Version}}</td>
   <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/addons/detach">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-    <input type="hidden" name="name" value="{{.Name}}"><button type="submit">detach</button>
+    <input type="hidden" name="name" value="{{.Name}}"><button type="submit" class="btn-ghost">detach</button>
   </form></td>
 </tr>{{end}}
 </table>
 {{if .ProjectAddons}}
-<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/addons/attach">
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/addons/attach" class="mt-3 flex flex-wrap items-center gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <select name="name">
+  <select class="input w-auto" name="name">
     {{range .ProjectAddons}}<option value="{{.Name}}">{{.Name}} ({{.Type}})</option>{{end}}
   </select>
-  <button type="submit">attach</button>
+  <button type="submit" class="btn">attach</button>
 </form>
 {{end}}
+</div>
 
+<div class="card">
 <h2>Logs</h2>
-<pre class="logs" id="logs" data-project="{{.Project.Name}}" data-app="{{.App.Name}}"></pre>
+<pre id="logs" class="max-h-96 overflow-auto rounded-lg bg-black/60 p-4 font-mono text-xs text-emerald-300" data-project="{{.Project.Name}}" data-app="{{.App.Name}}"></pre>
 <script>
 (function () {
   var pre = document.getElementById("logs");
@@ -184,5 +212,6 @@
   es.onerror = function () { es.close(); };
 })();
 </script>
+</div>
 {{template "foot" .}}
 {{end}}

@@ -40,6 +40,24 @@ go run ./cmd/luncur serve --db luncur.db --listen :8080 \
 - **Server-side apply everywhere**, `fieldManager=luncur`. Keep the API
   error envelope (`{"error":{"code":...,"message":...}}`) intact.
 
+## Web UI assets
+
+Templates (`internal/server/templates/*.html`) are styled with Tailwind CSS
+and use htmx for interactivity. Both are vendored so the build and test
+suite never need Node or network access:
+
+- `internal/server/static/htmx.min.js` — vendored as-is, never hand-edited.
+- `internal/server/static/app.css` — **generated**, never hand-edit. Regenerate
+  after changing any template's classes:
+
+  ```sh
+  bun x tailwindcss@3.4.17 -c build/ui/tailwind.config.js -i build/ui/input.css -o internal/server/static/app.css --minify
+  ```
+
+  Edit `build/ui/input.css` for shared component classes (`.btn`, `.card`,
+  `.tbl`, …) and `build/ui/tailwind.config.js` for the content glob. Both the
+  generated `app.css` and the vendored `htmx.min.js` are committed.
+
 ## Where things live
 
 | Path | What |
