@@ -27,6 +27,14 @@ func NewSource(dataDir string) (*Source, error) {
 	// runs as root — share via group 1000, not world-writable modes. Setgid
 	// so builder-created files inherit the group. Chown/Chmod best-effort:
 	// they fail on non-Linux dev machines, where no builder pod exists.
+	// dataDir itself is the builder pod's subPath mount root — it must be
+	// group-traversable too, or uid 1000 is stopped before ever reaching
+	// the subdirs.
+	if err := os.MkdirAll(dataDir, 0o770); err != nil {
+		return nil, fmt.Errorf("create data dir: %w", err)
+	}
+	_ = os.Chown(dataDir, -1, BuilderGID)
+	_ = os.Chmod(dataDir, 0o2770)
 	for _, sub := range []string{"sources", "logs"} {
 		p := filepath.Join(dataDir, sub)
 		if err := os.MkdirAll(p, 0o770); err != nil {
