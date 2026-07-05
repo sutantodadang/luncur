@@ -1,0 +1,16 @@
+{{define "doctor.html"}}
+{{template "head" .}}{{template "nav" .}}
+<h1 class="mb-1 text-xl font-semibold text-white">Doctor</h1>
+<p class="mb-4 text-sm text-slate-500">luncur {{.Version}}</p>
+<div class="card">
+<table class="tbl"><tr><th>Check</th><th>Status</th><th>Detail</th></tr>
+{{range .Checks}}<tr>
+  <td>{{.Name}}</td>
+  <td><span class="chip {{.Chip}}">{{.Status}}</span></td>
+  <td>{{.Detail}}</td>
+</tr>{{end}}
+</table>
+<a class="btn-ghost mt-4 inline-flex" href="/ui/doctor">run again</a>
+</div>
+{{template "foot" .}}
+{{end}}

@@ -17,9 +17,13 @@
   <a href="/ui/" class="mb-4 text-lg font-semibold text-white">luncur</a>
   <a href="/ui/" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Projects</a>
   <a href="/ui/tokens" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Tokens</a>
+  <a href="/ui/sshkeys" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">SSH keys</a>
   {{if .IsAdmin}}
   <a href="/ui/audit" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Audit</a>
   <a href="/ui/users" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Users</a>
+  <a href="/ui/backups" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Backups</a>
+  <a href="/ui/settings" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Settings</a>
+  <a href="/ui/doctor" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Doctor</a>
   {{end}}
   <div class="mt-auto flex flex-col gap-2">
     <span class="truncate text-xs text-slate-500">{{.User.Email}}</span>

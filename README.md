@@ -338,20 +338,38 @@ unavailable` instead — the deploy count is always shown regardless.
 
 After `luncur up`, the panel is served at `http://panel.<ip>.sslip.io/ui/`
 (login with the admin credentials printed by `luncur up`, or any user added
-via `luncur user add` or an invite). From there you can browse projects and
-apps, scale and edit env vars, trigger a deploy, roll back to a previous
-deploy, and watch build/runtime logs stream live via Server-Sent Events — no
-CLI required. Each app page shows a stats line (cpu/memory when
-`metrics-server` is available, ready/desired replicas, deploy count) under
-the title.
+via `luncur user add` or an invite). It's a dark, server-rendered dashboard
+(Tailwind CSS + htmx, fully embedded and air-gapped — no CDN, no external
+requests) covering nearly everything the CLI can do:
 
-Admins get a **users page** (`/ui/users`) to list every user (email, role,
-created, active token count), delete a user, and mint invites — each invite
-is a single-use, 7-day link (`/ui/register?token=...`) shown as a copyable
-field; anyone who opens it registers their own email/password and is logged
-straight in with the invite's role. The invite form takes an optional email
-address: when SMTP is configured (see below) the link is mailed and a note
-reports the outcome; the copyable link works either way.
+- **Projects & apps** — browse projects and apps, scale replicas/cpu/memory,
+  edit env vars and volumes, manage domains, trigger a deploy, roll back to a
+  previous deploy, and watch build/runtime logs stream live via
+  Server-Sent Events. Each app page shows deploy history, a live status
+  chip, and a stats line (cpu/memory when `metrics-server` is available,
+  ready/desired replicas, deploy count).
+- **Audit** (`/ui/audit`, admin) — every mutating action, who did it, and when.
+- **Users & invites** (`/ui/users`, admin) — list every user (email, role,
+  created, active token count), delete a user, and mint invites — each
+  invite is a single-use, 7-day link (`/ui/register?token=...`) shown as a
+  copyable field; anyone who opens it registers their own email/password and
+  is logged straight in with the invite's role. The invite form takes an
+  optional email address: when SMTP is configured (see below) the link is
+  mailed and a note reports the outcome; the copyable link works either way.
+- **Tokens** (`/ui/tokens`) — list and revoke your own API tokens; your
+  browser session lives in the same table, so revoking it logs you out.
+- **SSH keys** (`/ui/sshkeys`) — add/remove your own public keys for
+  `git push` auth.
+- **Backups** (`/ui/backups`, admin) — trigger a backup, prune old ones, and
+  see when/how big/whether each was uploaded to S3. Restoring is CLI-only
+  (`luncur restore <file>`), called out on the page.
+- **Settings** (`/ui/settings`, admin) — every install-level setting
+  (certs, DNS-01, SMTP, notifications, backup schedule/S3, registry
+  keep/build cache, audit retention), plus a **registry GC** button. Every
+  write-only secret (S3 key, SMTP password, DNS provider tokens, notify URL)
+  shows `(set)` instead of its value — the plaintext is never echoed back.
+- **Doctor** (`/ui/doctor`, admin) — the same 9 health checks as
+  `luncur doctor`, one page, "run again" link.
 
 Every app page also has a **YAML override editor**: `edit: Deployment ·
 Service · Ingress` links open the currently-rendered manifest for that kind
@@ -360,6 +378,10 @@ the result as the same strategic-merge-patch override `luncur edit` writes
 — so the change survives every future redeploy, and re-syncs a live app
 immediately. Invalid YAML re-shows the editor with the error and your text
 intact, never discarding the edit.
+
+The UI's CSS and htmx are vendored into the binary (`internal/server/static/`)
+— nothing is fetched from a CDN at runtime. If you're changing templates,
+see [CONTRIBUTING.md](CONTRIBUTING.md) for the Tailwind regen command.
 
 ### Custom domains & TLS
 
@@ -795,7 +817,7 @@ shown in plaintext once, in the response to `webhook enable`.
 <details>
 <summary>Deliberate deviations & implementation notes (click to expand)</summary>
 
-- Web UI uses stdlib `html/template` + one vanilla-JS `EventSource` block instead of templ + HTMX. Zero codegen, zero vendored JS; same server-rendered pages + SSE behavior.
+- Web UI uses stdlib `html/template` (zero codegen) + htmx + one vanilla-JS `EventSource` block for log streaming, styled with Tailwind CSS compiled ahead of time into a vendored, air-gapped stylesheet — no CDN, no client build step at runtime.
 - In-cluster registry is reachable from containerd via a NodePort (30500) + `registries.yaml` mirror to `http://127.0.0.1:30500`, since containerd on the node cannot resolve cluster-DNS names like `registry.luncur-system`.
 - Public-IP detection: node `ExternalIP` → node `InternalIP` → `--ip` flag. No outbound HTTP probe.
 - API tokens expire after 90 days; `luncur token list/revoke` manages them — session cookies live in the same table, so revoking one logs that browser out.

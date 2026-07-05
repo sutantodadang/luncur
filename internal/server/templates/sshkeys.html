@@ -1,0 +1,32 @@
+{{define "sshkeys.html"}}
+{{template "head" .}}{{template "nav" .}}
+<h1 class="mb-4 text-xl font-semibold text-white">SSH keys</h1>
+<div class="card mb-6">
+{{if not .Keys}}<p class="mb-3 text-sm text-slate-600">no keys yet.</p>{{end}}
+<table class="tbl"><tr><th>Name</th><th>Fingerprint</th><th>Added</th><th></th></tr>
+{{range .Keys}}<tr>
+  <td>{{.Name}}</td>
+  <td class="max-w-xs truncate" title="{{.PublicKey}}"><code>{{.Fingerprint}}</code></td>
+  <td>{{.CreatedAt}}</td>
+  <td>
+    <form class="inline" method="post" action="/ui/sshkeys/delete">
+      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <button type="submit" class="btn-danger" hx-confirm="Remove key {{.Name}}? This cannot be undone.">remove</button>
+    </form>
+  </td>
+</tr>{{end}}
+</table>
+</div>
+
+<div class="card">
+<h2>Add a key</h2>
+<form method="post" action="/ui/sshkeys" class="flex flex-col gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input w-auto" name="name" placeholder="name (optional)">
+  <textarea class="input" name="public_key" rows="3" placeholder="ssh-ed25519 AAAA..." required></textarea>
+  <button type="submit" class="btn w-fit">add key</button>
+</form>
+</div>
+{{template "foot" .}}
+{{end}}
