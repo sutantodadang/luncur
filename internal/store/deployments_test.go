@@ -35,6 +35,50 @@ func TestCreateDeploymentAttribution(t *testing.T) {
 	}
 }
 
+// TestCreateDeploymentAssignsPerAppSeq covers seq's atomicity claim:
+// interleaved creates across two apps each get their own 1, 2, ... run,
+// independent of the other app's global id or insert order.
+func TestCreateDeploymentAssignsPerAppSeq(t *testing.T) {
+	st := openTest(t)
+	p, _ := st.CreateProject("web")
+	a1, err := st.CreateApp(p.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2, err := st.CreateApp(p.ID, "worker", 8081, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a1d1, err := st.CreateDeployment(a1.ID, "live", "img:1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2d1, err := st.CreateDeployment(a2.ID, "live", "img:1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a1d2, err := st.CreateDeployment(a1.ID, "live", "img:2", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2d2, err := st.CreateDeployment(a2.ID, "live", "img:2", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if a1d1.Seq != 1 || a1d2.Seq != 2 {
+		t.Fatalf("app1 seqs = %d, %d; want 1, 2", a1d1.Seq, a1d2.Seq)
+	}
+	if a2d1.Seq != 1 || a2d2.Seq != 2 {
+		t.Fatalf("app2 seqs = %d, %d; want 1, 2", a2d1.Seq, a2d2.Seq)
+	}
+	// Global ids keep incrementing across both apps; seq does not follow them.
+	if a1d1.ID == a1d2.ID || a2d1.ID == a2d2.ID {
+		t.Fatalf("expected distinct global ids")
+	}
+}
+
 func TestListDeployments(t *testing.T) {
 	st := openTest(t)
 	p, _ := st.CreateProject("web")

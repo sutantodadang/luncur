@@ -265,7 +265,7 @@ Readiness gates rollouts and Service endpoints (zero-downtime deploys), while li
 **Rollback:**
 ```sh
 luncur rollback myapp --project myproj               # back to the previous live deploy
-luncur rollback myapp --project myproj --deploy 12   # back to a specific deployment id
+luncur rollback myapp --project myproj --deploy 12   # back to deploy #12 (as shown by `luncur status`/the web UI)
 ```
 
 Rolling back redeploys an earlier deployment's image directly — no rebuild —
@@ -882,6 +882,13 @@ blocks the rest.
 ### Build pipeline
 
 When you run `luncur deploy` on a local source or git repository, the following happens: source is uploaded (tarball from local cwd or cloned from git URL) → a BuildKit Job runs in the `luncur-system` namespace, applying Nixpacks if no Dockerfile exists or using the Dockerfile if present → the resulting image is pushed to the in-cluster registry (default `registry.luncur-system:5000`) → app manifests are rendered and applied to Kubernetes → the app becomes live at `http://<app>.<ip>.sslip.io`. Build logs are streamed on demand via `luncur logs`.
+
+Deploys are numbered per app, Heroku-style (`#1`, `#2`, ...) — that's the
+number shown in `luncur status`, the web UI's Deploy history table, and
+`luncur rollback --deploy N`. It's also the image tag luncur pushes
+(`<registry>/<project>-<app>:<N>`). A global internal id also exists (it
+backs job names, log paths, and the rollback API's request body) but is
+never shown in any of the above surfaces.
 
 Builds reuse a per-app BuildKit cache stored as an image manifest in the
 embedded registry (`luncur-cache/<project>-<app>:buildcache`), so repeat

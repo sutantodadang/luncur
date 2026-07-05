@@ -60,6 +60,7 @@ func migrate(db *sql.DB) error {
 		{"domains", "cert_error", `ALTER TABLE domains ADD COLUMN cert_error TEXT NOT NULL DEFAULT ''`},
 		{"domains", "cert_expires_at", `ALTER TABLE domains ADD COLUMN cert_expires_at TEXT NOT NULL DEFAULT ''`},
 		{"deployments", "rolled_back_from", `ALTER TABLE deployments ADD COLUMN rolled_back_from INTEGER`},
+		{"deployments", "seq", `ALTER TABLE deployments ADD COLUMN seq INTEGER NOT NULL DEFAULT 0`},
 		{"invites", "created_by", `ALTER TABLE invites ADD COLUMN created_by INTEGER`},
 		{"invites", "used_by", `ALTER TABLE invites ADD COLUMN used_by INTEGER`},
 		{"invites", "used_at", `ALTER TABLE invites ADD COLUMN used_at TEXT`},
@@ -84,6 +85,26 @@ func migrate(db *sql.DB) error {
 				return err
 			}
 		}
+	}
+
+	// Backfill per-app seq for rows written before the column existed:
+	// position within the app's history ordered by id. Guarded by
+	// `WHERE seq = 0` so it's a no-op once every row has a real seq (new
+	// rows are always inserted with seq >= 1 by CreateDeployment) — safe to
+	// run unconditionally on every Open.
+	if _, err := db.Exec(`
+		UPDATE deployments SET seq = (
+			SELECT COUNT(*) FROM deployments d2
+			WHERE d2.app_id = deployments.app_id AND d2.id <= deployments.id
+		) WHERE seq = 0`); err != nil {
+		return fmt.Errorf("backfill deployments.seq: %w", err)
+	}
+	// Created here rather than in schema.sql: schema.sql's CREATE TABLE IF
+	// NOT EXISTS is a no-op on a pre-existing deployments table, so a
+	// standalone CREATE INDEX there would run (and fail on the missing
+	// column) before the ALTER above ever adds it on a legacy DB.
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_deployments_app_seq ON deployments(app_id, seq)`); err != nil {
+		return fmt.Errorf("create deployments seq index: %w", err)
 	}
 	return nil
 }

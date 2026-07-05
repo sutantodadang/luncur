@@ -31,6 +31,9 @@ func statusCmd() *cobra.Command {
 				}
 				cmd.Printf("app:      %s\nstatus:   %s\nreplicas: %d\nimage:    %s\nurl:      %s\n",
 					a.Name, a.Status, a.Replicas, a.Image, a.URL)
+				if a.Seq > 0 {
+					cmd.Printf("deploy:   #%d\n", a.Seq)
+				}
 				if m.Available {
 					cmd.Printf("cpu:      %dm\nmemory:   %dMi\n", m.CPUMillicores, m.MemoryMiB)
 				} else {

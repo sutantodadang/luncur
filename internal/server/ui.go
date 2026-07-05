@@ -629,6 +629,7 @@ func (s *server) handleUIChip(w http.ResponseWriter, r *http.Request, u store.Us
 // than adding one just for this column.
 type uiDeployRow struct {
 	ID             int64
+	Seq            int64
 	Status         string
 	ImageRef       string
 	ImageTag       string
@@ -650,7 +651,7 @@ func uiDeployRows(history []store.Deployment, limit int) []uiDeployRow {
 			tag = d.ImageRef[idx+1:]
 		}
 		rows = append(rows, uiDeployRow{
-			ID: d.ID, Status: d.Status, ImageRef: d.ImageRef, ImageTag: tag,
+			ID: d.ID, Seq: d.Seq, Status: d.Status, ImageRef: d.ImageRef, ImageTag: tag,
 			CreatedAt: d.CreatedAt, RolledBackFrom: d.RolledBackFrom, Actor: "-",
 		})
 	}

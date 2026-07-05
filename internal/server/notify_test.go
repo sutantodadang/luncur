@@ -88,7 +88,7 @@ func TestBuildNotifyPayloadGeneric(t *testing.T) {
 
 func TestBuildNotifyPayloadDiscordSlackTelegram(t *testing.T) {
 	now := time.Now()
-	ev := notifyEvent{Event: "deploy_success", Project: "web", App: "api", DeployID: 1, URL: "http://x"}
+	ev := notifyEvent{Event: "deploy_success", Project: "web", App: "api", DeployID: 10, Seq: 1, URL: "http://x"}
 
 	b, err := buildNotifyPayload("discord", "", ev, now)
 	if err != nil {
@@ -140,8 +140,8 @@ func TestBuildNotifyPayloadMessages(t *testing.T) {
 		ev   notifyEvent
 		want string
 	}{
-		{notifyEvent{Event: "deploy_success", Project: "p", App: "a", DeployID: 3, URL: "http://u"}, "✅ p/a deploy #3 live — http://u"},
-		{notifyEvent{Event: "deploy_failed", Project: "p", App: "a", DeployID: 3, Err: "oops"}, "❌ p/a deploy #3 failed: oops"},
+		{notifyEvent{Event: "deploy_success", Project: "p", App: "a", DeployID: 30, Seq: 3, URL: "http://u"}, "✅ p/a deploy #3 live — http://u"},
+		{notifyEvent{Event: "deploy_failed", Project: "p", App: "a", DeployID: 30, Seq: 3, Err: "oops"}, "❌ p/a deploy #3 failed: oops"},
 		{notifyEvent{Event: "cert_issued", URL: "host"}, "🔒 host cert issued"},
 		{notifyEvent{Event: "cert_failed", URL: "host", Err: "oops"}, "⚠️ host cert failed: oops"},
 	}

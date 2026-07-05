@@ -183,12 +183,26 @@ type AppInfo struct {
 	Image       string `json:"image,omitempty"`
 	Kind        string `json:"kind,omitempty"`
 	Schedule    string `json:"schedule,omitempty"`
+	Seq         int64  `json:"seq,omitempty"`
 }
 
 type DeployResult struct {
 	DeploymentID int64  `json:"deployment_id"`
+	Seq          int64  `json:"seq"`
 	Status       string `json:"status"`
 	URL          string `json:"url"`
+}
+
+// DeployInfo is one row of an app's deploy history, as returned by
+// ListDeploys — Seq is the per-app human-facing deploy number; ID is the
+// internal id the rollback API still expects.
+type DeployInfo struct {
+	ID             int64  `json:"id"`
+	Seq            int64  `json:"seq"`
+	Status         string `json:"status"`
+	Image          string `json:"image"`
+	CreatedAt      string `json:"created_at"`
+	RolledBackFrom int64  `json:"rolled_back_from,omitempty"`
 }
 
 func (c *Client) CreateProject(name string) (ProjectInfo, error) {
@@ -293,6 +307,15 @@ func (c *Client) GetDeploy(project, app string, id int64) (DeployResult, error) 
 func (c *Client) DeployLogs(project, app string, id int64) ([]byte, error) {
 	return c.doRaw("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+
 		"/deploys/"+strconv.FormatInt(id, 10)+"/logs", nil)
+}
+
+// ListDeploys fetches an app's deploy history (newest first) — used to
+// resolve a human-facing seq (deploy number) to the internal id the
+// rollback API expects.
+func (c *Client) ListDeploys(project, app string) ([]DeployInfo, error) {
+	var out []DeployInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/deploys", nil, &out)
+	return out, err
 }
 
 // CreateGitApp registers an app whose source is a git repo, built at deploy time.
@@ -627,14 +650,16 @@ func (c *Client) SetSetting(key, value string) error {
 }
 
 // Rollback redeploys a previous deployment's image (deployID == 0 auto-picks
-// the previous live deployment) and returns the new deployment's id.
+// the previous live deployment) and returns the new deployment's per-app
+// seq (deploy number) — the human-facing number, not the internal id.
 func (c *Client) Rollback(project, app string, deployID int64) (int64, error) {
 	var out struct {
 		DeploymentID int64 `json:"deployment_id"`
+		Seq          int64 `json:"seq"`
 	}
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/rollback",
 		map[string]int64{"deploy_id": deployID}, &out)
-	return out.DeploymentID, err
+	return out.Seq, err
 }
 
 type TokenInfo struct {

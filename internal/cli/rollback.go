@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 )
 
@@ -16,16 +18,38 @@ func rollbackCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			newID, err := c.Rollback(project, args[0], deploy)
+			// --deploy is the per-app deploy number shown by `luncur status`
+			// and the web UI (#1, #2, ...) — resolve it to the internal id
+			// the rollback API expects. 0 (unset) means "previous live",
+			// which the API resolves itself.
+			targetID := int64(0)
+			if deploy != 0 {
+				deploys, err := c.ListDeploys(project, args[0])
+				if err != nil {
+					return err
+				}
+				found := false
+				for _, d := range deploys {
+					if d.Seq == deploy {
+						targetID = d.ID
+						found = true
+						break
+					}
+				}
+				if !found {
+					return fmt.Errorf("no deploy #%d found for %s", deploy, args[0])
+				}
+			}
+			newSeq, err := c.Rollback(project, args[0], targetID)
 			if err != nil {
 				return err
 			}
-			cmd.Printf("rolled back (new deploy %d)\n", newID)
+			cmd.Printf("rolled back (new deploy #%d)\n", newSeq)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project name")
 	cmd.MarkFlagRequired("project")
-	cmd.Flags().Int64Var(&deploy, "deploy", 0, "deployment id to roll back to (default: previous live)")
+	cmd.Flags().Int64Var(&deploy, "deploy", 0, "deploy number to roll back to, as shown by `luncur status` (default: previous live)")
 	return cmd
 }

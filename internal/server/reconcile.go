@@ -56,7 +56,7 @@ func (s *server) reconcileFail(p store.Project, a store.App, d store.Deployment,
 	if e := s.st.SetDeploymentStatus(d.ID, "failed"); e != nil {
 		log.Printf("mark deploy %d failed: %v", d.ID, e)
 	}
-	s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Err: err.Error()})
+	s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, Err: err.Error()})
 }
 
 // reconcileBuilding handles a deployment orphaned in 'building': if the
@@ -99,7 +99,7 @@ func (s *server) reconcileBuilding(ctx context.Context, p store.Project, a store
 			return
 		}
 
-		imageRef := build.ImageRef(s.registryHost, projectSlug(p), a.Name, d.ID)
+		imageRef := build.ImageRef(s.registryHost, projectSlug(p), a.Name, d.Seq)
 		if err := s.finishDeploy(bctx, p, a, d, imageRef); err != nil {
 			s.buildLogf(d, "build failed: %v", err)
 			s.reconcileFail(p, a, d, err)

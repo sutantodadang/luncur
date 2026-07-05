@@ -66,7 +66,8 @@ type notifyEvent struct {
 	Event    string // deploy_success|deploy_failed|cert_issued|cert_failed
 	Project  string
 	App      string
-	DeployID int64  // 0 for cert events
+	DeployID int64  // 0 for cert events — internal id, kept for API consumers
+	Seq      int64  // 0 for cert events — per-app deploy number shown in human-readable text
 	URL      string // app URL (deploy events) or hostname (cert events)
 	Err      string // error detail; truncated to errTailLimit chars before sending
 }
@@ -169,9 +170,9 @@ func notifyStatus(event string) string {
 func notifyMessage(ev notifyEvent) string {
 	switch ev.Event {
 	case "deploy_success":
-		return fmt.Sprintf("✅ %s/%s deploy #%d live — %s", ev.Project, ev.App, ev.DeployID, ev.URL)
+		return fmt.Sprintf("✅ %s/%s deploy #%d live — %s", ev.Project, ev.App, ev.Seq, ev.URL)
 	case "deploy_failed":
-		return fmt.Sprintf("❌ %s/%s deploy #%d failed: %s", ev.Project, ev.App, ev.DeployID, ev.Err)
+		return fmt.Sprintf("❌ %s/%s deploy #%d failed: %s", ev.Project, ev.App, ev.Seq, ev.Err)
 	case "cert_issued":
 		return fmt.Sprintf("🔒 %s cert issued", ev.URL)
 	case "cert_failed":

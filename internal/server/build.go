@@ -229,7 +229,7 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 		if e := s.st.SetDeploymentStatus(d.ID, "failed"); e != nil {
 			log.Printf("mark deploy %d failed: %v", d.ID, e)
 		}
-		s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Err: err.Error()})
+		s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, Err: err.Error()})
 		return err
 	}
 
@@ -239,7 +239,7 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 		}
 	}
 
-	imageRef := build.ImageRef(s.registryHost, projectSlug(p), a.Name, d.ID)
+	imageRef := build.ImageRef(s.registryHost, projectSlug(p), a.Name, d.Seq)
 	cacheRef := build.CacheRef(s.registryHost, projectSlug(p), a.Name)
 	if v, err := s.st.GetSetting("build_cache"); err == nil && v == "off" {
 		cacheRef = ""
@@ -333,6 +333,6 @@ func (s *server) finishDeploy(ctx context.Context, p store.Project, a store.App,
 	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
 		log.Printf("mark deploy %d live (kube apply already succeeded): %v", d.ID, err)
 	}
-	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, URL: "http://" + hostFor(a.Name, s.externalIP)})
+	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: "http://" + hostFor(a.Name, s.externalIP)})
 	return nil
 }

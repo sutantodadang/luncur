@@ -201,6 +201,7 @@ func (s *server) handleGetApp(w http.ResponseWriter, r *http.Request, u store.Us
 	default:
 		out["status"] = d.Status
 		out["image"] = d.ImageRef
+		out["seq"] = d.Seq
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -298,6 +299,7 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"deployment_id": d.ID,
+			"seq":           d.Seq,
 			"status":        "building",
 		})
 		return
@@ -332,7 +334,7 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 			}
 			return
 		}
-		writeJSON(w, http.StatusAccepted, map[string]any{"deployment_id": d.ID, "status": "building"})
+		writeJSON(w, http.StatusAccepted, map[string]any{"deployment_id": d.ID, "seq": d.Seq, "status": "building"})
 		return
 	}
 	writeError(w, http.StatusBadRequest, "bad_request", "provide a source tarball or an image")
@@ -374,13 +376,13 @@ func (s *server) applyImageDeploy(ctx context.Context, p store.Project, a store.
 		if e := s.st.SetDeploymentStatus(d.ID, "failed"); e != nil {
 			log.Printf("mark deploy %d failed: %v", d.ID, e)
 		}
-		s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Err: err.Error()})
+		s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, Err: err.Error()})
 		return err
 	}
 	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
 		log.Printf("mark deploy %d live (apply already succeeded): %v", d.ID, err)
 	}
-	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, URL: "http://" + hostFor(a.Name, s.externalIP)})
+	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: "http://" + hostFor(a.Name, s.externalIP)})
 	return nil
 }
 
@@ -402,6 +404,7 @@ func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Pro
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"deployment_id": d.ID,
+		"seq":           d.Seq,
 		"status":        "live",
 		"url":           "http://" + hostFor(a.Name, s.externalIP),
 	})
@@ -428,6 +431,39 @@ func (s *server) requireDeploy(w http.ResponseWriter, a store.App, idStr string)
 	return d, true
 }
 
+// handleListDeploys returns an app's deploy history (newest first, capped at
+// 50 by ListDeployments) — the CLI's only way to learn a deploy's internal
+// id from its human-facing seq before calling the rollback API (which still
+// takes the internal id).
+func (s *server) handleListDeploys(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	if !ok {
+		return
+	}
+	history, err := s.st.ListDeployments(a.ID)
+	if err != nil {
+		log.Printf("list deploys: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]map[string]any, 0, len(history))
+	for _, d := range history {
+		out = append(out, map[string]any{
+			"id":               d.ID,
+			"seq":              d.Seq,
+			"status":           d.Status,
+			"image":            d.ImageRef,
+			"created_at":       d.CreatedAt,
+			"rolled_back_from": d.RolledBackFrom,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *server) handleGetDeploy(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.requireProject(w, u, r.PathValue("project"))
 	if !ok {
@@ -443,6 +479,7 @@ func (s *server) handleGetDeploy(w http.ResponseWriter, r *http.Request, u store
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"deployment_id": d.ID,
+		"seq":           d.Seq,
 		"status":        d.Status,
 		"image":         d.ImageRef,
 		"url":           "http://" + hostFor(a.Name, s.externalIP),
