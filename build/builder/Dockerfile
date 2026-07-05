@@ -17,9 +17,14 @@
 
 FROM moby/buildkit:rootless
 
-# Install git for cloning source repos (needed for LUNCUR_SOURCE_TYPE=git)
-# ca-certificates needed for HTTPS git operations.
-RUN apk add --no-cache git ca-certificates
+# The rootless base image runs as USER user (uid 1000); package installs
+# need root, so switch for the setup steps and drop back at the end.
+USER root
+
+# Install git for cloning source repos (needed for LUNCUR_SOURCE_TYPE=git),
+# ca-certificates for HTTPS git operations, and bash — entrypoint.sh uses
+# bash-only process substitution for tee-based logging.
+RUN apk add --no-cache git ca-certificates bash
 
 # Install nixpacks: download the release binary directly from GitHub.
 # This avoids needing curl+bash+curl script; we just fetch the binary.
@@ -36,6 +41,10 @@ RUN apk add --no-cache curl && \
 # Copy entrypoint script into the image.
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Back to the rootless buildkit user — builds must not run as root, and the
+# system namespace's PodSecurity baseline still expects the image default.
+USER user
 
 # Set the entrypoint to run the build logic.
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
