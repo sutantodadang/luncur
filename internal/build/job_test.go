@@ -48,7 +48,7 @@ func TestRenderBuildJobWithCacheRef(t *testing.T) {
 	obj, err := RenderBuildJob(BuildParams{
 		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
 		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
-		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: "42",
 		CacheRef: "registry.luncur-system:5000/luncur-cache/web-api:buildcache",
 	})
 	if err != nil {
@@ -64,7 +64,7 @@ func TestRenderBuildJobWithoutCacheRef(t *testing.T) {
 	obj, err := RenderBuildJob(BuildParams{
 		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
 		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
-		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: "42",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestRenderBuildJobRootlessSecurity(t *testing.T) {
 	obj, err := RenderBuildJob(BuildParams{
 		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
 		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
-		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: "42",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestRenderBuildJobWithBuildPath(t *testing.T) {
 	obj, err := RenderBuildJob(BuildParams{
 		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
 		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
-		RegistryHost: "registry.luncur-system:5000", SourceType: "git", DeployID: 42,
+		RegistryHost: "registry.luncur-system:5000", SourceType: "git", DeployID: "42",
 		BuildPath: "backend",
 	})
 	if err != nil {
@@ -118,7 +118,7 @@ func TestRenderBuildJobWithoutBuildPath(t *testing.T) {
 	obj, err := RenderBuildJob(BuildParams{
 		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
 		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
-		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: "42",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestRenderBuildJobWithBuildEnv(t *testing.T) {
 	obj, err := RenderBuildJob(BuildParams{
 		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
 		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
-		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: "42",
 		BuildEnv: map[string]string{"B": "2", "A": "1"},
 	})
 	if err != nil {
@@ -175,7 +175,7 @@ func TestRenderBuildJobWithoutBuildEnv(t *testing.T) {
 	obj, err := RenderBuildJob(BuildParams{
 		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
 		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
-		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: "42",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +192,7 @@ func TestRenderBuildJob(t *testing.T) {
 	obj, err := RenderBuildJob(BuildParams{
 		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
 		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
-		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: "42",
 	})
 	if err != nil {
 		t.Fatal(err)

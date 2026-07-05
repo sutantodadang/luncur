@@ -498,7 +498,7 @@ func TestRunBuildFailureLogsMilestone(t *testing.T) {
 func TestBuildLogfNoopWithoutSource(t *testing.T) {
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st})
-	srv.buildLogf(store.Deployment{ID: 1}, "hello %s", "world")
+	srv.buildLogf(store.Deployment{ID: "1"}, "hello %s", "world")
 }
 
 // watcherTestServer builds a *server wired only with a fake Kubernetes

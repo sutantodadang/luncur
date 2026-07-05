@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -30,7 +29,7 @@ type BuildParams struct {
 	SourceType   string
 	GitURL       string
 	GitBranch    string
-	DeployID     int64
+	DeployID     string
 	CacheRef     string
 	BuildPath    string
 	// BuildEnv is the app's decrypted env vars, forwarded to the builder as
@@ -65,7 +64,7 @@ func RenderBuildJob(p BuildParams) (render.Object, error) {
 	restartPolicy := corev1.RestartPolicyNever
 
 	env := []corev1.EnvVar{
-		{Name: "LUNCUR_DEPLOY_ID", Value: strconv.FormatInt(p.DeployID, 10)},
+		{Name: "LUNCUR_DEPLOY_ID", Value: p.DeployID},
 		{Name: "LUNCUR_IMAGE_REF", Value: p.ImageRef},
 		{Name: "LUNCUR_REGISTRY_HOST", Value: p.RegistryHost},
 		{Name: "LUNCUR_SOURCE_TYPE", Value: p.SourceType},

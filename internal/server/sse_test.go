@@ -41,7 +41,7 @@ func TestDeployLogsFollow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	url := fmt.Sprintf("/v1/projects/web/apps/api/deploys/%d/logs?follow=1", d.ID)
+	url := fmt.Sprintf("/v1/projects/web/apps/api/deploys/%s/logs?follow=1", d.ID)
 	req := httptest.NewRequest("GET", url, nil)
 	req.Header.Set("Authorization", "Bearer "+admin)
 	rec := httptest.NewRecorder()

@@ -7,7 +7,7 @@ import "github.com/spf13/cobra"
 // the app's runtime pod logs.
 func logsCmd() *cobra.Command {
 	var project string
-	var deploy int64
+	var deploy string
 	var follow bool
 	cmd := &cobra.Command{
 		Use:   "logs <app>",
@@ -19,9 +19,9 @@ func logsCmd() *cobra.Command {
 				return err
 			}
 			switch {
-			case deploy != 0 && follow:
+			case deploy != "" && follow:
 				return c.FollowDeployLogs(project, args[0], deploy, cmd.OutOrStdout())
-			case deploy != 0:
+			case deploy != "":
 				b, err := c.DeployLogs(project, args[0], deploy)
 				if err != nil {
 					return err
@@ -35,7 +35,7 @@ func logsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project name")
 	cmd.MarkFlagRequired("project")
-	cmd.Flags().Int64Var(&deploy, "deploy", 0, "deployment id (build log; omit for runtime logs)")
+	cmd.Flags().StringVar(&deploy, "deploy", "", "deployment id (build log; omit for runtime logs)")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "stream live")
 	return cmd
 }

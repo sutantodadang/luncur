@@ -270,7 +270,8 @@ luncur rollback myapp --project myproj --deploy 12   # back to deploy #12 (as sh
 
 Rolling back redeploys an earlier deployment's image directly — no rebuild —
 and records the new deployment row's lineage, shown in the web UI's Deploys
-table as "(rollback of N)". The app page also has a `rollback` button on
+table as "(rollback of #N)" (N is the source deploy's seq, not its internal
+id). The app page also has a `rollback` button on
 every history row except the newest and any row with no image. Only images
 hosted in luncur's embedded registry are HEAD-checked before rolling back
 (a 409 naming the image if it's gone); externally-hosted image refs (e.g.
@@ -886,9 +887,14 @@ When you run `luncur deploy` on a local source or git repository, the following 
 Deploys are numbered per app, Heroku-style (`#1`, `#2`, ...) — that's the
 number shown in `luncur status`, the web UI's Deploy history table, and
 `luncur rollback --deploy N`. It's also the image tag luncur pushes
-(`<registry>/<project>-<app>:<N>`). A global internal id also exists (it
-backs job names, log paths, and the rollback API's request body) but is
-never shown in any of the above surfaces.
+(`<registry>/<project>-<app>:<N>`). Every deployment also has an opaque
+internal id (a random 12-character id, not a counter) — it backs Build Job
+names, log/tarball filenames, and the rollback API's request body, but the
+per-app `#N` above is the only deploy number you should ever need to type or
+read. (Beta note: an upgrade from a pre-nanoid luncur regenerates every
+deployment's internal id in place — history and `#N` numbering are
+preserved, but any build log/tarball already on disk under the old id
+orphans.)
 
 Builds reuse a per-app BuildKit cache stored as an image manifest in the
 embedded registry (`luncur-cache/<project>-<app>:buildcache`), so repeat

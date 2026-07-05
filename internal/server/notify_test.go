@@ -44,7 +44,7 @@ func TestBuildNotifyPayloadGeneric(t *testing.T) {
 	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
 
 	b, err := buildNotifyPayload("generic", "", notifyEvent{
-		Event: "deploy_success", Project: "web", App: "api", DeployID: 7, URL: "http://api.example.com",
+		Event: "deploy_success", Project: "web", App: "api", DeployID: "7", URL: "http://api.example.com",
 	}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestBuildNotifyPayloadGeneric(t *testing.T) {
 	}
 	want := map[string]any{
 		"event": "deploy_success", "project": "web", "app": "api",
-		"deploy_id": float64(7), "status": "live", "url": "http://api.example.com",
+		"deploy_id": "7", "status": "live", "url": "http://api.example.com",
 		"time": "2026-07-04T12:00:00Z",
 	}
 	for k, v := range want {
@@ -88,7 +88,7 @@ func TestBuildNotifyPayloadGeneric(t *testing.T) {
 
 func TestBuildNotifyPayloadDiscordSlackTelegram(t *testing.T) {
 	now := time.Now()
-	ev := notifyEvent{Event: "deploy_success", Project: "web", App: "api", DeployID: 10, Seq: 1, URL: "http://x"}
+	ev := notifyEvent{Event: "deploy_success", Project: "web", App: "api", DeployID: "10", Seq: 1, URL: "http://x"}
 
 	b, err := buildNotifyPayload("discord", "", ev, now)
 	if err != nil {
@@ -140,8 +140,8 @@ func TestBuildNotifyPayloadMessages(t *testing.T) {
 		ev   notifyEvent
 		want string
 	}{
-		{notifyEvent{Event: "deploy_success", Project: "p", App: "a", DeployID: 30, Seq: 3, URL: "http://u"}, "✅ p/a deploy #3 live — http://u"},
-		{notifyEvent{Event: "deploy_failed", Project: "p", App: "a", DeployID: 30, Seq: 3, Err: "oops"}, "❌ p/a deploy #3 failed: oops"},
+		{notifyEvent{Event: "deploy_success", Project: "p", App: "a", DeployID: "30", Seq: 3, URL: "http://u"}, "✅ p/a deploy #3 live — http://u"},
+		{notifyEvent{Event: "deploy_failed", Project: "p", App: "a", DeployID: "30", Seq: 3, Err: "oops"}, "❌ p/a deploy #3 failed: oops"},
 		{notifyEvent{Event: "cert_issued", URL: "host"}, "🔒 host cert issued"},
 		{notifyEvent{Event: "cert_failed", URL: "host", Err: "oops"}, "⚠️ host cert failed: oops"},
 	}
@@ -210,7 +210,7 @@ func TestNotifyDefaultEventsFiltering(t *testing.T) {
 	setSealedNotifyURL(t, s, ts.URL)
 
 	// default events = deploy_failed,cert_failed -> deploy_success dropped.
-	s.notify(notifyEvent{Event: "deploy_success", Project: "p", App: "a", DeployID: 1, URL: "http://x"})
+	s.notify(notifyEvent{Event: "deploy_success", Project: "p", App: "a", DeployID: "1", URL: "http://x"})
 	select {
 	case b := <-ch:
 		t.Fatalf("unexpected notification sent for deploy_success under default events: %s", b)
@@ -218,7 +218,7 @@ func TestNotifyDefaultEventsFiltering(t *testing.T) {
 	}
 
 	// deploy_failed delivered under default events.
-	s.notify(notifyEvent{Event: "deploy_failed", Project: "p", App: "a", DeployID: 1, Err: "boom"})
+	s.notify(notifyEvent{Event: "deploy_failed", Project: "p", App: "a", DeployID: "1", Err: "boom"})
 	b := recvNotify(t, ch, 2*time.Second)
 	if !strings.Contains(string(b), `"event":"deploy_failed"`) {
 		t.Fatalf("body = %s", b)
@@ -248,7 +248,7 @@ func TestNotifyExplicitEventsCSVHonored(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 
-	s.notify(notifyEvent{Event: "deploy_success", Project: "p", App: "a", DeployID: 2, URL: "http://y"})
+	s.notify(notifyEvent{Event: "deploy_success", Project: "p", App: "a", DeployID: "2", URL: "http://y"})
 	recvNotify(t, ch, 2*time.Second)
 }
 
@@ -294,7 +294,7 @@ func TestNotifyTelegramFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.notify(notifyEvent{Event: "deploy_success", Project: "p", App: "a", DeployID: 5, URL: "http://z"})
+	s.notify(notifyEvent{Event: "deploy_success", Project: "p", App: "a", DeployID: "5", URL: "http://z"})
 	b := recvNotify(t, ch, 2*time.Second)
 	var out struct {
 		ChatID string `json:"chat_id"`

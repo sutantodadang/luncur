@@ -131,15 +131,37 @@ func TestMigrateBackfillsDeploymentSeq(t *testing.T) {
 	}
 	defer s.Close()
 
-	wantSeq := map[int64]int64{1: 1, 2: 1, 3: 2, 4: 3, 5: 2}
-	for id, want := range wantSeq {
-		d, err := s.GetDeployment(id)
-		if err != nil {
-			t.Fatalf("GetDeployment(%d): %v", id, err)
+	// Ids are regenerated to opaque nanoids by the same Open() call (see
+	// migrateDeploymentIDsToText), so rows can no longer be looked up by
+	// their old integer id — match by (app_id, seq) instead, and confirm
+	// every id now looks like a nanoid.
+	wantAPISeqs := []int64{1, 2, 3}
+	apiDeploys, err := s.ListDeployments(1)
+	if err != nil {
+		t.Fatalf("ListDeployments(api): %v", err)
+	}
+	if len(apiDeploys) != len(wantAPISeqs) {
+		t.Fatalf("api deploys = %+v, want %d rows", apiDeploys, len(wantAPISeqs))
+	}
+	gotAPISeqs := map[int64]bool{}
+	for _, d := range apiDeploys {
+		gotAPISeqs[d.Seq] = true
+		if !idPattern.MatchString(d.ID) {
+			t.Errorf("deployment id %q not migrated to nanoid shape", d.ID)
 		}
-		if d.Seq != want {
-			t.Errorf("deployment %d: seq = %d, want %d", id, d.Seq, want)
+	}
+	for _, want := range wantAPISeqs {
+		if !gotAPISeqs[want] {
+			t.Errorf("api deploys missing seq %d: %+v", want, apiDeploys)
 		}
+	}
+
+	workerDeploys, err := s.ListDeployments(2)
+	if err != nil {
+		t.Fatalf("ListDeployments(worker): %v", err)
+	}
+	if len(workerDeploys) != 2 {
+		t.Fatalf("worker deploys = %+v, want 2 rows", workerDeploys)
 	}
 
 	// Re-running Open (migrate again) must stay idempotent: no change, and
@@ -149,7 +171,7 @@ func TestMigrateBackfillsDeploymentSeq(t *testing.T) {
 		t.Fatalf("second Open on already-migrated DB: %v", err)
 	}
 	defer s2.Close()
-	if _, err := s.DB().Exec(`INSERT INTO deployments (id, app_id, seq, status) VALUES (99, 1, 1, 'live')`); err == nil {
+	if _, err := s.DB().Exec(`INSERT INTO deployments (id, app_id, seq, status) VALUES ('zzzzzzzzzzzz', 1, 1, 'live')`); err == nil {
 		t.Fatal("want unique constraint violation inserting a duplicate (app_id, seq)")
 	}
 }

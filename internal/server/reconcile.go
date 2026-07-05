@@ -30,12 +30,12 @@ func (s *server) reconcileUnfinished(ctx context.Context) {
 	for _, d := range deploys {
 		a, err := s.st.GetAppByID(d.AppID)
 		if err != nil {
-			log.Printf("reconcile deploy %d: get app %d: %v", d.ID, d.AppID, err)
+			log.Printf("reconcile deploy %s: get app %d: %v", d.ID, d.AppID, err)
 			continue
 		}
 		p, err := s.st.GetProjectByID(a.ProjectID)
 		if err != nil {
-			log.Printf("reconcile deploy %d: get project %d: %v", d.ID, a.ProjectID, err)
+			log.Printf("reconcile deploy %s: get project %d: %v", d.ID, a.ProjectID, err)
 			continue
 		}
 
@@ -54,7 +54,7 @@ func (s *server) reconcileUnfinished(ctx context.Context) {
 // left to the caller since its wording differs per failure mode.
 func (s *server) reconcileFail(p store.Project, a store.App, d store.Deployment, err error) {
 	if e := s.st.SetDeploymentStatus(d.ID, "failed"); e != nil {
-		log.Printf("mark deploy %d failed: %v", d.ID, e)
+		log.Printf("mark deploy %s failed: %v", d.ID, e)
 	}
 	s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, Err: err.Error()})
 }

@@ -52,15 +52,23 @@ CREATE TABLE IF NOT EXISTS apps (
   UNIQUE (project_id, name)
 );
 
+-- id is an opaque 12-char lowercase base-36 nanoid (see store.NewID), not an
+-- autoincrementing integer — it flows unescaped into k8s Job names
+-- ("build-<id>") and log/tarball filenames, so it must never leak
+-- information about creation order. The table keeps SQLite's implicit
+-- rowid for that purpose: ORDER BY rowid gives insertion order the same
+-- way ORDER BY id used to, without exposing it. seq (below) remains the
+-- only ordering humans ever see.
 CREATE TABLE IF NOT EXISTS deployments (
-  id         INTEGER PRIMARY KEY,
-  app_id     INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-  seq        INTEGER NOT NULL DEFAULT 0,
-  status     TEXT NOT NULL CHECK (status IN ('building','deploying','live','failed')),
-  image_ref  TEXT,
-  log_path   TEXT,
-  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  id               TEXT PRIMARY KEY,
+  app_id           INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  seq              INTEGER NOT NULL DEFAULT 0,
+  status           TEXT NOT NULL CHECK (status IN ('building','deploying','live','failed')),
+  image_ref        TEXT,
+  log_path         TEXT,
+  created_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  rolled_back_from TEXT
 );
 
 CREATE TABLE IF NOT EXISTS env_vars (

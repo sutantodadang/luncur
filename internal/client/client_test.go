@@ -108,7 +108,7 @@ func TestStreamSSE(t *testing.T) {
 	defer srv.Close()
 	var buf bytes.Buffer
 	c := New(srv.URL, "tok")
-	if err := c.FollowDeployLogs("p", "a", 1, &buf); err != nil {
+	if err := c.FollowDeployLogs("p", "a", "1", &buf); err != nil {
 		t.Fatal(err)
 	}
 	if got := buf.String(); got != "hello\nworld\n" {

@@ -17,7 +17,7 @@ import (
 // the poll loop apps_test.go uses for async builds — reconcileUnfinished's
 // per-deployment work runs in its own goroutine, so tests must wait for it
 // rather than asserting immediately.
-func waitTerminal(t *testing.T, st *store.Store, id int64) store.Deployment {
+func waitTerminal(t *testing.T, st *store.Store, id string) store.Deployment {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {

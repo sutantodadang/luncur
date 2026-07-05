@@ -15,8 +15,9 @@ import (
 )
 
 // buildJobName derives the Build Job's name from the deployment id it
-// builds for.
-func buildJobName(id int64) string { return fmt.Sprintf("build-%d", id) }
+// builds for. id is a 12-char [a-z0-9] nanoid, so the result is always a
+// valid k8s object name with no further sanitizing needed.
+func buildJobName(id string) string { return fmt.Sprintf("build-%s", id) }
 
 // projectSlug returns the DNS-safe project identifier used in image tags.
 // Project names are already validated DNS-1123 labels, so this is an
@@ -59,30 +60,30 @@ func (s *server) buildLogf(d store.Deployment, format string, args ...any) {
 	// machines where no builder pod exists anyway.
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o770); err != nil {
-		log.Printf("build log %d: mkdir: %v", d.ID, err)
+		log.Printf("build log %s: mkdir: %v", d.ID, err)
 		return
 	}
 	if err := os.Chown(dir, -1, build.BuilderGID); err != nil {
-		log.Printf("build log %d: chown dir: %v", d.ID, err)
+		log.Printf("build log %s: chown dir: %v", d.ID, err)
 	}
 	if err := os.Chmod(dir, 0o2770); err != nil {
-		log.Printf("build log %d: chmod dir: %v", d.ID, err)
+		log.Printf("build log %s: chmod dir: %v", d.ID, err)
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o660)
 	if err != nil {
-		log.Printf("build log %d: open: %v", d.ID, err)
+		log.Printf("build log %s: open: %v", d.ID, err)
 		return
 	}
 	defer f.Close()
 	if err := f.Chown(-1, build.BuilderGID); err != nil {
-		log.Printf("build log %d: chown: %v", d.ID, err)
+		log.Printf("build log %s: chown: %v", d.ID, err)
 	}
 	if err := f.Chmod(0o660); err != nil {
-		log.Printf("build log %d: chmod: %v", d.ID, err)
+		log.Printf("build log %s: chmod: %v", d.ID, err)
 	}
 	msg := fmt.Sprintf(format, args...)
 	if _, err := fmt.Fprintf(f, "[luncur] %s %s\n", time.Now().UTC().Format(time.RFC3339), msg); err != nil {
-		log.Printf("build log %d: write: %v", d.ID, err)
+		log.Printf("build log %s: write: %v", d.ID, err)
 	}
 }
 
@@ -215,7 +216,7 @@ func (s *server) startBuild(p store.Project, a store.App, d store.Deployment) {
 		ctx, cancel := context.WithTimeout(context.Background(), s.buildTimeout())
 		defer cancel()
 		if err := s.runBuild(ctx, p, a, d); err != nil {
-			log.Printf("build deploy %d failed: %v", d.ID, err)
+			log.Printf("build deploy %s failed: %v", d.ID, err)
 		}
 	}()
 }
@@ -227,7 +228,7 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 	fail := func(err error) error {
 		s.buildLogf(d, "build failed: %v", err)
 		if e := s.st.SetDeploymentStatus(d.ID, "failed"); e != nil {
-			log.Printf("mark deploy %d failed: %v", d.ID, e)
+			log.Printf("mark deploy %s failed: %v", d.ID, e)
 		}
 		s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, Err: err.Error()})
 		return err
@@ -235,7 +236,7 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 
 	if s.src != nil {
 		if err := s.st.SetDeploymentLog(d.ID, s.src.LogPath(d.ID)); err != nil {
-			log.Printf("set deploy %d log path: %v", d.ID, err)
+			log.Printf("set deploy %s log path: %v", d.ID, err)
 		}
 	}
 
@@ -331,7 +332,7 @@ func (s *server) finishDeploy(ctx context.Context, p store.Project, a store.App,
 		return err
 	}
 	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
-		log.Printf("mark deploy %d live (kube apply already succeeded): %v", d.ID, err)
+		log.Printf("mark deploy %s live (kube apply already succeeded): %v", d.ID, err)
 	}
 	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: "http://" + hostFor(a.Name, s.externalIP)})
 	return nil

@@ -117,10 +117,10 @@ func TestRollbackDeployment(t *testing.T) {
 	if err != nil || got.RolledBackFrom != d1.ID {
 		t.Fatalf("get: %+v err=%v", got, err)
 	}
-	// Non-rollback rows read back 0.
+	// Non-rollback rows read back "".
 	got, err = st.GetDeployment(d1.ID)
-	if err != nil || got.RolledBackFrom != 0 {
-		t.Fatalf("plain row rolled_back_from = %d err=%v", got.RolledBackFrom, err)
+	if err != nil || got.RolledBackFrom != "" {
+		t.Fatalf("plain row rolled_back_from = %q err=%v", got.RolledBackFrom, err)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestStuckDeployments(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0].ID != stuck.ID {
-		t.Fatalf("StuckDeployments = %+v, want only %d", got, stuck.ID)
+		t.Fatalf("StuckDeployments = %+v, want only %s", got, stuck.ID)
 	}
 }
 
@@ -190,7 +190,7 @@ func TestUnfinishedDeployments(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got[0].ID != building.ID || got[1].ID != deploying.ID {
-		t.Fatalf("UnfinishedDeployments = %+v, want [%d %d]", got, building.ID, deploying.ID)
+		t.Fatalf("UnfinishedDeployments = %+v, want [%s %s]", got, building.ID, deploying.ID)
 	}
 }
 
