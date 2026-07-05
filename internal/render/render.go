@@ -38,6 +38,11 @@ type Input struct {
 	// HealthPath is the HTTP path probed for readiness/liveness; "" means
 	// unset — no probes are rendered. Ignored for non-web kinds.
 	HealthPath string
+	// Internal marks a web app as cluster-only: the Service is still
+	// rendered (ClusterIP), but the Ingress is omitted entirely — no public
+	// URL, no domains. Ignored for non-web kinds (worker/cron already emit
+	// no Service to make internal).
+	Internal bool
 	// Overrides maps Kind -> strategic-merge-patch JSON. Applied by Task 6.
 	Overrides map[string]string
 	// ExtraHosts adds Ingress rules (same backend) for custom domains.
@@ -155,8 +160,9 @@ func meta(in Input, name string) metav1.ObjectMeta {
 
 // Render builds the manifest set for one app. env is plaintext (the caller
 // unseals); empty env omits the Secret entirely. Kind selects the object
-// set: web (default, "") gets Deployment+Service+Ingress; worker gets a
-// Deployment only (no ports); cron gets a batch/v1 CronJob.
+// set: web (default, "") gets Deployment+Service+Ingress; an internal web
+// app gets Deployment+Service but no Ingress (cluster-only, no public URL);
+// worker gets a Deployment only (no ports); cron gets a batch/v1 CronJob.
 func Render(in Input, env map[string]string) (Rendered, error) {
 	kind := in.Kind
 	if kind == "" {
@@ -303,44 +309,48 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			return Rendered{}, err
 		}
 
-		pathType := netv1.PathTypePrefix
-		rule := func(host string) netv1.IngressRule {
-			return netv1.IngressRule{
-				Host: host,
-				IngressRuleValue: netv1.IngressRuleValue{
-					HTTP: &netv1.HTTPIngressRuleValue{
-						Paths: []netv1.HTTPIngressPath{{
-							Path:     "/",
-							PathType: &pathType,
-							Backend: netv1.IngressBackend{
-								Service: &netv1.IngressServiceBackend{
-									Name: in.AppName,
-									Port: netv1.ServiceBackendPort{Number: 80},
+		// Internal web apps stop here: ClusterIP Service only, no Ingress —
+		// no public URL, unreachable outside the cluster.
+		if !in.Internal {
+			pathType := netv1.PathTypePrefix
+			rule := func(host string) netv1.IngressRule {
+				return netv1.IngressRule{
+					Host: host,
+					IngressRuleValue: netv1.IngressRuleValue{
+						HTTP: &netv1.HTTPIngressRuleValue{
+							Paths: []netv1.HTTPIngressPath{{
+								Path:     "/",
+								PathType: &pathType,
+								Backend: netv1.IngressBackend{
+									Service: &netv1.IngressServiceBackend{
+										Name: in.AppName,
+										Port: netv1.ServiceBackendPort{Number: 80},
+									},
 								},
-							},
-						}},
+							}},
+						},
 					},
+				}
+			}
+			rules := []netv1.IngressRule{rule(in.Host)}
+			for _, h := range in.ExtraHosts {
+				rules = append(rules, rule(h))
+			}
+			ingMeta := meta(in, in.AppName)
+			if len(in.IngressAnnotations) > 0 {
+				ingMeta.Annotations = in.IngressAnnotations
+			}
+			ing := &netv1.Ingress{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
+				ObjectMeta: ingMeta,
+				Spec: netv1.IngressSpec{
+					Rules: rules,
+					TLS:   in.TLS,
 				},
 			}
-		}
-		rules := []netv1.IngressRule{rule(in.Host)}
-		for _, h := range in.ExtraHosts {
-			rules = append(rules, rule(h))
-		}
-		ingMeta := meta(in, in.AppName)
-		if len(in.IngressAnnotations) > 0 {
-			ingMeta.Annotations = in.IngressAnnotations
-		}
-		ing := &netv1.Ingress{
-			TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
-			ObjectMeta: ingMeta,
-			Spec: netv1.IngressSpec{
-				Rules: rules,
-				TLS:   in.TLS,
-			},
-		}
-		if err := add("Ingress", ing); err != nil {
-			return Rendered{}, err
+			if err := add("Ingress", ing); err != nil {
+				return Rendered{}, err
+			}
 		}
 
 	case "worker":

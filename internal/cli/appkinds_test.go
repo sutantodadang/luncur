@@ -79,6 +79,39 @@ func TestAppCreateBuildPathFlag(t *testing.T) {
 	}
 }
 
+// TestAppCreateInternalFlag checks that `app create --internal` round-trips
+// through the API into the stored internal flag (mirroring
+// TestAppCreateBuildPathFlag's style), and that combining it with
+// --kind worker is rejected server-side.
+func TestAppCreateInternalFlag(t *testing.T) {
+	srv, st := testEnvStore(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "app", "create", "ai", "--project", "p", "--port", "8001", "--internal"); err != nil {
+		t.Fatal(err)
+	}
+
+	proj, err := st.GetProject("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.GetApp(proj.ID, "ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.Internal {
+		t.Fatalf("internal: got %v, want true", a.Internal)
+	}
+
+	if _, err := run(t, "app", "create", "w1", "--project", "p", "--kind", "worker", "--internal"); err == nil {
+		t.Fatal("want error creating internal worker app")
+	}
+}
+
 // TestAppListShowsKind checks `app list`'s KIND column and that non-web apps
 // show "-" instead of a URL.
 func TestAppListShowsKind(t *testing.T) {

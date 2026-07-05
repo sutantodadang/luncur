@@ -278,3 +278,23 @@ func TestWildcardDomainNeedsDNSProvider(t *testing.T) {
 		t.Fatalf("wildcard must skip the A-record warning, got %q", out.DNSWarning)
 	}
 }
+
+// TestAddDomainRejectedForInternalApp: an internal web app has no Ingress to
+// attach a custom domain to — a custom-domain Ingress would defeat the whole
+// point of "cluster-only, no public URL" — so domain add is rejected.
+func TestAddDomainRejectedForInternalApp(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"ai","port":8001,"internal":true}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/ai/domains", admin, `{"hostname":"www.example.com"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("add domain to internal app: want 400, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "internal apps cannot have public domains") {
+		t.Fatalf("error body: %s", body)
+	}
+}

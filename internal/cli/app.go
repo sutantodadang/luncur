@@ -17,6 +17,7 @@ func appCmd() *cobra.Command {
 	var gitURL, branch string
 	var kind, schedule string
 	var buildPath string
+	var internal bool
 
 	create := &cobra.Command{
 		Use:   "create <name>",
@@ -29,9 +30,9 @@ func appCmd() *cobra.Command {
 			}
 			var a client.AppInfo
 			if gitURL != "" {
-				a, err = c.CreateGitApp(project, args[0], port, gitURL, branch, kind, schedule, buildPath)
+				a, err = c.CreateGitApp(project, args[0], port, gitURL, branch, kind, schedule, buildPath, internal)
 			} else {
-				a, err = c.CreateApp(project, args[0], port, kind, schedule, buildPath)
+				a, err = c.CreateApp(project, args[0], port, kind, schedule, buildPath, internal)
 			}
 			if err != nil {
 				return err
@@ -51,6 +52,7 @@ func appCmd() *cobra.Command {
 	create.Flags().StringVar(&kind, "kind", "web", "app kind: web, worker, or cron")
 	create.Flags().StringVar(&schedule, "schedule", "", "cron schedule, 5-field (cron kind only)")
 	create.Flags().StringVar(&buildPath, "path", "", "subdirectory to build (monorepo)")
+	create.Flags().BoolVar(&internal, "internal", false, "cluster-only web app: ClusterIP Service, no Ingress, no public URL (web kind only)")
 
 	var listProject string
 	list := &cobra.Command{
@@ -68,8 +70,11 @@ func appCmd() *cobra.Command {
 			}
 			for _, a := range apps {
 				url := a.URL
-				if a.Kind != "web" {
+				switch {
+				case a.Kind != "web":
 					url = "-"
+				case a.Internal:
+					url = a.InternalURL
 				}
 				cmd.Printf("%s\t%s\t%s\n", a.Name, a.Kind, url)
 			}
@@ -93,7 +98,11 @@ func appCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cmd.Printf("%s\tkind=%s\tstatus=%s\turl=%s\timage=%s", a.Name, a.Kind, a.Status, a.URL, a.Image)
+			url := a.URL
+			if a.Internal {
+				url = a.InternalURL
+			}
+			cmd.Printf("%s\tkind=%s\tstatus=%s\turl=%s\timage=%s", a.Name, a.Kind, a.Status, url, a.Image)
 			if a.Kind == "cron" {
 				cmd.Printf("\tschedule=%s", a.Schedule)
 			}

@@ -6,7 +6,8 @@
   {{template "statuschip" .Chip}}
   {{if .App.Ejected}} <span class="status-failed">ejected</span>{{end}}
   {{if ne .App.Kind "web"}} <span class="status-pending">{{.App.Kind}}</span>{{end}}
-  {{if eq .App.Kind "web"}}<a class="font-mono text-[11px] text-mut hover:text-signal" href="{{.URL}}">{{.URL}}</a>{{end}}
+  {{if .App.Internal}} <span class="chip chip-muted">internal</span>{{end}}
+  {{if eq .App.Kind "web"}}{{if .App.Internal}}<code class="font-mono text-[11px] text-mut" title="cluster-only — not reachable from a browser">{{.InternalURL}}</code>{{else}}<a class="font-mono text-[11px] text-mut hover:text-signal" href="{{.URL}}">{{.URL}}</a>{{end}}{{end}}
   <div class="ml-auto flex gap-2">
   {{if and .IsGit (not .App.Ejected)}}
   <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/deploy">
@@ -155,7 +156,7 @@
 </div>
 {{end}}
 
-{{if and (not .App.Ejected) (eq .App.Kind "web")}}
+{{if and (not .App.Ejected) (eq .App.Kind "web") (not .App.Internal)}}
 <div class="card mb-6">
 <h2>Domains</h2>
 <table class="tbl"><tr><th>Hostname</th><th>Cert</th><th>Expires</th><th></th></tr>

@@ -76,6 +76,9 @@ func (s *server) addDomain(ctx context.Context, p store.Project, a store.App, ho
 	if a.Kind != "web" {
 		return store.Domain{}, "", &kindMismatchError{fmt.Errorf("domains are only supported for web apps")}
 	}
+	if a.Internal {
+		return store.Domain{}, "", &kindMismatchError{fmt.Errorf("internal apps cannot have public domains")}
+	}
 	isWildcard := strings.HasPrefix(strings.TrimSpace(hostname), "*.")
 	if isWildcard && s.dnsProviderName() == "none" {
 		return store.Domain{}, "", errWildcardNeedsDNS

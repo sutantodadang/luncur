@@ -172,15 +172,17 @@ type ProjectInfo struct {
 }
 
 type AppInfo struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Port     int    `json:"port"`
-	Replicas int    `json:"replicas"`
-	URL      string `json:"url"`
-	Status   string `json:"status,omitempty"`
-	Image    string `json:"image,omitempty"`
-	Kind     string `json:"kind,omitempty"`
-	Schedule string `json:"schedule,omitempty"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Port        int    `json:"port"`
+	Replicas    int    `json:"replicas"`
+	URL         string `json:"url"`
+	Internal    bool   `json:"internal,omitempty"`
+	InternalURL string `json:"internal_url,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Image       string `json:"image,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	Schedule    string `json:"schedule,omitempty"`
 }
 
 type DeployResult struct {
@@ -207,10 +209,10 @@ func (c *Client) AddMember(project, email string) error {
 		map[string]string{"email": email}, nil)
 }
 
-func (c *Client) CreateApp(project, name string, port int, kind, schedule, buildPath string) (AppInfo, error) {
+func (c *Client) CreateApp(project, name string, port int, kind, schedule, buildPath string, internal bool) (AppInfo, error) {
 	var out AppInfo
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
-		map[string]interface{}{"name": name, "port": port, "kind": kind, "schedule": schedule, "build_path": buildPath}, &out)
+		map[string]interface{}{"name": name, "port": port, "kind": kind, "schedule": schedule, "build_path": buildPath, "internal": internal}, &out)
 	return out, err
 }
 
@@ -294,12 +296,12 @@ func (c *Client) DeployLogs(project, app string, id int64) ([]byte, error) {
 }
 
 // CreateGitApp registers an app whose source is a git repo, built at deploy time.
-func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch, kind, schedule, buildPath string) (AppInfo, error) {
+func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch, kind, schedule, buildPath string, internal bool) (AppInfo, error) {
 	var out AppInfo
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
 		map[string]any{
 			"name": name, "port": port, "git_url": gitURL, "git_branch": branch,
-			"kind": kind, "schedule": schedule, "build_path": buildPath,
+			"kind": kind, "schedule": schedule, "build_path": buildPath, "internal": internal,
 		}, &out)
 	return out, err
 }

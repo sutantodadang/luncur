@@ -166,6 +166,63 @@ func TestCreateAppWithBuildPath(t *testing.T) {
 	}
 }
 
+// TestCreateInternalWebApp covers the internal flag: a web app with
+// internal:true persists and its JSON response carries "internal_url"
+// instead of "url" (its sslip.io hostname would resolve nowhere — no
+// Ingress was ever rendered for it).
+func TestCreateInternalWebApp(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin,
+		`{"name":"ai","port":8001,"internal":true}`)
+	if resp.StatusCode != 201 {
+		t.Fatalf("create internal app: want 201, got %d", resp.StatusCode)
+	}
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if out["internal"] != true {
+		t.Fatalf("response missing internal:true: %+v", out)
+	}
+	if _, ok := out["url"]; ok {
+		t.Fatalf("internal app response should not carry a public url: %+v", out)
+	}
+	iu, _ := out["internal_url"].(string)
+	if iu != "http://ai.luncur-web:80" {
+		t.Fatalf("internal_url: got %q, want %q", iu, "http://ai.luncur-web:80")
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.Internal {
+		t.Fatalf("want internal=true persisted, got %+v", a)
+	}
+}
+
+// TestCreateInternalWorkerRejected covers the kind guard: internal only
+// means something for web apps (worker/cron already render no Service), so
+// it's rejected up front, before any app row is created.
+func TestCreateInternalWorkerRejected(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin,
+		`{"name":"w1","kind":"worker","internal":true}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("create internal worker: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	if _, err := st.GetApp(mustProjectID(t, st, "web"), "w1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("internal worker app should not be created, got %v", err)
+	}
+}
+
 func appID(t *testing.T, st *store.Store, project, app string) int64 {
 	t.Helper()
 	p, err := st.GetProject(project)

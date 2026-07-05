@@ -44,7 +44,7 @@ Changed your mind? **Adopt** it back. No lock-in in either direction.
 | | |
 |---|---|
 | 🚢 **Deploy 3 ways** | `git push luncur main`, `luncur deploy` from local source (Nixpacks or Dockerfile, built in-cluster by BuildKit with a per-app registry-backed layer cache), or any pre-built image — or auto-deploy on push via a GitHub/GitLab/Gitea webhook |
-| ⏱️ **App kinds** | `web` (Deployment+Service+Ingress), `worker` (Deployment only, no URL), and `cron` (Kubernetes CronJob, `Forbid` concurrency) — `luncur logs` streams all three |
+| ⏱️ **App kinds** | `web` (Deployment+Service+Ingress), internal `web` (Deployment+Service, no Ingress — cluster-only), `worker` (Deployment only, no URL), and `cron` (Kubernetes CronJob, `Forbid` concurrency) — `luncur logs` streams all four |
 | 🔒 **Automatic HTTPS** | Built-in ACME (Let's Encrypt) — HTTP-01 out of the box, **DNS-01 + wildcard certs** (`*.example.com`) via Cloudflare, Route53, or RFC2136/nsupdate |
 | 🐘 **Managed addons** | Postgres & Redis as StatefulSets: create, attach (`DATABASE_URL` injected), in-place version upgrades, per-addon logical dumps in every backup |
 | 📀 **Persistent volumes** | `luncur volume add myapp /data --size 5` mounts an RWO PVC into a web/worker app — survives redeploys, never deleted implicitly (`--purge` to delete data) |
@@ -218,9 +218,27 @@ Workers get a Deployment with no Service/Ingress — no URL, no domains.
 Cron apps run as a Kubernetes CronJob (`concurrencyPolicy: Forbid`, so a slow
 run never overlaps the next trigger); the schedule is only checked for valid
 5-field cron syntax client- and server-side — Kubernetes evaluates it.
-`luncur logs` streams pod output for all three kinds; scaling replicas only
+`luncur logs` streams pod output for all kinds; scaling replicas only
 applies to web/worker (cron scales cpu/memory only), and domains/health
 checks are web-only.
+
+**Internal (cluster-only) web apps — `--internal`:** a web app that should
+never be reachable from outside the cluster (e.g. an internal AI/microservice
+another app in the same project calls over HTTP) can be created with
+`--internal`:
+```sh
+luncur app create ai --project myproj --port 8001 --internal
+```
+An internal app still gets a Deployment and a ClusterIP Service — so other
+apps in the cluster can reach it — but **no Ingress and no public URL**.
+`luncur app info`/`app list` show its cluster DNS address instead of a URL:
+`http://<service-name>.<project-namespace>:80` (any pod in the cluster can
+reach it at that address; from inside the same namespace the short
+`http://<service-name>:80` also works). `--internal` only applies to `web`
+apps (`worker`/`cron` already have no Service to make internal — combining
+`--internal` with `--kind worker` or `--kind cron` is rejected), and adding a
+custom domain to an internal app is rejected too — a custom-domain Ingress
+would defeat the whole point.
 
 ### Deploying
 
@@ -282,25 +300,28 @@ luncur logs myapp --project myproj -f
 **Monorepo builds (`--path`):** one git repo can back several apps by
 pointing each at a different subdirectory as its build context/detection
 dir — e.g. a `dashboard/` React app, a `backend/` FastAPI service, and an
-`ai/` FastAPI service all living in the same repo:
+`ai/` FastAPI service all living in the same repo. `dashboard` and `backend`
+are public; `ai` is only ever called by `backend`, so it's created
+`--internal` — no public URL, cluster-only:
 
 ```sh
 luncur app create dashboard --project myproj --port 3000 \
   --git-url https://github.com/user/monorepo.git --path dashboard
 luncur app create backend --project myproj --port 8000 \
   --git-url https://github.com/user/monorepo.git --path backend
-luncur app create ai --project myproj --port 8001 \
+luncur app create ai --project myproj --port 8001 --internal \
   --git-url https://github.com/user/monorepo.git --path ai
 ```
 
-A single webhook push (or `luncur deploy`/`git push luncur`) to the shared
-repo redeploys all three — each app's build only looks inside its own
-`--path`: a `Dockerfile` there is used as-is, and nixpacks detection/output
-also run inside that subdirectory instead of the repo root. `--path` is
-validated (relative, no `..`, no leading `/`, `[a-zA-Z0-9._/-]` only) and is
-**immutable after creation** — recreate the app to change it. Omitting
-`--path` keeps the previous behavior: the whole repo root is the build
-context.
+`backend` reaches `ai` at `http://ai.luncur-myproj:80` (in-cluster DNS —
+see "Internal (cluster-only) web apps" above). A single webhook push (or
+`luncur deploy`/`git push luncur`) to the shared repo redeploys all three —
+each app's build only looks inside its own `--path`: a `Dockerfile` there is
+used as-is, and nixpacks detection/output also run inside that subdirectory
+instead of the repo root. `--path` is validated (relative, no `..`, no
+leading `/`, `[a-zA-Z0-9._/-]` only) and is **immutable after creation** —
+recreate the app to change it. Omitting `--path` keeps the previous
+behavior: the whole repo root is the build context.
 
 **Deploy with git push:**
 ```sh
