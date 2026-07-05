@@ -134,7 +134,9 @@ func tailFile(done <-chan struct{}, path string, w io.Writer) {
 // same server instance, so `luncur serve` can wire both from one Deps. The
 // third return starts the server's background loops — cert issuance/renewal
 // (no-op unless the provider is builtin and kube is configured), the
-// scheduled-backup loop, and the weekly registry GC sweep — callers that
+// scheduled-backup loop, the weekly registry GC sweep, and a one-shot
+// startup reconciliation of any deployment a previous server process left
+// stranded in 'building'/'deploying' (see reconcile.go) — callers that
 // don't need them may discard it.
 func NewWithBackend(d Deps) (http.Handler, *PushBackend, func(ctx context.Context)) {
 	s := newServer(d)
@@ -142,6 +144,7 @@ func NewWithBackend(d Deps) (http.Handler, *PushBackend, func(ctx context.Contex
 		s.StartCerts(ctx)
 		go s.StartBackups(ctx)
 		go s.StartRegistryGC(ctx)
+		go s.reconcileUnfinished(ctx)
 	}
 	return s.handler(), &PushBackend{s: s}, start
 }

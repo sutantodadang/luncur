@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -357,5 +358,96 @@ func TestRunBuildNotifiesOnFailure(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for deploy_failed notification")
+	}
+}
+
+// TestRunBuildWritesMilestoneLog checks that a successful build leaves
+// server-written [luncur] milestone lines in the deploy log, so the UI
+// isn't blind before the builder pod exists — the actual builder pod
+// entrypoint output is appended by a real cluster, not this fake-kube test.
+func TestRunBuildWritesMilestoneLog(t *testing.T) {
+	srv, st, _ := buildServer(t)
+	p, err := st.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := st.CreateDeployment(a.ID, "building", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+		t.Fatalf("runBuild: %v", err)
+	}
+
+	b, err := os.ReadFile(srv.src.LogPath(d.ID))
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	log := string(b)
+	for _, want := range []string{"rendering build job", "applying build job to cluster", "waiting for builder pod"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("log missing %q, got:\n%s", want, log)
+		}
+	}
+}
+
+// TestRunBuildFailureLogsMilestone checks fail()'s "build failed: <err>"
+// milestone lands in the deploy log before the deployment flips to failed.
+func TestRunBuildFailureLogsMilestone(t *testing.T) {
+	srv, st := buildServerFailingJob(t)
+	p, err := st.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := st.CreateDeployment(a.ID, "building", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.runBuild(context.Background(), p, a, d); err == nil {
+		t.Fatal("runBuild: want error for a failed build Job")
+	}
+
+	b, err := os.ReadFile(srv.src.LogPath(d.ID))
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(b), "build failed:") {
+		t.Fatalf("log missing failure milestone, got:\n%s", string(b))
+	}
+}
+
+// TestBuildLogfNoopWithoutSource guards buildLogf's nil-src early return:
+// no data dir configured (s.src == nil) must never panic or create files.
+func TestBuildLogfNoopWithoutSource(t *testing.T) {
+	st := newTestStore(t)
+	srv := newServer(Deps{Store: st})
+	srv.buildLogf(store.Deployment{ID: 1}, "hello %s", "world")
+}
+
+// TestBuildTimeoutDefaultAndSetting checks buildTimeout falls back to 15
+// minutes when build_timeout_minutes is unset, and honors it once set.
+func TestBuildTimeoutDefaultAndSetting(t *testing.T) {
+	st := newTestStore(t)
+	srv := newServer(Deps{Store: st})
+
+	if got := srv.buildTimeout(); got != 15*time.Minute {
+		t.Fatalf("default buildTimeout = %v, want 15m", got)
+	}
+
+	if err := st.SetSetting("build_timeout_minutes", "30"); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.buildTimeout(); got != 30*time.Minute {
+		t.Fatalf("buildTimeout with setting = %v, want 30m", got)
 	}
 }

@@ -121,6 +121,35 @@ func TestStuckDeployments(t *testing.T) {
 	}
 }
 
+func TestUnfinishedDeployments(t *testing.T) {
+	st := openTest(t)
+	p, _ := st.CreateProject("web")
+	a, _ := st.CreateApp(p.ID, "api", 8080, "web", "")
+
+	building, err := st.CreateDeployment(a.ID, "building", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploying, err := st.CreateDeployment(a.ID, "deploying", "img:1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateDeployment(a.ID, "live", "img:2", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateDeployment(a.ID, "failed", "img:3", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.UnfinishedDeployments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != building.ID || got[1].ID != deploying.ID {
+		t.Fatalf("UnfinishedDeployments = %+v, want [%d %d]", got, building.ID, deploying.ID)
+	}
+}
+
 func TestCountDeployments(t *testing.T) {
 	st := openTest(t)
 	p, _ := st.CreateProject("web")
