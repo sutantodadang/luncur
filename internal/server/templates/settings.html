@@ -1,0 +1,42 @@
+{{define "settings.html"}}
+{{template "head" .}}{{template "nav" .}}
+<h1 class="mb-1 text-xl font-semibold text-white">Settings</h1>
+<p class="mb-4 text-sm text-slate-500">Install-level configuration. Write-only secrets show <code>(set)</code> instead of their value.</p>
+{{if .Banner}}<p class="mb-4 text-sm text-slate-300">{{.Banner}}</p>{{end}}
+
+{{range .Groups}}
+<div class="card mb-6">
+<h2>{{.Title}}</h2>
+<div class="flex flex-col gap-2">
+{{range .Rows}}
+<form method="post" action="/ui/settings" class="flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+  <input type="hidden" name="key" value="{{.Key}}">
+  <label class="w-56 shrink-0 text-sm text-slate-400">{{.Key}}</label>
+  {{if .Options}}
+  <select class="input w-auto flex-1" name="value">
+    {{$val := .Value}}
+    {{range .Options}}<option value="{{.}}" {{if eq . $val}}selected{{end}}>{{.}}</option>{{end}}
+  </select>
+  {{else if .Sealed}}
+  <input class="input flex-1" type="password" name="value" placeholder="{{.Placeholder}}">
+  {{else}}
+  <input class="input flex-1" name="value" value="{{.Value}}">
+  {{end}}
+  <button type="submit" class="btn-ghost">save</button>
+</form>
+{{end}}
+</div>
+</div>
+{{end}}
+
+<div class="card">
+<h2>Registry maintenance</h2>
+<p class="mb-3 text-sm text-slate-500">Delete unreferenced image manifests and reclaim blob storage.</p>
+<form method="post" action="/ui/registry-gc">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn" hx-confirm="Run registry garbage collection now?">run registry GC</button>
+</form>
+</div>
+{{template "foot" .}}
+{{end}}

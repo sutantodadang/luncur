@@ -1,0 +1,27 @@
+{{define "backups.html"}}
+{{template "head" .}}{{template "nav" .}}
+<h1 class="mb-4 text-xl font-semibold text-white">Backups</h1>
+<div class="card">
+{{if not .Backups}}<p class="mb-3 text-sm text-slate-600">no backups yet.</p>{{end}}
+<table class="tbl"><tr><th>When</th><th>File</th><th>Size</th><th>Uploaded</th></tr>
+{{range .Backups}}<tr>
+  <td>{{.CreatedAt}}</td>
+  <td>{{.File}}</td>
+  <td>{{.Size}}</td>
+  <td>{{if .Uploaded}}<span class="chip chip-ok">yes</span>{{else}}<span class="chip chip-muted">no</span>{{end}}</td>
+</tr>{{end}}
+</table>
+<div class="mt-4 flex flex-wrap gap-2">
+<form method="post" action="/ui/backups">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn">back up now</button>
+</form>
+<form method="post" action="/ui/backups/prune">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn-ghost" hx-confirm="Prune old backups beyond the configured keep count?">prune old</button>
+</form>
+</div>
+<p class="mt-3 text-xs text-slate-600">Restore is CLI-only &mdash; <code>luncur restore &lt;file&gt;</code></p>
+</div>
+{{template "foot" .}}
+{{end}}

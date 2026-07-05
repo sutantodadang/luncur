@@ -1,58 +1,78 @@
 {{define "apps.html"}}
 {{template "head" .}}{{template "nav" .}}
-<p><a href="/ui/">&larr; Projects</a></p>
-<h1>{{.Project.Name}}</h1>
-{{if not .Apps}}<p>No apps yet. Create one below or with <code>luncur app create</code>.</p>{{end}}
-<table><tr><th>App</th><th>Kind</th><th>Replicas</th><th>URL</th></tr>
-{{range .Apps}}<tr>
-  <td><a href="/ui/projects/{{$.Project.Name}}/apps/{{.Name}}">{{.Name}}</a>{{if .Ejected}} (ejected){{end}}</td>
-  <td>{{.Kind}}</td>
-  <td>{{.Replicas}}</td>
-  <td>{{if .URL}}<a href="{{.URL}}">{{.URL}}</a>{{else}}-{{end}}</td>
-</tr>{{end}}
-</table>
+<p class="mb-1 text-sm"><a class="text-indigo-400 hover:text-indigo-300" href="/ui/">&larr; Projects</a></p>
+<h1 class="mb-4 text-xl font-semibold text-white">{{.Project.Name}}</h1>
 
+<div class="card mb-6">
 <h2>Create app</h2>
-<form method="post" action="/ui/projects/{{.Project.Name}}/apps">
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps" class="flex flex-wrap items-center gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <input name="name" placeholder="name" required>
-  <select name="kind">
+  <input class="input w-auto flex-1" name="name" placeholder="name" required>
+  <select class="input w-auto" name="kind" onchange="uiKindChange(this.value)">
     <option value="web">web</option>
     <option value="worker">worker</option>
     <option value="cron">cron</option>
   </select>
-  <input type="number" name="port" placeholder="port (web only)">
-  <input name="schedule" placeholder="schedule (cron only), e.g. 0 3 * * *">
-  <input name="git_url" placeholder="git URL (optional)">
-  <input name="git_branch" placeholder="branch (optional)">
-  <button type="submit">create app</button>
+  <span id="port-field"><input class="input w-auto" type="number" name="port" placeholder="port (web only)"></span>
+  <span id="schedule-field"><input class="input w-auto flex-1" name="schedule" placeholder="schedule (cron only), e.g. 0 3 * * *"></span>
+  <input class="input w-auto flex-1" name="git_url" placeholder="git URL (optional)">
+  <input class="input w-auto" name="git_branch" placeholder="branch (optional)">
+  <button type="submit" class="btn">create app</button>
 </form>
+<script>
+function uiKindChange(k) {
+  document.getElementById("port-field").style.display = k === "web" ? "" : "none";
+  document.getElementById("schedule-field").style.display = k === "cron" ? "" : "none";
+}
+uiKindChange("web");
+</script>
+</div>
 
+{{if not .Apps}}<p class="mb-6 text-sm text-slate-600">No apps yet. Create one above or with <code>luncur app create</code>.</p>{{end}}
+<div class="mb-6 grid gap-4 sm:grid-cols-2">
+{{range .Apps}}
+<div class="card">
+  <div class="mb-1 flex items-center justify-between">
+    <a class="font-medium text-white hover:text-indigo-300" href="/ui/projects/{{$.Project.Name}}/apps/{{.Name}}">{{.Name}}</a>
+    <span class="flex gap-1">
+      {{if .Status}}<span class="status-{{.Status}}">{{.Status}}</span>{{else}}<span class="chip chip-muted">no deploys</span>{{end}}
+      {{if ne .Kind "web"}}<span class="chip chip-muted">{{.Kind}}</span>{{end}}
+      {{if .Ejected}}<span class="chip chip-bad">ejected</span>{{end}}
+    </span>
+  </div>
+  {{if .URL}}<p class="truncate text-xs text-indigo-400"><a href="{{.URL}}">{{.URL}}</a></p>{{end}}
+  <p class="text-xs text-slate-500">{{.Replicas}} replica{{if ne .Replicas 1}}s{{end}}</p>
+</div>
+{{end}}
+</div>
+
+<div class="card">
 <h2>Addons</h2>
-{{if not .Addons}}<p>No addons yet.</p>{{end}}
-<table><tr><th>Name</th><th>Type</th><th>Version</th><th>Ready</th><th>Attached</th><th></th></tr>
+{{if not .Addons}}<p class="text-sm text-slate-600">No addons yet.</p>{{end}}
+<table class="tbl"><tr><th>Name</th><th>Type</th><th>Version</th><th>Ready</th><th>Attached</th><th></th></tr>
 {{range .Addons}}<tr>
   <td>{{.Name}}</td>
   <td>{{.Type}}</td>
   <td>{{.Version}}</td>
   <td>{{.Ready}}</td>
   <td>{{range .AttachedTo}}{{.}} {{end}}</td>
-  <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/addons/delete">
+  <td><form class="inline-flex items-center gap-2" method="post" action="/ui/projects/{{$.Project.Name}}/addons/delete">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
     <input type="hidden" name="name" value="{{.Name}}">
-    <label><input type="checkbox" name="force" value="1"> force</label>
-    <button type="submit">remove</button>
+    <label class="text-xs text-slate-400"><input type="checkbox" name="force" value="1"> force</label>
+    <button type="submit" class="btn-danger" hx-confirm="Delete addon {{.Name}}? This cannot be undone.">remove</button>
   </form></td>
 </tr>{{end}}
 </table>
-<form method="post" action="/ui/projects/{{.Project.Name}}/addons">
+<form method="post" action="/ui/projects/{{.Project.Name}}/addons" class="mt-3 flex flex-wrap items-center gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <select name="type">
+  <select class="input w-auto" name="type">
     <option value="postgres">postgres</option>
     <option value="redis">redis</option>
   </select>
-  <input name="name" placeholder="name (optional)">
-  <button type="submit">create addon</button>
+  <input class="input w-auto flex-1" name="name" placeholder="name (optional)">
+  <button type="submit" class="btn">create addon</button>
 </form>
+</div>
 {{template "foot" .}}
 {{end}}

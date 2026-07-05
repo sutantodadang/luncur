@@ -98,37 +98,60 @@ func (s *server) handleGetSetting(w http.ResponseWriter, r *http.Request, _ stor
 	writeJSON(w, http.StatusOK, map[string]string{"key": key, "value": v})
 }
 
-func (s *server) handleSetSetting(w http.ResponseWriter, r *http.Request, _ store.User) {
-	key := r.PathValue("key")
+// errUnknownSetting and errInvalidSettingValue are setSetting's sentinel
+// errors — handleSetSetting and the UI settings handler both map them to the
+// same 400 responses/banners so the two surfaces behave identically.
+var errUnknownSetting = errors.New("unknown setting")
+var errInvalidSettingValue = errors.New("invalid value")
+
+// setSetting is the settings API's write core: validate the key is settable,
+// validate the value against its per-key rule, seal it if the key is
+// write-only, then persist. Shared by handleSetSetting (JSON API) and the
+// UI settings page so both surfaces apply byte-identical validation/sealing.
+func (s *server) setSetting(key, value string) error {
 	valid, ok := settableKeys[key]
 	if !ok {
-		writeError(w, http.StatusBadRequest, "bad_request", "unknown setting")
-		return
+		return errUnknownSetting
 	}
-	var req struct {
-		Value string `json:"value"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !valid(req.Value) {
-		writeError(w, http.StatusBadRequest, "bad_request", "invalid value")
-		return
+	if !valid(value) {
+		return errInvalidSettingValue
 	}
 
-	value := req.Value
 	if sealedKeys[key] {
 		if s.sealer == nil {
-			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", "sealer is not configured")
-			return
+			return errSealerUnavailable
 		}
-		sealed, err := s.sealer.Seal([]byte(req.Value))
+		sealed, err := s.sealer.Seal([]byte(value))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "internal error")
-			return
+			return err
 		}
 		value = "sealed:" + hex.EncodeToString(sealed)
 	}
 
-	if err := s.st.SetSetting(key, value); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+	return s.st.SetSetting(key, value)
+}
+
+func (s *server) handleSetSetting(w http.ResponseWriter, r *http.Request, _ store.User) {
+	key := r.PathValue("key")
+	var req struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid value")
+		return
+	}
+
+	if err := s.setSetting(key, req.Value); err != nil {
+		switch {
+		case errors.Is(err, errUnknownSetting):
+			writeError(w, http.StatusBadRequest, "bad_request", "unknown setting")
+		case errors.Is(err, errInvalidSettingValue):
+			writeError(w, http.StatusBadRequest, "bad_request", "invalid value")
+		case errors.Is(err, errSealerUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", "sealer is not configured")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
