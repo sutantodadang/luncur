@@ -1,8 +1,8 @@
 {{define "settings.html"}}
 {{template "head" .}}{{template "nav" .}}
-<h1 class="mb-1 text-xl font-semibold text-white">Settings</h1>
-<p class="mb-4 text-sm text-slate-500">Install-level configuration. Write-only secrets show <code>(set)</code> instead of their value.</p>
-{{if .Banner}}<p class="mb-4 text-sm text-slate-300">{{.Banner}}</p>{{end}}
+<h1 class="mb-1 text-xl font-semibold text-inkhi">Settings</h1>
+<p class="mb-4 text-sm text-mut">Install-level configuration. Write-only secrets show <code>(set)</code> instead of their value.</p>
+{{if .Banner}}<p class="mb-4 text-sm text-ink">{{.Banner}}</p>{{end}}
 
 {{range .Groups}}
 <div class="card mb-6">
@@ -12,7 +12,7 @@
 <form method="post" action="/ui/settings" class="flex flex-wrap items-center gap-2">
   <input type="hidden" name="_csrf" value="{{$.CSRF}}">
   <input type="hidden" name="key" value="{{.Key}}">
-  <label class="w-56 shrink-0 text-sm text-slate-400">{{.Key}}</label>
+  <label class="w-56 shrink-0 text-sm text-mut">{{.Key}}</label>
   {{if .Options}}
   <select class="input w-auto flex-1" name="value">
     {{$val := .Value}}
@@ -32,11 +32,12 @@
 
 <div class="card">
 <h2>Registry maintenance</h2>
-<p class="mb-3 text-sm text-slate-500">Delete unreferenced image manifests and reclaim blob storage.</p>
+<p class="mb-3 text-sm text-mut">Delete unreferenced image manifests and reclaim blob storage.</p>
 <form method="post" action="/ui/registry-gc">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <button type="submit" class="btn" hx-confirm="Run registry garbage collection now?">run registry GC</button>
 </form>
+<div class="cli-echo">$ <b>luncur registry gc</b></div>
 </div>
 {{template "foot" .}}
 {{end}}

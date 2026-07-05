@@ -1,24 +1,24 @@
 {{define "app.html"}}
 {{template "head" .}}{{template "nav" .}}
-<p class="mb-1 text-sm"><a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}">&larr; {{.Project.Name}}</a></p>
-<h1 class="mb-1 flex flex-wrap items-center gap-2 text-xl font-semibold text-white">
+<p class="mb-1 font-mono text-[11px] text-mut"><a class="hover:text-inkhi" href="/ui/projects/{{.Project.Name}}">&larr; {{.Project.Name}}</a></p>
+<h1 class="mb-1 flex flex-wrap items-center gap-2 text-xl font-semibold text-inkhi">
   {{.App.Name}}
   {{template "statuschip" .Chip}}
   {{if .App.Ejected}} <span class="status-failed">ejected</span>{{end}}
   {{if ne .App.Kind "web"}} <span class="status-pending">{{.App.Kind}}</span>{{end}}
 </h1>
-{{if eq .App.Kind "cron"}}<p class="mb-2 text-sm text-slate-400">schedule: <code>{{.App.Schedule}}</code></p>{{end}}
-<p class="mb-1 text-sm text-slate-400">{{if .Metrics.Available}}cpu {{.Metrics.CPUMillicores}}m &middot; mem {{.Metrics.MemoryMiB}}Mi &middot; {{end}}{{.Metrics.ReadyReplicas}}/{{.Metrics.DesiredReplicas}} ready &middot; {{.Metrics.DeployCount}} deploys</p>
-<p class="mb-4 text-sm">{{if eq .App.Kind "web"}}<a class="text-indigo-400 hover:text-indigo-300" href="{{.URL}}">{{.URL}}</a> &middot;{{end}}
-   <a class="text-indigo-400 hover:text-indigo-300" href="/v1/projects/{{.Project.Name}}/apps/{{.App.Name}}/raw">raw YAML</a>{{if not .App.Ejected}} &middot;
-   edit: {{if eq .App.Kind "web"}}<a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a> &middot;
-   <a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Service">Service</a> &middot;
-   <a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Ingress">Ingress</a>{{else if eq .App.Kind "worker"}}<a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a>{{else if eq .App.Kind "cron"}}<a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/CronJob">CronJob</a>{{end}}{{end}}</p>
+{{if eq .App.Kind "cron"}}<p class="mb-2 text-sm text-mut">schedule: <code>{{.App.Schedule}}</code></p>{{end}}
+<p class="mb-1 text-sm text-mut">{{if .Metrics.Available}}cpu {{.Metrics.CPUMillicores}}m &middot; mem {{.Metrics.MemoryMiB}}Mi &middot; {{end}}{{.Metrics.ReadyReplicas}}/{{.Metrics.DesiredReplicas}} ready &middot; {{.Metrics.DeployCount}} deploys</p>
+<p class="mb-4 text-sm">{{if eq .App.Kind "web"}}<a class="text-inkhi hover:text-signal" href="{{.URL}}">{{.URL}}</a> &middot;{{end}}
+   <a class="text-inkhi hover:text-signal" href="/v1/projects/{{.Project.Name}}/apps/{{.App.Name}}/raw">raw YAML</a>{{if not .App.Ejected}} &middot;
+   edit: {{if eq .App.Kind "web"}}<a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a> &middot;
+   <a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Service">Service</a> &middot;
+   <a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Ingress">Ingress</a>{{else if eq .App.Kind "worker"}}<a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a>{{else if eq .App.Kind "cron"}}<a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/CronJob">CronJob</a>{{end}}{{end}}</p>
 {{if .Warning}}<p class="err">{{.Warning}}</p>{{end}}
 
 {{if .App.Ejected}}
-<div class="card mb-6 border-amber-500/40 bg-amber-500/10">
-<p class="mb-3 text-sm text-amber-400">This app is ejected — luncur no longer manages its manifests. Adopt to resume management.</p>
+<div class="card mb-6 border-[rgba(255,178,36,.4)] bg-[rgba(255,178,36,.1)]">
+<p class="mb-3 text-sm text-build">This app is ejected — luncur no longer manages its manifests. Adopt to resume management.</p>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/adopt">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <button type="submit" class="btn">adopt — luncur manages it again</button>
@@ -30,11 +30,12 @@
 <h2>Scale</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/scale" class="flex flex-wrap items-end gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  {{if ne .App.Kind "cron"}}<label class="flex flex-col gap-1 text-xs text-slate-400">replicas<input class="input w-24" type="number" name="replicas" min="0" value="{{.App.Replicas}}"></label>{{end}}
-  <label class="flex flex-col gap-1 text-xs text-slate-400">cpu<input class="input w-28" name="cpu" placeholder="250m" value="{{if .App.CPUMilli}}{{.App.CPUMilli}}m{{end}}"></label>
-  <label class="flex flex-col gap-1 text-xs text-slate-400">memory<input class="input w-28" name="memory" placeholder="256Mi" value="{{if .App.MemoryMB}}{{.App.MemoryMB}}Mi{{end}}"></label>
+  {{if ne .App.Kind "cron"}}<label class="flex flex-col gap-1 text-xs text-mut">replicas<input class="input w-24" type="number" name="replicas" min="0" value="{{.App.Replicas}}"></label>{{end}}
+  <label class="flex flex-col gap-1 text-xs text-mut">cpu<input class="input w-28" name="cpu" placeholder="250m" value="{{if .App.CPUMilli}}{{.App.CPUMilli}}m{{end}}"></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">memory<input class="input w-28" name="memory" placeholder="256Mi" value="{{if .App.MemoryMB}}{{.App.MemoryMB}}Mi{{end}}"></label>
   <button type="submit" class="btn">scale</button>
 </form>
+<div class="cli-echo">$ <b>luncur scale {{.App.Name}} &lt;n&gt;</b></div>
 </div>
 
 {{if eq .App.Kind "web"}}
@@ -42,9 +43,10 @@
 <h2>Health check</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/health" class="flex flex-wrap items-end gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <label class="flex flex-col gap-1 text-xs text-slate-400">path<input class="input w-56" name="health_path" placeholder="/healthz" value="{{.App.HealthPath}}"></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">path<input class="input w-56" name="health_path" placeholder="/healthz" value="{{.App.HealthPath}}"></label>
   <button type="submit" class="btn">save</button>
 </form>
+<div class="cli-echo">$ <b>luncur health {{.App.Name}}</b></div>
 </div>
 {{end}}
 
@@ -55,12 +57,13 @@
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <button type="submit" class="btn">Deploy from git</button>
 </form>
+<div class="cli-echo">$ <b>luncur deploy {{.App.Name}}</b></div>
 </div>
 
 <div class="card">
 <h2>Webhook</h2>
 {{if .WebhookSecretOnce}}
-<p class="mb-2 text-sm text-slate-400">secret shown once — store it now (GitHub/Gitea: "Secret" field; GitLab: "Secret token" field):</p>
+<p class="mb-2 text-sm text-mut">secret shown once — store it now (GitHub/Gitea: "Secret" field; GitLab: "Secret token" field):</p>
 <p class="mb-3"><input class="input font-mono text-xs" readonly size="64" value="{{.WebhookSecretOnce}}"></p>
 {{end}}
 {{if .WebhookEnabled}}
@@ -74,6 +77,7 @@
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <button type="submit" class="btn">enable webhook</button>
 </form>
+<div class="cli-echo">$ <b>luncur webhook enable {{.App.Name}}</b></div>
 {{end}}
 </div>
 {{end}}
@@ -93,6 +97,7 @@
   <input class="input w-auto flex-1" name="value" placeholder="value" required>
   <button type="submit" class="btn">set</button>
 </form>
+<div class="cli-echo">$ <b>luncur env set {{.App.Name}} KEY=VALUE</b></div>
 </div>
 {{end}}
 
@@ -102,8 +107,8 @@
 {{range .Deploys}}<tr>
   <td>{{.ID}}</td><td><span class="status-{{.Status}}">{{.Status}}</span></td>
   <td><code class="font-mono text-xs" title="{{.ImageRef}}">{{.ImageTag}}</code>{{if .RolledBackFrom}} <em>(rollback of {{.RolledBackFrom}})</em>{{end}}</td>
-  <td class="text-xs text-slate-500">{{.Actor}}</td>
-  <td class="text-xs text-slate-500">{{.CreatedAt}}</td>
+  <td class="text-xs text-mut">{{.Actor}}</td>
+  <td class="text-xs text-mut">{{.CreatedAt}}</td>
   <td>{{if and .ImageRef (ne .ID $.LatestID) (not $.App.Ejected)}}
     <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollback">
       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
@@ -113,6 +118,7 @@
   {{end}}</td>
 </tr>{{end}}
 </table>
+<div class="cli-echo">$ <b>luncur rollback {{.App.Name}}</b></div>
 </div>
 
 {{if and (not .App.Ejected) (eq .App.Kind "web")}}
@@ -134,6 +140,7 @@
   <input class="input w-auto flex-1" name="hostname" placeholder="www.example.com" required>
   <button type="submit" class="btn">add domain</button>
 </form>
+<div class="cli-echo">$ <b>luncur domain add {{.App.Name}} &lt;hostname&gt;</b></div>
 </div>
 {{end}}
 
@@ -148,7 +155,7 @@
   <td><form class="inline-flex items-center gap-2" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/volumes/remove">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
     <input type="hidden" name="name" value="{{.Name}}">
-    <label class="text-xs text-slate-400"><input type="checkbox" name="purge" value="1"> purge data</label>
+    <label class="text-xs text-mut"><input type="checkbox" name="purge" value="1"> purge data</label>
     <button type="submit" class="btn-danger" hx-confirm="Remove volume {{.Name}}? Data is deleted only if purge is checked. This cannot be undone.">remove</button>
   </form></td>
 </tr>{{end}}
@@ -160,13 +167,14 @@
   <input class="input w-auto" name="name" placeholder="name (optional)">
   <button type="submit" class="btn">add volume</button>
 </form>
-<p class="mt-2 text-xs text-slate-600">apps with volumes redeploy with brief downtime; volume data is not in luncur backup</p>
+<div class="cli-echo">$ <b>luncur volume add {{.App.Name}} &lt;path&gt;</b></div>
+<p class="mt-2 text-xs text-mut">apps with volumes redeploy with brief downtime; volume data is not in luncur backup</p>
 </div>
 {{end}}
 
 <div class="card mb-6">
 <h2>Addons</h2>
-{{if not .Addons}}<p class="text-sm text-slate-600">No addons attached.</p>{{end}}
+{{if not .Addons}}<p class="text-sm text-mut">No addons attached.</p>{{end}}
 <table class="tbl"><tr><th>Name</th><th>Type</th><th>Version</th><th></th></tr>
 {{range .Addons}}<tr>
   <td>{{.Name}}</td>
@@ -191,8 +199,9 @@
 
 <div class="card">
 <h2>Logs</h2>
-<p class="mb-2 text-xs text-slate-600">streaming build/runtime logs</p>
-<pre id="logs" class="max-h-96 overflow-auto rounded-lg bg-black/60 p-4 font-mono text-xs text-emerald-300" data-project="{{.Project.Name}}" data-app="{{.App.Name}}"></pre>
+<p class="mb-2 text-xs text-mut">streaming build/runtime logs</p>
+<pre id="logs" class="term max-h-96 overflow-auto" data-project="{{.Project.Name}}" data-app="{{.App.Name}}"></pre>
+<div class="cli-echo">$ <b>luncur logs {{.App.Name}} -f</b></div>
 <script>
 (function () {
   var pre = document.getElementById("logs");

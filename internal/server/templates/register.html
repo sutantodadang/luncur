@@ -2,17 +2,17 @@
 {{template "head" .}}
 <main class="flex flex-1 items-center justify-center">
 <div class="card w-96">
-<h1 class="mb-4 text-lg font-semibold text-white">Join luncur</h1>
+<h1 class="mb-4 text-lg font-semibold text-inkhi">Join luncur</h1>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 {{if .Valid}}
-<p class="mb-3 text-sm text-slate-400">You've been invited as <strong class="text-white">{{.Role}}</strong>.</p>
+<p class="mb-3 text-sm text-mut">You've been invited as <strong class="text-inkhi">{{.Role}}</strong>.</p>
 <form method="post" action="/ui/register" class="flex flex-col gap-3">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <input type="hidden" name="token" value="{{.Token}}">
-  <label class="flex flex-col gap-1 text-sm text-slate-400">email
+  <label class="flex flex-col gap-1 text-sm text-mut">email
     <input class="input" type="email" name="email" required autofocus>
   </label>
-  <label class="flex flex-col gap-1 text-sm text-slate-400">password
+  <label class="flex flex-col gap-1 text-sm text-mut">password
     <input class="input" type="password" name="password" required minlength="8">
   </label>
   <button type="submit" class="btn mt-1">create account</button>

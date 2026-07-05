@@ -1,12 +1,14 @@
 {{define "audit.html"}}
 {{template "head" .}}{{template "nav" .}}
-<h1 class="mb-4 text-xl font-semibold text-white">Audit log</h1>
+<h1 class="mb-4 text-xl font-semibold text-inkhi">Audit log</h1>
 <div class="card">
+{{if not .Entries}}<p class="mb-1 text-sm text-mut">No audit entries yet.</p><div class="cli-echo mb-2">$ <b>luncur audit list</b></div>{{end}}
 <table class="tbl"><tr><th>Time</th><th>User</th><th>Action</th><th>Target</th></tr>
 {{range .Entries}}<tr>
-  <td class="text-slate-500">{{.CreatedAt}}</td><td>{{.UserEmail}}</td><td>{{.Action}}</td><td>{{.Target}}</td>
+  <td class="text-mut">{{.CreatedAt}}</td><td>{{.UserEmail}}</td><td>{{.Action}}</td><td>{{.Target}}</td>
 </tr>{{end}}
 </table>
+<div class="cli-echo">$ <b>luncur audit list</b></div>
 </div>
 {{template "foot" .}}
 {{end}}

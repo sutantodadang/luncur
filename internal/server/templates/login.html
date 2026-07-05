@@ -2,14 +2,14 @@
 {{template "head" .}}
 <main class="flex flex-1 items-center justify-center">
 <div class="card w-80">
-<h1 class="mb-4 text-lg font-semibold text-white">luncur</h1>
+<h1 class="mb-4 text-lg font-semibold text-inkhi">luncur<span class="text-signal">_</span></h1>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 <form method="post" action="/ui/login" class="flex flex-col gap-3">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <label class="flex flex-col gap-1 text-sm text-slate-400">email
+  <label class="flex flex-col gap-1 text-sm text-mut">email
     <input class="input" type="email" name="email" required autofocus>
   </label>
-  <label class="flex flex-col gap-1 text-sm text-slate-400">password
+  <label class="flex flex-col gap-1 text-sm text-mut">password
     <input class="input" type="password" name="password" required>
   </label>
   <button type="submit" class="btn mt-1">log in</button>

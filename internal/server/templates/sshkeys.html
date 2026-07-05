@@ -1,8 +1,8 @@
 {{define "sshkeys.html"}}
 {{template "head" .}}{{template "nav" .}}
-<h1 class="mb-4 text-xl font-semibold text-white">SSH keys</h1>
+<h1 class="mb-4 text-xl font-semibold text-inkhi">SSH keys</h1>
 <div class="card mb-6">
-{{if not .Keys}}<p class="mb-3 text-sm text-slate-600">no keys yet.</p>{{end}}
+{{if not .Keys}}<p class="mb-1 text-sm text-mut">no keys yet.</p><div class="cli-echo mb-2">$ <b>luncur ssh-key add &lt;path&gt;</b></div>{{end}}
 <table class="tbl"><tr><th>Name</th><th>Fingerprint</th><th>Added</th><th></th></tr>
 {{range .Keys}}<tr>
   <td>{{.Name}}</td>
@@ -27,6 +27,7 @@
   <textarea class="input" name="public_key" rows="3" placeholder="ssh-ed25519 AAAA..." required></textarea>
   <button type="submit" class="btn w-fit">add key</button>
 </form>
+<div class="cli-echo">$ <b>luncur ssh-key add &lt;path&gt;</b></div>
 </div>
 {{template "foot" .}}
 {{end}}

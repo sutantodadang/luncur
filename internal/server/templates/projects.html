@@ -1,10 +1,10 @@
 {{define "projects.html"}}
 {{template "head" .}}{{template "nav" .}}
-<h1 class="mb-4 text-xl font-semibold text-white">Projects</h1>
+<h1 class="mb-4 text-xl font-semibold text-inkhi">Projects</h1>
 <div class="card">
-{{if not .Projects}}<p class="text-sm text-slate-600">No projects yet. Create one with <code>luncur project create</code>.</p>{{end}}
+{{if not .Projects}}<p class="mb-1 text-sm text-mut">No projects yet. Create one with <code>luncur project create</code>.</p><div class="cli-echo mb-2">$ <b>luncur project create</b></div>{{end}}
 <table class="tbl"><tr><th>Name</th><th>Namespace</th></tr>
-{{range .Projects}}<tr><td><a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Name}}">{{.Name}}</a></td><td>{{.Namespace}}</td></tr>{{end}}
+{{range .Projects}}<tr><td><a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Name}}">{{.Name}}</a></td><td>{{.Namespace}}</td></tr>{{end}}
 </table>
 </div>
 {{template "foot" .}}

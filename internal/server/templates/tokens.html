@@ -1,8 +1,9 @@
 {{define "tokens.html"}}
 {{template "head" .}}{{template "nav" .}}
-<h1 class="mb-1 text-xl font-semibold text-white">API tokens</h1>
-<p class="mb-4 text-sm text-slate-500">Tokens authenticate the CLI and API. Your current browser session is the row named <code>session</code> — revoking it logs you out.</p>
+<h1 class="mb-1 text-xl font-semibold text-inkhi">API tokens</h1>
+<p class="mb-4 text-sm text-mut">Tokens authenticate the CLI and API. Your current browser session is the row named <code>session</code> — revoking it logs you out.</p>
 <div class="card">
+{{if not .Tokens}}<p class="mb-1 text-sm text-mut">No tokens yet.</p><div class="cli-echo mb-2">$ <b>luncur token create</b></div>{{end}}
 <table class="tbl"><tr><th>Name</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr>
 {{range .Tokens}}<tr>
   <td><code>{{.Name}}</code></td>
@@ -18,6 +19,7 @@
   </td>
 </tr>{{end}}
 </table>
+<div class="cli-echo">$ <b>luncur token create</b></div>
 </div>
 {{template "foot" .}}
 {{end}}
