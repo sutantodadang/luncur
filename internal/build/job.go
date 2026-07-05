@@ -87,7 +87,14 @@ func RenderBuildJob(p BuildParams) (render.Object, error) {
 		},
 		Env: env,
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: "data", MountPath: "/data"},
+			// SubPath "data": the server mounts this PVC at /var/lib/luncur
+			// with --data-dir /var/lib/luncur/data (the layout `luncur up`
+			// provisions — db and key live at the PVC root, OUTSIDE what the
+			// builder can see). Without the subPath the builder's /data is
+			// the PVC root, so its /data/logs/<id>.log lands in a directory
+			// the server never tails and the UI log pane stays blind to all
+			// builder output.
+			{Name: "data", MountPath: "/data", SubPath: "data"},
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{

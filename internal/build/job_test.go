@@ -90,6 +90,7 @@ func TestRenderBuildJobRootlessSecurity(t *testing.T) {
 		`"seccompProfile":{"type":"Unconfined"}`,
 		`"runAsUser":1000`,
 		`"runAsGroup":1000`,
+		`"subPath":"data"`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("build job missing %s:\n%s", want, s)
