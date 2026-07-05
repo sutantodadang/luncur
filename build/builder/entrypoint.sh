@@ -99,7 +99,10 @@ fi
 #     This pairs with the K3s registries.yaml config that luncur up writes (Plan D).
 #     Without it, buildkit refuses to push to registries without valid HTTPS certs.
 #
-buildctl-daemonless.sh buildctl build \
+# NOTE: the wrapper itself execs `buildctl "$@"` — do NOT prefix the args
+# with `buildctl`, or the CLI sees `buildctl buildctl build` and exits 3
+# with "No help topic for 'buildctl'".
+buildctl-daemonless.sh build \
   --frontend dockerfile.v0 \
   --local context="${BUILD_DIR}" \
   --local dockerfile="${DOCKERFILE_DIR}" \
