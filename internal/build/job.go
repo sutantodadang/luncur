@@ -3,6 +3,7 @@ package build
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -32,6 +33,14 @@ type BuildParams struct {
 	DeployID     int64
 	CacheRef     string
 	BuildPath    string
+	// BuildEnv is the app's decrypted env vars, forwarded to the builder as
+	// LUNCUR_BUILDARG_<KEY> so the entrypoint can pass them through to the
+	// image build (Docker build-args / nixpacks --env) — the only way a
+	// build-time-only value (e.g. Vite's ARG VITE_API_URL) sees a real
+	// value instead of the Dockerfile's baked-in default. Runtime env still
+	// flows separately via the app's Secret; this is additive, not a
+	// replacement.
+	BuildEnv map[string]string
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -64,6 +73,16 @@ func RenderBuildJob(p BuildParams) (render.Object, error) {
 	}
 	if p.BuildPath != "" {
 		env = append(env, corev1.EnvVar{Name: "LUNCUR_BUILD_PATH", Value: p.BuildPath})
+	}
+	if len(p.BuildEnv) > 0 {
+		keys := make([]string, 0, len(p.BuildEnv))
+		for k := range p.BuildEnv {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			env = append(env, corev1.EnvVar{Name: "LUNCUR_BUILDARG_" + k, Value: p.BuildEnv[k]})
+		}
 	}
 
 	container := corev1.Container{

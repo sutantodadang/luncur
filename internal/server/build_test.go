@@ -195,6 +195,69 @@ func TestRunBuildIncludesCacheRefByDefault(t *testing.T) {
 	}
 }
 
+// TestRunBuildIncludesAppEnvAsBuildArgs checks an app's env vars (set the
+// same way `luncur env set` does, via setAppEnv/s.sealer) reach the
+// rendered Build Job as LUNCUR_BUILDARG_<KEY> — the plumbing that lets a
+// Dockerfile's `ARG VITE_API_URL` see a real value instead of its baked-in
+// default.
+func TestRunBuildIncludesAppEnvAsBuildArgs(t *testing.T) {
+	srv, st, jobJSON := captureBuildServer(t)
+	p, err := st.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.setAppEnv(context.Background(), p, a, "VITE_API_URL", "https://api.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	d, err := st.CreateDeployment(a.ID, "building", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+		t.Fatalf("runBuild: %v", err)
+	}
+
+	env := jobJSONEnv(t, *jobJSON)
+	if env["LUNCUR_BUILDARG_VITE_API_URL"] != "https://api.example.com" {
+		t.Fatalf("LUNCUR_BUILDARG_VITE_API_URL=%q, want https://api.example.com", env["LUNCUR_BUILDARG_VITE_API_URL"])
+	}
+}
+
+// TestRunBuildOmitsBuildArgsWithNoEnv checks an app with no env vars renders
+// a Build Job with no LUNCUR_BUILDARG_* vars at all — build jobs for
+// env-less apps stay byte-identical to before this feature existed.
+func TestRunBuildOmitsBuildArgsWithNoEnv(t *testing.T) {
+	srv, st, jobJSON := captureBuildServer(t)
+	p, err := st.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := st.CreateDeployment(a.ID, "building", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+		t.Fatalf("runBuild: %v", err)
+	}
+
+	env := jobJSONEnv(t, *jobJSON)
+	for k := range env {
+		if strings.HasPrefix(k, "LUNCUR_BUILDARG_") {
+			t.Fatalf("unexpected build-arg env var %q present: %+v", k, env)
+		}
+	}
+}
+
 func TestRunBuildOmitsCacheRefWhenDisabled(t *testing.T) {
 	srv, st, jobJSON := captureBuildServer(t)
 	if err := st.SetSetting("build_cache", "off"); err != nil {
