@@ -42,16 +42,34 @@ fi
 echo "Workspace ready at /workspace"
 echo ""
 
+# ===== Resolve Build Dir =====
+# LUNCUR_BUILD_PATH (monorepo support) is an optional repo-relative
+# subdirectory to use as the build context/detection dir instead of the
+# workspace root, letting one git repo back several apps (e.g. dashboard/
+# React + backend/ FastAPI). Unset/empty means "build the workspace root" —
+# byte-identical to the pre-monorepo behavior.
+BUILD_DIR="/workspace"
+if [ -n "${LUNCUR_BUILD_PATH:-}" ]; then
+  case "$LUNCUR_BUILD_PATH" in
+    /*|*..*) echo "ERROR: invalid LUNCUR_BUILD_PATH: $LUNCUR_BUILD_PATH"; exit 1 ;;
+  esac
+  BUILD_DIR="/workspace/${LUNCUR_BUILD_PATH}"
+  if [ ! -d "$BUILD_DIR" ]; then
+    echo "ERROR: build path '$LUNCUR_BUILD_PATH' not found in repository"; exit 1
+  fi
+  echo "Using build path: $LUNCUR_BUILD_PATH"
+fi
+
 # ===== Build Logic =====
 echo "Detecting build configuration..."
 
-if [ -f /workspace/Dockerfile ]; then
+if [ -f "$BUILD_DIR/Dockerfile" ]; then
   echo "Found Dockerfile in workspace. Using it."
-  DOCKERFILE_DIR="/workspace"
+  DOCKERFILE_DIR="$BUILD_DIR"
 else
   echo "No Dockerfile found. Generating with nixpacks..."
-  nixpacks build /workspace --out /workspace/.nixpacks
-  DOCKERFILE_DIR="/workspace/.nixpacks"
+  nixpacks build "$BUILD_DIR" --out "$BUILD_DIR/.nixpacks"
+  DOCKERFILE_DIR="$BUILD_DIR/.nixpacks"
 fi
 
 echo ""
@@ -83,7 +101,7 @@ fi
 #
 buildctl-daemonless.sh buildctl build \
   --frontend dockerfile.v0 \
-  --local context=/workspace \
+  --local context="${BUILD_DIR}" \
   --local dockerfile="${DOCKERFILE_DIR}" \
   --output type=image,name="${LUNCUR_IMAGE_REF}",push=true,registry.insecure=true \
   "${CACHE_FLAGS[@]}"

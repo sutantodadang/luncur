@@ -279,6 +279,29 @@ luncur logs myapp --project myproj --deploy 1 -f
 luncur logs myapp --project myproj -f
 ```
 
+**Monorepo builds (`--path`):** one git repo can back several apps by
+pointing each at a different subdirectory as its build context/detection
+dir — e.g. a `dashboard/` React app, a `backend/` FastAPI service, and an
+`ai/` FastAPI service all living in the same repo:
+
+```sh
+luncur app create dashboard --project myproj --port 3000 \
+  --git-url https://github.com/user/monorepo.git --path dashboard
+luncur app create backend --project myproj --port 8000 \
+  --git-url https://github.com/user/monorepo.git --path backend
+luncur app create ai --project myproj --port 8001 \
+  --git-url https://github.com/user/monorepo.git --path ai
+```
+
+A single webhook push (or `luncur deploy`/`git push luncur`) to the shared
+repo redeploys all three — each app's build only looks inside its own
+`--path`: a `Dockerfile` there is used as-is, and nixpacks detection/output
+also run inside that subdirectory instead of the repo root. `--path` is
+validated (relative, no `..`, no leading `/`, `[a-zA-Z0-9._/-]` only) and is
+**immutable after creation** — recreate the app to change it. Omitting
+`--path` keeps the previous behavior: the whole repo root is the build
+context.
+
 **Deploy with git push:**
 ```sh
 # Once per machine: register your SSH public key

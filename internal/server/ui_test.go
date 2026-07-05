@@ -289,6 +289,49 @@ func TestUIProjectVisibleOnList(t *testing.T) {
 	}
 }
 
+// TestUICreateAppBuildPath covers the UI create form's build_path field: a
+// valid subdirectory persists (verified against the store, since it's not
+// exposed via any UI-rendered JSON), and an invalid one is rejected with 400
+// before the app is created (mirroring handleUICreateApp's existing
+// pre-create validation style: http.Error, not a redirect).
+func TestUICreateAppBuildPath(t *testing.T) {
+	srv, st := testServer(t)
+	doAuthed(t, "POST", srv.URL+"/v1/projects", seedUserToken(t, st, "root@b.co", "admin"), `{"name":"web"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	form := url.Values{"name": {"api"}, "port": {"3000"}, "build_path": {"backend"}}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/web/apps", csrfCk, ck, form)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create with valid build_path: want 303, got %d", resp.StatusCode)
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.BuildPath != "backend" {
+		t.Fatalf("build path: got %q, want %q", a.BuildPath, "backend")
+	}
+
+	badForm := url.Values{"name": {"bad"}, "port": {"3000"}, "build_path": {"../escape"}}
+	badResp := uiPost(t, client, srv.URL+"/ui/projects/web/apps", csrfCk, ck, badForm)
+	defer badResp.Body.Close()
+	if badResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("create with invalid build_path: want 400, got %d", badResp.StatusCode)
+	}
+	if _, err := st.GetApp(mustProjectID(t, st, "web"), "bad"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("invalid build_path app should not be created, got %v", err)
+	}
+}
+
 func TestUIAppVisibleOnProjectPage(t *testing.T) {
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")

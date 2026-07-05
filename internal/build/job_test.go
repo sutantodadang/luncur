@@ -74,6 +74,37 @@ func TestRenderBuildJobWithoutCacheRef(t *testing.T) {
 	}
 }
 
+func TestRenderBuildJobWithBuildPath(t *testing.T) {
+	obj, err := RenderBuildJob(BuildParams{
+		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
+		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
+		RegistryHost: "registry.luncur-system:5000", SourceType: "git", DeployID: 42,
+		BuildPath: "backend",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := jobEnv(t, obj)
+	if env["LUNCUR_BUILD_PATH"] != "backend" {
+		t.Fatalf("LUNCUR_BUILD_PATH=%q", env["LUNCUR_BUILD_PATH"])
+	}
+}
+
+func TestRenderBuildJobWithoutBuildPath(t *testing.T) {
+	obj, err := RenderBuildJob(BuildParams{
+		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
+		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := jobEnv(t, obj)
+	if _, ok := env["LUNCUR_BUILD_PATH"]; ok {
+		t.Fatalf("LUNCUR_BUILD_PATH present, want absent: %+v", env)
+	}
+}
+
 func TestRenderBuildJob(t *testing.T) {
 	obj, err := RenderBuildJob(BuildParams{
 		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",

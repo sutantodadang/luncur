@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -126,6 +127,42 @@ func TestCreateGitApp(t *testing.T) {
 	}
 	if a.GitURL != "https://x/y.git" {
 		t.Fatalf("git url: got %q", a.GitURL)
+	}
+}
+
+// TestCreateAppWithBuildPath covers the monorepo build_path field: a valid
+// subdirectory persists (verified against the store, since it isn't
+// surfaced in the JSON response — mirroring how git_url isn't either), and
+// an invalid one is rejected with 400 before the app is created.
+func TestCreateAppWithBuildPath(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin,
+		`{"name":"g","port":8080,"git_url":"https://x/y.git","build_path":"backend"}`)
+	if resp.StatusCode != 201 {
+		t.Fatalf("create app: want 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "g")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.BuildPath != "backend" {
+		t.Fatalf("build path: got %q, want %q", a.BuildPath, "backend")
+	}
+
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin,
+		`{"name":"bad","port":8080,"build_path":"../escape"}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("create app with invalid build_path: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	if _, err := st.GetApp(mustProjectID(t, st, "web"), "bad"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("invalid build_path app should not be created, got %v", err)
 	}
 }
 

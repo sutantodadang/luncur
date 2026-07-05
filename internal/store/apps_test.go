@@ -363,6 +363,38 @@ func TestSetHealthPath(t *testing.T) {
 	}
 }
 
+func TestSetBuildPath(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.BuildPath != "" {
+		t.Fatalf("want unset build path by default, got %+v", a)
+	}
+
+	if err := s.SetBuildPath(a.ID, "dashboard"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetApp(p.ID, "api")
+	if err != nil || got.BuildPath != "dashboard" {
+		t.Fatalf("get after set build path: %+v %v", got, err)
+	}
+
+	if err := s.SetBuildPath(a.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetApp(p.ID, "api")
+	if err != nil || got.BuildPath != "" {
+		t.Fatalf("get after clear build path: %+v %v", got, err)
+	}
+
+	if err := s.SetBuildPath(99999, "dashboard"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+}
+
 func TestSetWebhookSecret(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)

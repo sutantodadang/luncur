@@ -493,8 +493,13 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 	gitURL := r.PostFormValue("git_url")
 	image := strings.TrimSpace(r.PostFormValue("image"))
 
+	buildPath, err := validBuildPath(r.PostFormValue("build_path"))
+	if err != nil {
+		http.Error(w, "build_path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	var a store.App
-	var err error
 	if gitURL != "" {
 		a, err = s.st.CreateGitApp(p.ID, name, port, gitURL, r.PostFormValue("git_branch"), kind, schedule)
 	} else {
@@ -503,6 +508,14 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if buildPath != "" {
+		if err := s.st.SetBuildPath(a.ID, buildPath); err != nil {
+			log.Printf("ui create app: set build path: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		a.BuildPath = buildPath
 	}
 
 	if image == "" {

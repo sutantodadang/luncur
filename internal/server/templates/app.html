@@ -21,7 +21,7 @@
   </div>
 </div>
 {{if eq .App.Kind "cron"}}<p class="mb-2 text-sm text-mut">schedule: <code>{{.App.Schedule}}</code></p>{{end}}
-<p class="mb-1 font-mono text-[11px] text-mut">{{if .Metrics.Available}}cpu {{.Metrics.CPUMillicores}}m &middot; mem {{.Metrics.MemoryMiB}}Mi &middot; {{end}}{{.Metrics.ReadyReplicas}}/{{.Metrics.DesiredReplicas}} ready &middot; {{.Metrics.DeployCount}} deploys &middot;
+<p class="mb-1 font-mono text-[11px] text-mut">{{if .Metrics.Available}}cpu {{.Metrics.CPUMillicores}}m &middot; mem {{.Metrics.MemoryMiB}}Mi &middot; {{end}}{{.Metrics.ReadyReplicas}}/{{.Metrics.DesiredReplicas}} ready &middot; {{.Metrics.DeployCount}} deploys{{if .App.BuildPath}} &middot; path: {{.App.BuildPath}}{{end}} &middot;
    <a class="text-inkhi hover:text-signal" href="/v1/projects/{{.Project.Name}}/apps/{{.App.Name}}/raw">raw YAML</a>{{if not .App.Ejected}} &middot;
    edit: {{if eq .App.Kind "web"}}<a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a> &middot;
    <a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Service">Service</a> &middot;

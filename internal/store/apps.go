@@ -28,6 +28,12 @@ type App struct {
 	// WebhookSecret is the sealed (AES-256-GCM) webhook secret; nil means
 	// the webhook is disabled. Only meaningful for git-source apps.
 	WebhookSecret []byte
+	// BuildPath is an optional repo-relative subdirectory used as the build
+	// context/detection dir, letting one git repo back several apps
+	// (monorepo support). "" (the default) builds the repo root — the
+	// pre-existing behavior. Set at create time; immutable thereafter
+	// (recreate the app to change it).
+	BuildPath string
 }
 
 // normalizeAppKind defaults an empty kind to "web" for back-compat with
@@ -137,9 +143,9 @@ func (s *Store) GetApp(projectID int64, name string) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret FROM apps WHERE project_id = ? AND name = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path FROM apps WHERE project_id = ? AND name = ?`,
 		projectID, name,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -158,9 +164,9 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret FROM apps WHERE id = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path FROM apps WHERE id = ?`,
 		id,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -174,7 +180,7 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 
 func (s *Store) ListApps(projectID int64) ([]App, error) {
 	rows, err := s.db.Query(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret FROM apps WHERE project_id = ? ORDER BY name`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path FROM apps WHERE project_id = ? ORDER BY name`,
 		projectID,
 	)
 	if err != nil {
@@ -185,7 +191,7 @@ func (s *Store) ListApps(projectID int64) ([]App, error) {
 	for rows.Next() {
 		var a App
 		var gitURL, gitBranch sql.NullString
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath); err != nil {
 			return nil, err
 		}
 		a.GitURL = gitURL.String
@@ -295,6 +301,21 @@ func (s *Store) SetHealthPath(id int64, path string) error {
 		}
 	}
 	res, err := s.db.Exec(`UPDATE apps SET health_path = ? WHERE id = ?`, path, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetBuildPath sets the app's build_path (repo-relative subdirectory used as
+// the build context/detection dir). Format validation happens at the
+// API/UI layer (server.validBuildPath) before this is called; this just
+// persists the already-validated value.
+func (s *Store) SetBuildPath(id int64, path string) error {
+	res, err := s.db.Exec(`UPDATE apps SET build_path = ? WHERE id = ?`, path, id)
 	if err != nil {
 		return err
 	}

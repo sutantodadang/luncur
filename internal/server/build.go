@@ -157,6 +157,7 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 		GitBranch:    a.GitBranch,
 		DeployID:     d.ID,
 		CacheRef:     cacheRef,
+		BuildPath:    a.BuildPath,
 	})
 	if err != nil {
 		return fail(err)
