@@ -129,9 +129,15 @@ func NeedsRenewal(notAfter, now time.Time) bool {
 func (i *Issuer) Issue(ctx context.Context, domain string) (certPEM, keyPEM []byte, notAfter time.Time, err error) {
 	cl := &xacme.Client{Key: i.AccountKey, DirectoryURL: i.DirectoryURL}
 
-	// Idempotent registration: AlreadyRegistered is fine.
-	_, err = cl.Register(ctx, &xacme.Account{Contact: []string{"mailto:" + i.Email}},
-		xacme.AcceptTOS)
+	// Idempotent registration: AlreadyRegistered is fine. Contact is
+	// optional in ACME — an unset email must OMIT it entirely; "mailto:"
+	// with an empty address is rejected by Let's Encrypt with 400
+	// invalidContact "unable to parse email address" (hit in production).
+	acct := &xacme.Account{}
+	if i.Email != "" {
+		acct.Contact = []string{"mailto:" + i.Email}
+	}
+	_, err = cl.Register(ctx, acct, xacme.AcceptTOS)
 	if err != nil && err != xacme.ErrAccountAlreadyExists {
 		return nil, nil, time.Time{}, fmt.Errorf("acme register: %w", err)
 	}
