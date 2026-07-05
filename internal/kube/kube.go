@@ -179,6 +179,54 @@ func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) er
 	return nil
 }
 
+// DeleteObject removes a single object by kind/name, honoring the same
+// cluster-scoped/namespaced rules Apply does (namespace is ignored for
+// cluster-scoped kinds). NotFound is fine — teardown paths (e.g. `luncur
+// down`) must be idempotent.
+func (c *Client) DeleteObject(ctx context.Context, namespace, kind, name string) error {
+	gvr, ok := gvrByKind[kind]
+	if !ok {
+		return fmt.Errorf("no GVR for kind %q", kind)
+	}
+	var err error
+	if clusterScoped[kind] {
+		err = c.dyn.Resource(gvr).Delete(ctx, name, metav1.DeleteOptions{})
+	} else {
+		err = c.dyn.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	}
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete %s/%s: %w", kind, name, err)
+	}
+	return nil
+}
+
+// ListNamespacesByLabel returns the names of namespaces matching a label
+// selector — used by `luncur down` to enumerate every luncur-managed
+// namespace (luncur-system + every project's "luncur-<name>") without
+// needing offline access to the DB, which (unlike a bare-host dataDir)
+// lives inside a PersistentVolumeClaim in the cluster.
+func (c *Client) ListNamespacesByLabel(ctx context.Context, selector string) ([]string, error) {
+	list, err := c.cs.CoreV1().Namespaces().List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("list namespaces: %w", err)
+	}
+	names := make([]string, 0, len(list.Items))
+	for _, n := range list.Items {
+		names = append(names, n.Name)
+	}
+	return names, nil
+}
+
+// DeleteNamespace removes a namespace, cascading to delete everything
+// namespaced inside it. NotFound is fine — teardown must be idempotent.
+func (c *Client) DeleteNamespace(ctx context.Context, name string) error {
+	err := c.cs.CoreV1().Namespaces().Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete namespace %s: %w", name, err)
+	}
+	return nil
+}
+
 // DeletePVC removes a single PersistentVolumeClaim (an app volume's purge
 // path). NotFound is fine — the claim may never have been applied.
 func (c *Client) DeletePVC(ctx context.Context, namespace, name string) error {
