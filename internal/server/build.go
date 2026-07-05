@@ -50,26 +50,34 @@ func (s *server) buildLogf(d store.Deployment, format string, args ...any) {
 		return
 	}
 	path := s.src.LogPath(d.ID)
-	// The builder pod appends to this same file as uid 1000 (rootless
-	// BuildKit) while the server typically runs as root — dir and file must
-	// be world-writable or the builder's tee degrades to stdout-only and
-	// the UI log pane never sees builder output. Chmod explicitly:
-	// MkdirAll/O_CREATE modes get filtered by the umask.
+	// The builder pod appends to this same file as uid/gid 1000 (rootless
+	// BuildKit) while the server typically runs as root — without shared
+	// write access the builder's tee degrades to stdout-only and the UI log
+	// pane never sees builder output. Group-writable to gid 1000, not
+	// world-writable (setgid dir so builder-created files inherit the
+	// group). Chown/Chmod are best-effort: they fail on non-Linux dev
+	// machines where no builder pod exists anyway.
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o777); err != nil {
+	if err := os.MkdirAll(dir, 0o770); err != nil {
 		log.Printf("build log %d: mkdir: %v", d.ID, err)
 		return
 	}
-	if err := os.Chmod(dir, 0o777); err != nil {
+	if err := os.Chown(dir, -1, build.BuilderGID); err != nil {
+		log.Printf("build log %d: chown dir: %v", d.ID, err)
+	}
+	if err := os.Chmod(dir, 0o2770); err != nil {
 		log.Printf("build log %d: chmod dir: %v", d.ID, err)
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o666)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o660)
 	if err != nil {
 		log.Printf("build log %d: open: %v", d.ID, err)
 		return
 	}
 	defer f.Close()
-	if err := f.Chmod(0o666); err != nil {
+	if err := f.Chown(-1, build.BuilderGID); err != nil {
+		log.Printf("build log %d: chown: %v", d.ID, err)
+	}
+	if err := f.Chmod(0o660); err != nil {
 		log.Printf("build log %d: chmod: %v", d.ID, err)
 	}
 	msg := fmt.Sprintf(format, args...)
