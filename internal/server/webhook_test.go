@@ -286,7 +286,7 @@ func TestWebhookTriggerEvents(t *testing.T) {
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("push: status=%d body=%v", resp.StatusCode, out)
 	}
-	depID := int64(out["deployment_id"].(float64))
+	depID := out["deployment_id"].(string)
 	d, err := st.GetDeployment(depID)
 	if err != nil || d.Status != "building" {
 		t.Fatalf("deployment: %+v %v", d, err)
@@ -299,8 +299,8 @@ func TestWebhookTriggerEvents(t *testing.T) {
 	if resp.StatusCode != http.StatusAccepted || out["skipped"] != "in_progress" {
 		t.Fatalf("dedupe: status=%d body=%v", resp.StatusCode, out)
 	}
-	if int64(out["deployment_id"].(float64)) != depID {
-		t.Fatalf("dedupe: deployment_id = %v, want %d", out["deployment_id"], depID)
+	if out["deployment_id"].(string) != depID {
+		t.Fatalf("dedupe: deployment_id = %v, want %s", out["deployment_id"], depID)
 	}
 	if n, _ := st.CountDeployments(appDBID); n != 1 {
 		t.Fatalf("dedupe should not create a new deployment, count=%d", n)

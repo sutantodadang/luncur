@@ -66,7 +66,7 @@ type notifyEvent struct {
 	Event    string // deploy_success|deploy_failed|cert_issued|cert_failed
 	Project  string
 	App      string
-	DeployID int64  // 0 for cert events — internal id, kept for API consumers
+	DeployID string // "" for cert events — internal id, kept for API consumers
 	Seq      int64  // 0 for cert events — per-app deploy number shown in human-readable text
 	URL      string // app URL (deploy events) or hostname (cert events)
 	Err      string // error detail; truncated to errTailLimit chars before sending
@@ -145,7 +145,7 @@ type genericNotifyPayload struct {
 	Event    string `json:"event"`
 	Project  string `json:"project"`
 	App      string `json:"app"`
-	DeployID int64  `json:"deploy_id,omitempty"`
+	DeployID string `json:"deploy_id,omitempty"`
 	Status   string `json:"status"`
 	URL      string `json:"url,omitempty"`
 	Error    string `json:"error,omitempty"`

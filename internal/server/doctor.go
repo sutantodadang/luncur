@@ -90,7 +90,7 @@ func (s *server) checkBuilds(ctx context.Context) doctorCheck {
 	}
 	ids := make([]string, len(stuck))
 	for i, d := range stuck {
-		ids[i] = fmt.Sprintf("%d", d.ID)
+		ids[i] = d.ID
 	}
 	return doctorCheck{Name: "builds", Status: "warn",
 		Detail: fmt.Sprintf("deploy(s) %s building for >30m — builder job stuck or builder image missing",

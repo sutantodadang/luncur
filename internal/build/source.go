@@ -46,15 +46,15 @@ func NewSource(dataDir string) (*Source, error) {
 	return &Source{dir: dataDir}, nil
 }
 
-func (s *Source) TarballPath(deployID int64) string {
-	return filepath.Join(s.dir, "sources", fmt.Sprintf("%d.tar.gz", deployID))
+func (s *Source) TarballPath(deployID string) string {
+	return filepath.Join(s.dir, "sources", fmt.Sprintf("%s.tar.gz", deployID))
 }
 
-func (s *Source) LogPath(deployID int64) string {
-	return filepath.Join(s.dir, "logs", fmt.Sprintf("%d.log", deployID))
+func (s *Source) LogPath(deployID string) string {
+	return filepath.Join(s.dir, "logs", fmt.Sprintf("%s.log", deployID))
 }
 
-func (s *Source) Save(deployID int64, r io.Reader) (string, error) {
+func (s *Source) Save(deployID string, r io.Reader) (string, error) {
 	path := s.TarballPath(deployID)
 	// Group-readable for the rootless builder pod (gid 1000); chown
 	// best-effort for non-Linux dev machines.
@@ -73,7 +73,7 @@ func (s *Source) Save(deployID int64, r io.Reader) (string, error) {
 	return path, nil
 }
 
-func (s *Source) ReadLog(deployID int64) ([]byte, error) {
+func (s *Source) ReadLog(deployID string) ([]byte, error) {
 	b, err := os.ReadFile(s.LogPath(deployID))
 	if os.IsNotExist(err) {
 		return nil, nil

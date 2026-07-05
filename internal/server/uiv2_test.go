@@ -89,13 +89,13 @@ func TestUIDeployHistoryAndRollback(t *testing.T) {
 	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
 	id := appID(t, st, "proj", "web")
 
-	var ids []int64
+	var seqs []int64
 	for _, img := range []string{"img:v1", "img:v2", "img:v3"} {
 		d, err := st.CreateDeployment(id, "live", img, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		ids = append(ids, d.ID)
+		seqs = append(seqs, d.Seq)
 	}
 
 	u, err := st.GetUserByEmail("root@b.co")
@@ -109,9 +109,9 @@ func TestUIDeployHistoryAndRollback(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("app page: want 200, got %d", status)
 	}
-	for _, id := range ids {
-		if !strings.Contains(body, `<td>`+strconv.FormatInt(id, 10)+`</td>`) {
-			t.Fatalf("app page should list deploy id %d, got: %s", id, body)
+	for _, seq := range seqs {
+		if !strings.Contains(body, `<td>`+strconv.FormatInt(seq, 10)+`</td>`) {
+			t.Fatalf("app page should list deploy #%d, got: %s", seq, body)
 		}
 	}
 	if !strings.Contains(body, `name="deploy_id"`) {

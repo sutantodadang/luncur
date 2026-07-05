@@ -181,8 +181,8 @@ func TestDoctorStuckBuild(t *testing.T) {
 	out := doctorChecks(t, resp)
 
 	buildsCheck := checkByName(t, out.Checks, "builds")
-	if buildsCheck.Status != "warn" || !strings.Contains(buildsCheck.Detail, "1") {
-		t.Fatalf("builds check = %+v, want warn mentioning deploy id %d", buildsCheck, d.ID)
+	if buildsCheck.Status != "warn" || !strings.Contains(buildsCheck.Detail, d.ID) {
+		t.Fatalf("builds check = %+v, want warn mentioning deploy id %s", buildsCheck, d.ID)
 	}
 }
 

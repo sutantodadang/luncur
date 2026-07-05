@@ -19,10 +19,10 @@ func rollbackCmd() *cobra.Command {
 				return err
 			}
 			// --deploy is the per-app deploy number shown by `luncur status`
-			// and the web UI (#1, #2, ...) — resolve it to the internal id
-			// the rollback API expects. 0 (unset) means "previous live",
-			// which the API resolves itself.
-			targetID := int64(0)
+			// and the web UI (#1, #2, ...) — resolve it to the opaque
+			// internal id the rollback API expects. Unset (0) means
+			// "previous live", which the API resolves itself from "".
+			targetID := ""
 			if deploy != 0 {
 				deploys, err := c.ListDeploys(project, args[0])
 				if err != nil {

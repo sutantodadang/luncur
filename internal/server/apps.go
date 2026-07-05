@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,14 @@ import (
 // be applied because no kube client is configured". Callers (the JSON API
 // and the UI) each translate it into their own response shape.
 var errKubeUnavailable = errors.New("kubernetes is not configured")
+
+// deployIDPattern matches store.NewID's shape: a 12-char lowercase base-36
+// nanoid. Anywhere a deployment id arrives from a client (a path segment or
+// a form/JSON field) it's checked against this before ever reaching the DB
+// — the same guard an int64 ParseInt used to provide for free.
+var deployIDPattern = regexp.MustCompile(`^[a-z0-9]{12}$`)
+
+func validDeployID(id string) bool { return deployIDPattern.MatchString(id) }
 
 // errBuildUnavailable is deployGitApp's sentinel for "no build source is
 // configured" (the server was started without a data directory).
@@ -374,13 +383,13 @@ func (s *server) applyImageDeploy(ctx context.Context, p store.Project, a store.
 	}
 	if err != nil {
 		if e := s.st.SetDeploymentStatus(d.ID, "failed"); e != nil {
-			log.Printf("mark deploy %d failed: %v", d.ID, e)
+			log.Printf("mark deploy %s failed: %v", d.ID, e)
 		}
 		s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, Err: err.Error()})
 		return err
 	}
 	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
-		log.Printf("mark deploy %d live (apply already succeeded): %v", d.ID, err)
+		log.Printf("mark deploy %s live (apply already succeeded): %v", d.ID, err)
 	}
 	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: "http://" + hostFor(a.Name, s.externalIP)})
 	return nil
@@ -411,14 +420,16 @@ func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Pro
 }
 
 // requireDeploy loads a deployment by id and verifies it belongs to app a.
-// Writes the error response and returns ok=false on failure.
+// Writes the error response and returns ok=false on failure. idStr comes
+// straight from the client (a path segment) — it must look like one of our
+// nanoids before it's worth a DB round trip; a malformed id gets the same
+// 400 an unparseable integer id used to get back before ids were opaque.
 func (s *server) requireDeploy(w http.ResponseWriter, a store.App, idStr string) (store.Deployment, bool) {
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
+	if !validDeployID(idStr) {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid deploy id")
 		return store.Deployment{}, false
 	}
-	d, err := s.st.GetDeployment(id)
+	d, err := s.st.GetDeployment(idStr)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && d.AppID != a.ID) {
 		writeError(w, http.StatusNotFound, "not_found", "no such deploy")
 		return store.Deployment{}, false

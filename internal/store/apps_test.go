@@ -158,7 +158,7 @@ func TestDeployments(t *testing.T) {
 
 	latest, err := s.LatestDeployment(a.ID)
 	if err != nil || latest.ID != d2.ID || latest.Status != "live" {
-		t.Fatalf("latest: %+v %v (d1=%d d2=%d)", latest, err, d1.ID, d2.ID)
+		t.Fatalf("latest: %+v %v (d1=%s d2=%s)", latest, err, d1.ID, d2.ID)
 	}
 
 	if _, err := s.CreateDeployment(a.ID, "bogus", "x", 0); err == nil {

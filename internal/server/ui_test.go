@@ -865,7 +865,7 @@ func TestUIRollback(t *testing.T) {
 	client := noRedirectClient()
 	csrfCk := uiCSRF(t, client, srv.URL)
 
-	form := url.Values{"deploy_id": {fmt.Sprintf("%d", d1.ID)}}
+	form := url.Values{"deploy_id": {d1.ID}}
 	resp := uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/rollback", csrfCk, ck, form)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther {
@@ -892,7 +892,9 @@ func TestUIRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), fmt.Sprintf("(rollback of %d)", d1.ID)) {
+	// The rollback marker shows the source deploy's human-facing seq, not
+	// its opaque internal id (d1 is this app's first deployment, seq 1).
+	if !strings.Contains(string(body), fmt.Sprintf("(rollback of #%d)", d1.Seq)) {
 		t.Fatalf("app page after rollback: want rollback marker, got: %s", body)
 	}
 }

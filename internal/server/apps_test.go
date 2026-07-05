@@ -454,7 +454,7 @@ func TestDeployMultipartBuildsAsync(t *testing.T) {
 	if out["status"] != "building" {
 		t.Fatalf("response status=%v want building", out["status"])
 	}
-	depID := int64(out["deployment_id"].(float64))
+	depID := out["deployment_id"].(string)
 
 	// The 202 response above already proved the synchronous state is
 	// "building". The async build goroutine then runs; the fake job reports
@@ -516,7 +516,7 @@ func TestDeployLogsReturnsStoredBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp := doAuthed(t, "GET", fmt.Sprintf("%s/v1/projects/web/apps/api/deploys/%d/logs", srv.URL, d.ID), admin, "")
+	resp := doAuthed(t, "GET", fmt.Sprintf("%s/v1/projects/web/apps/api/deploys/%s/logs", srv.URL, d.ID), admin, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("want 200, got %d", resp.StatusCode)

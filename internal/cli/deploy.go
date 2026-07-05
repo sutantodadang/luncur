@@ -34,7 +34,7 @@ func deployCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				cmd.Printf("deployed %s → %s (deployment %d)\n", args[0], result.URL, result.DeploymentID)
+				cmd.Printf("deployed %s → %s (deployment #%d)\n", args[0], result.URL, result.Seq)
 				return nil
 			}
 
@@ -58,13 +58,13 @@ func deployFromSource(cmd *cobra.Command, c *client.Client, project, app string)
 	if err != nil {
 		return err
 	}
-	cmd.Printf("uploaded source (deployment %d), status: %s\n", res.DeploymentID, res.Status)
+	cmd.Printf("uploaded source (deployment #%d), status: %s\n", res.Seq, res.Status)
 
 	deadline := time.Now().Add(deployPollTimeout)
 	lastStatus := res.Status
 	for {
 		if time.Now().After(deadline) {
-			return fmt.Errorf("deploy timed out waiting for deployment %d", res.DeploymentID)
+			return fmt.Errorf("deploy timed out waiting for deployment #%d", res.Seq)
 		}
 		time.Sleep(deployPollInterval)
 
@@ -79,7 +79,7 @@ func deployFromSource(cmd *cobra.Command, c *client.Client, project, app string)
 
 		switch d.Status {
 		case "live":
-			cmd.Printf("deployed %s → %s (deployment %d)\n", app, d.URL, res.DeploymentID)
+			cmd.Printf("deployed %s → %s (deployment #%d)\n", app, d.URL, res.Seq)
 			return nil
 		case "failed":
 			logs, logErr := c.DeployLogs(project, app, res.DeploymentID)

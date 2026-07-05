@@ -628,19 +628,27 @@ func (s *server) handleUIChip(w http.ResponseWriter, r *http.Request, u store.Us
 // a user id to an email cheaply yet, so every row shows "-" for actor rather
 // than adding one just for this column.
 type uiDeployRow struct {
-	ID             int64
-	Seq            int64
-	Status         string
-	ImageRef       string
-	ImageTag       string
-	CreatedAt      string
-	RolledBackFrom int64
-	Actor          string
+	ID                string
+	Seq               int64
+	Status            string
+	ImageRef          string
+	ImageTag          string
+	CreatedAt         string
+	RolledBackFromSeq int64 // 0 = not a rollback (or source fell out of history)
+	Actor             string
 }
 
 // uiDeployRows builds the Deploys card's view model from ListDeployments'
-// newest-first history, capped at limit rows.
+// newest-first history, capped at limit rows. RolledBackFrom is an opaque
+// id now, never shown to a user — the seq lookup map is built from the
+// full (unclipped, up to 50-row) history so a rollback's source deploy
+// resolves to its human-facing seq even when it falls outside the limit
+// rows actually rendered.
 func uiDeployRows(history []store.Deployment, limit int) []uiDeployRow {
+	seqByID := make(map[string]int64, len(history))
+	for _, d := range history {
+		seqByID[d.ID] = d.Seq
+	}
 	if len(history) > limit {
 		history = history[:limit]
 	}
@@ -652,7 +660,7 @@ func uiDeployRows(history []store.Deployment, limit int) []uiDeployRow {
 		}
 		rows = append(rows, uiDeployRow{
 			ID: d.ID, Seq: d.Seq, Status: d.Status, ImageRef: d.ImageRef, ImageTag: tag,
-			CreatedAt: d.CreatedAt, RolledBackFrom: d.RolledBackFrom, Actor: "-",
+			CreatedAt: d.CreatedAt, RolledBackFromSeq: seqByID[d.RolledBackFrom], Actor: "-",
 		})
 	}
 	return rows
@@ -665,7 +673,7 @@ func uiDeployRows(history []store.Deployment, limit int) []uiDeployRow {
 // would have to carry the secret in the URL, which must never happen).
 func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store.User, p store.Project, a store.App, extra map[string]any) {
 	status := "never_deployed"
-	latestID := int64(0)
+	latestID := ""
 	if d, err := s.st.LatestDeployment(a.ID); err == nil {
 		status = d.Status
 		latestID = d.ID
@@ -1319,8 +1327,12 @@ func (s *server) handleUIRollback(w http.ResponseWriter, r *http.Request, u stor
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
-	deployID, err := strconv.ParseInt(r.PostFormValue("deploy_id"), 10, 64)
-	if err != nil {
+	// Unlike the JSON API, the UI form's hidden deploy_id field is always
+	// populated by app.html — an empty or malformed value here is a bad
+	// request, same as before ids became opaque nanoids (ParseInt of "" or
+	// garbage failed the same way).
+	deployID := r.PostFormValue("deploy_id")
+	if !validDeployID(deployID) {
 		http.Error(w, "invalid deploy_id", http.StatusBadRequest)
 		return
 	}

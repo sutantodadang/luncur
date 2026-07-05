@@ -85,7 +85,8 @@ func TestRollbackHappyPath(t *testing.T) {
 	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
 
 	id := appID(t, st, "proj", "web")
-	if _, err := st.CreateDeployment(id, "live", registryHost+"/proj/web:1", 0); err != nil {
+	d1, err := st.CreateDeployment(id, "live", registryHost+"/proj/web:1", 0)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.CreateDeployment(id, "live", registryHost+"/proj/web:2", 0); err != nil {
@@ -98,20 +99,26 @@ func TestRollbackHappyPath(t *testing.T) {
 		t.Fatalf("want 202, got %d", resp.StatusCode)
 	}
 	var out struct {
-		DeploymentID int64  `json:"deployment_id"`
+		DeploymentID string `json:"deployment_id"`
+		Seq          int64  `json:"seq"`
 		Status       string `json:"status"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if out.DeploymentID != 3 {
-		t.Fatalf("deployment_id = %d, want 3", out.DeploymentID)
+	// deployment_id is an opaque nanoid now — assert its shape and the
+	// human-facing seq, not a literal id value.
+	if !validDeployID(out.DeploymentID) {
+		t.Fatalf("deployment_id %q is not a valid nanoid", out.DeploymentID)
+	}
+	if out.Seq != 3 {
+		t.Fatalf("seq = %d, want 3", out.Seq)
 	}
 	if out.Status != "live" {
 		t.Fatalf("status = %q, want live", out.Status)
 	}
 
-	got, err := st.GetDeployment(3)
+	got, err := st.GetDeployment(out.DeploymentID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,8 +128,8 @@ func TestRollbackHappyPath(t *testing.T) {
 	if got.ImageRef != registryHost+"/proj/web:1" {
 		t.Fatalf("row image = %q, want %s", got.ImageRef, registryHost+"/proj/web:1")
 	}
-	if got.RolledBackFrom != 1 {
-		t.Fatalf("rolled_back_from = %d, want 1", got.RolledBackFrom)
+	if got.RolledBackFrom != d1.ID {
+		t.Fatalf("rolled_back_from = %q, want %q", got.RolledBackFrom, d1.ID)
 	}
 }
 
@@ -156,12 +163,12 @@ func TestRollbackExplicitAndErrors(t *testing.T) {
 
 	// Explicit deploy_id → 202, rolls back to tag :1.
 	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/rollback", admin,
-		fmt.Sprintf(`{"deploy_id":%d}`, d1.ID))
+		fmt.Sprintf(`{"deploy_id":%q}`, d1.ID))
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("explicit: want 202, got %d", resp.StatusCode)
 	}
 	var out struct {
-		DeploymentID int64 `json:"deployment_id"`
+		DeploymentID string `json:"deployment_id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
@@ -175,8 +182,8 @@ func TestRollbackExplicitAndErrors(t *testing.T) {
 		t.Fatalf("explicit rollback image = %q, want :1", got.ImageRef)
 	}
 
-	// Nonexistent deploy id → 404 not_found.
-	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/rollback", admin, `{"deploy_id":99}`)
+	// Nonexistent deploy id (valid nanoid shape, no such row) → 404 not_found.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/rollback", admin, `{"deploy_id":"999999999999"}`)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("bad id: want 404, got %d", resp.StatusCode)
 	}
@@ -184,7 +191,7 @@ func TestRollbackExplicitAndErrors(t *testing.T) {
 
 	// Registry doesn't know the tag → 409 image_missing, message names the image.
 	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/rollback", admin,
-		fmt.Sprintf(`{"deploy_id":%d}`, dMissing.ID))
+		fmt.Sprintf(`{"deploy_id":%q}`, dMissing.ID))
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("missing image: want 409, got %d", resp.StatusCode)
 	}

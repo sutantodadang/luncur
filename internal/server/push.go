@@ -80,7 +80,7 @@ func (b *PushBackend) Push(ctx context.Context, u store.User, project, app strin
 		return fmt.Errorf("save source: %w", err)
 	}
 
-	fmt.Fprintf(progress, "-----> deploy %d building\n", d.ID)
+	fmt.Fprintf(progress, "-----> deploy %s building\n", d.ID)
 
 	// Tail the build log into the pusher's terminal while runBuild runs.
 	done := make(chan struct{})
@@ -90,7 +90,7 @@ func (b *PushBackend) Push(ctx context.Context, u store.User, project, app strin
 	close(done)
 
 	if err != nil {
-		return fmt.Errorf("deploy %d failed — see: luncur logs %s --project %s --deploy %d", d.ID, app, project, d.ID)
+		return fmt.Errorf("deploy %s failed — see: luncur logs %s --project %s --deploy %s", d.ID, app, project, d.ID)
 	}
 	fmt.Fprintf(progress, "-----> app live: http://%s\n", hostFor(a.Name, s.externalIP))
 	return nil

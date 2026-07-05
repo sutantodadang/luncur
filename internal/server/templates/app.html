@@ -45,7 +45,7 @@
 <table class="tbl"><tr><th>#</th><th>Status</th><th>Image</th><th>Actor</th><th>When</th><th></th></tr>
 {{range .Deploys}}<tr>
   <td>{{.Seq}}</td><td><span class="status-{{.Status}}">{{.Status}}</span></td>
-  <td><code class="font-mono text-xs" title="{{.ImageRef}}">{{.ImageTag}}</code>{{if .RolledBackFrom}} <em>(rollback of {{.RolledBackFrom}})</em>{{end}}</td>
+  <td><code class="font-mono text-xs" title="{{.ImageRef}}">{{.ImageTag}}</code>{{if .RolledBackFromSeq}} <em>(rollback of #{{.RolledBackFromSeq}})</em>{{end}}</td>
   <td class="text-xs text-mut">{{.Actor}}</td>
   <td class="text-xs text-mut">{{.CreatedAt}}</td>
   <td>{{if and .ImageRef (ne .ID $.LatestID) (not $.App.Ejected)}}

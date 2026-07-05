@@ -187,7 +187,7 @@ type AppInfo struct {
 }
 
 type DeployResult struct {
-	DeploymentID int64  `json:"deployment_id"`
+	DeploymentID string `json:"deployment_id"`
 	Seq          int64  `json:"seq"`
 	Status       string `json:"status"`
 	URL          string `json:"url"`
@@ -195,14 +195,14 @@ type DeployResult struct {
 
 // DeployInfo is one row of an app's deploy history, as returned by
 // ListDeploys — Seq is the per-app human-facing deploy number; ID is the
-// internal id the rollback API still expects.
+// opaque internal id the rollback API still expects.
 type DeployInfo struct {
-	ID             int64  `json:"id"`
+	ID             string `json:"id"`
 	Seq            int64  `json:"seq"`
 	Status         string `json:"status"`
 	Image          string `json:"image"`
 	CreatedAt      string `json:"created_at"`
-	RolledBackFrom int64  `json:"rolled_back_from,omitempty"`
+	RolledBackFrom string `json:"rolled_back_from,omitempty"`
 }
 
 func (c *Client) CreateProject(name string) (ProjectInfo, error) {
@@ -296,17 +296,17 @@ func (c *Client) DeploySource(project, app string, tarball io.Reader) (DeployRes
 }
 
 // GetDeploy fetches the current status of a deployment.
-func (c *Client) GetDeploy(project, app string, id int64) (DeployResult, error) {
+func (c *Client) GetDeploy(project, app string, id string) (DeployResult, error) {
 	var out DeployResult
 	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+
-		"/deploys/"+strconv.FormatInt(id, 10), nil, &out)
+		"/deploys/"+url.PathEscape(id), nil, &out)
 	return out, err
 }
 
 // DeployLogs fetches the build log text for a deployment.
-func (c *Client) DeployLogs(project, app string, id int64) ([]byte, error) {
+func (c *Client) DeployLogs(project, app string, id string) ([]byte, error) {
 	return c.doRaw("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+
-		"/deploys/"+strconv.FormatInt(id, 10)+"/logs", nil)
+		"/deploys/"+url.PathEscape(id)+"/logs", nil)
 }
 
 // ListDeploys fetches an app's deploy history (newest first) — used to
@@ -440,9 +440,9 @@ func (c *Client) stream(path string, w io.Writer) error {
 
 // FollowDeployLogs streams a build log's SSE endpoint until the deployment
 // finishes, writing each log line to w as it arrives.
-func (c *Client) FollowDeployLogs(project, app string, id int64, w io.Writer) error {
-	return c.stream(fmt.Sprintf("/v1/projects/%s/apps/%s/deploys/%d/logs?follow=1",
-		url.PathEscape(project), url.PathEscape(app), id), w)
+func (c *Client) FollowDeployLogs(project, app string, id string, w io.Writer) error {
+	return c.stream(fmt.Sprintf("/v1/projects/%s/apps/%s/deploys/%s/logs?follow=1",
+		url.PathEscape(project), url.PathEscape(app), url.PathEscape(id)), w)
 }
 
 // RuntimeLogs streams (or, with follow=false, fetches once via SSE) the
@@ -649,16 +649,16 @@ func (c *Client) SetSetting(key, value string) error {
 	return c.do("PUT", "/v1/settings/"+key, map[string]string{"value": value}, nil)
 }
 
-// Rollback redeploys a previous deployment's image (deployID == 0 auto-picks
+// Rollback redeploys a previous deployment's image (deployID == "" auto-picks
 // the previous live deployment) and returns the new deployment's per-app
 // seq (deploy number) — the human-facing number, not the internal id.
-func (c *Client) Rollback(project, app string, deployID int64) (int64, error) {
+func (c *Client) Rollback(project, app string, deployID string) (int64, error) {
 	var out struct {
-		DeploymentID int64 `json:"deployment_id"`
-		Seq          int64 `json:"seq"`
+		DeploymentID string `json:"deployment_id"`
+		Seq          int64  `json:"seq"`
 	}
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/rollback",
-		map[string]int64{"deploy_id": deployID}, &out)
+		map[string]string{"deploy_id": deployID}, &out)
 	return out.Seq, err
 }
 

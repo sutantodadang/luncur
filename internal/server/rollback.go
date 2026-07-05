@@ -34,8 +34,8 @@ func (e *errRegistryCheck) Unwrap() error { return e.err }
 // rollbackTarget picks the deployment to roll back to: an explicit id (must
 // be this app's, with an image), or the newest live deployment older than
 // the latest one.
-func (s *server) rollbackTarget(a store.App, deployID int64) (store.Deployment, error) {
-	if deployID != 0 {
+func (s *server) rollbackTarget(a store.App, deployID string) (store.Deployment, error) {
+	if deployID != "" {
 		d, err := s.st.GetDeployment(deployID)
 		if err != nil || d.AppID != a.ID {
 			return store.Deployment{}, store.ErrNotFound
@@ -53,8 +53,13 @@ func (s *server) rollbackTarget(a store.App, deployID int64) (store.Deployment, 
 	if err != nil {
 		return store.Deployment{}, err
 	}
-	for _, d := range history { // newest first
-		if d.ID < latest.ID && d.Status == "live" && d.ImageRef != "" {
+	// history is newest-first (see ListDeployments), so skipping the row
+	// that IS latest and taking the first remaining live one is
+	// "the newest live deployment older than the latest" — ids are opaque
+	// nanoids now, with no ordering of their own, so this can no longer
+	// compare them with `<` the way sequential integer ids allowed.
+	for _, d := range history {
+		if d.ID != latest.ID && d.Status == "live" && d.ImageRef != "" {
 			return d, nil
 		}
 	}
@@ -96,7 +101,7 @@ func (s *server) imageInRegistry(ctx context.Context, ref string) (bool, error) 
 // (store.ErrNotFound, errNoRollbackTarget, *errImageMissing,
 // *errRegistryCheck) that each caller maps to its own response shape; any
 // other error is an unexpected internal failure.
-func (s *server) rollback(ctx context.Context, p store.Project, a store.App, u store.User, deployID int64) (store.Deployment, error) {
+func (s *server) rollback(ctx context.Context, p store.Project, a store.App, u store.User, deployID string) (store.Deployment, error) {
 	if a.Ejected {
 		return store.Deployment{}, errAppEjected
 	}
@@ -136,13 +141,17 @@ func (s *server) handleRollback(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 	var req struct {
-		DeployID int64 `json:"deploy_id"`
+		DeployID string `json:"deploy_id"`
 	}
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
 			writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 			return
 		}
+	}
+	if req.DeployID != "" && !validDeployID(req.DeployID) {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid deploy id")
+		return
 	}
 
 	d, err := s.rollback(r.Context(), p, a, u, req.DeployID)
