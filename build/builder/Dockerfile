@@ -42,6 +42,10 @@ RUN apk add --no-cache curl && \
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# Pre-create the clone/extract target: the container runs as uid 1000,
+# which cannot mkdir under /.
+RUN mkdir -p /workspace && chown user:user /workspace
+
 # Back to the rootless buildkit user — builds must not run as root, and the
 # system namespace's PodSecurity baseline still expects the image default.
 USER user

@@ -10,16 +10,30 @@ import (
 	"path/filepath"
 )
 
+// BuilderGID is the gid of the rootless BuildKit user baked into the
+// builder image (moby/buildkit:rootless user `user`, uid/gid 1000). The
+// server chowns shared PVC paths to this group so the builder pod can
+// append logs and read tarballs without world-writable modes.
+const BuilderGID = 1000
+
 // Source is the on-disk store for uploaded build tarballs and build logs,
 // rooted at the server's --data-dir. In production the same directory is a
 // PVC mounted into both the luncur pod and each Build Job.
 type Source struct{ dir string }
 
 func NewSource(dataDir string) (*Source, error) {
+	// The Build Job's rootless pod (uid/gid 1000) must traverse these dirs
+	// to read tarballs and append to its log file, while the server usually
+	// runs as root — share via group 1000, not world-writable modes. Setgid
+	// so builder-created files inherit the group. Chown/Chmod best-effort:
+	// they fail on non-Linux dev machines, where no builder pod exists.
 	for _, sub := range []string{"sources", "logs"} {
-		if err := os.MkdirAll(filepath.Join(dataDir, sub), 0o700); err != nil {
+		p := filepath.Join(dataDir, sub)
+		if err := os.MkdirAll(p, 0o770); err != nil {
 			return nil, fmt.Errorf("create %s dir: %w", sub, err)
 		}
+		_ = os.Chown(p, -1, BuilderGID)
+		_ = os.Chmod(p, 0o2770)
 	}
 	return &Source{dir: dataDir}, nil
 }
@@ -34,11 +48,17 @@ func (s *Source) LogPath(deployID int64) string {
 
 func (s *Source) Save(deployID int64, r io.Reader) (string, error) {
 	path := s.TarballPath(deployID)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	// Group-readable for the rootless builder pod (gid 1000); chown
+	// best-effort for non-Linux dev machines.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
+	_ = f.Chown(-1, BuilderGID)
+	if err := f.Chmod(0o640); err != nil {
+		return "", err
+	}
 	if _, err := io.Copy(f, r); err != nil {
 		return "", err
 	}
