@@ -5,6 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>luncur</title>
+<script>document.documentElement.dataset.theme = localStorage.getItem("luncur-theme") || "dark";</script>
 <link rel="stylesheet" href="/ui/static/app.css?v={{v}}">
 <script src="/ui/static/htmx.min.js?v={{v}}" defer></script>
 </head>
@@ -13,7 +14,7 @@
 {{end}}
 
 {{define "nav"}}
-<aside class="flex w-56 flex-col gap-1 border-r border-line bg-[#0D0D0F] p-4">
+<aside class="flex w-56 flex-col gap-1 border-r border-line bg-side p-4">
   <a href="/ui/" class="mb-4 text-lg font-semibold text-inkhi">luncur<span class="text-signal">_</span></a>
   <a href="/ui/" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Projects</a>
   <a href="/ui/tokens" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Tokens</a>
@@ -28,18 +29,48 @@
   {{end}}
   <div class="mt-auto flex flex-col gap-2">
     <span class="truncate text-xs text-mut">{{.User.Email}}</span>
+    <button type="button" id="theme-toggle" class="btn-ghost w-full font-mono text-[11px]"></button>
     <form method="post" action="/ui/logout">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
       <button type="submit" class="btn-ghost w-full">log out</button>
     </form>
   </div>
 </aside>
+<script>
+(function(){
+  var btn = document.getElementById("theme-toggle");
+  if(!btn) return;
+  function label(){
+    btn.textContent = "theme: " + (document.documentElement.dataset.theme === "light" ? "light" : "dark");
+  }
+  label();
+  btn.addEventListener("click", function(){
+    var next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("luncur-theme", next);
+    label();
+  });
+})();
+</script>
 <main class="max-w-5xl flex-1 p-8">
+<div id="hx-err" hidden class="card mb-4 border-fail text-[13px]"></div>
 {{end}}
 
 {{define "foot"}}
 </main>
 </div>
+<script>
+document.body.addEventListener("htmx:responseError", function(e){
+  var el = document.getElementById("hx-err");
+  if(!el) return;
+  el.hidden = false;
+  el.textContent = "request failed (" + e.detail.xhr.status + "): " + (e.detail.xhr.responseText || "").slice(0,300);
+});
+document.body.addEventListener("htmx:sendError", function(){
+  var el = document.getElementById("hx-err");
+  if(!el) return; el.hidden = false; el.textContent = "network error — server unreachable";
+});
+</script>
 </body>
 </html>
 {{end}}

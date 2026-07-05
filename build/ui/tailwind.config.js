@@ -17,11 +17,16 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        bg: "#0A0A0B", panel: "#131316", panel2: "#18181C",
-        line: "#26262B", row: "#1C1C20",
-        ink: "#C9C9D1", inkhi: "#F4F4F6", mut: "#6E6E78",
-        signal: "#FF6A00", signalhi: "#FF7E22",
-        phosphor: "#3DDC84", build: "#FFB224", fail: "#FF4D4F",
+        // Theme-able tokens resolve to CSS custom properties (see
+        // build/ui/input.css :root / :root[data-theme="light"]) so the
+        // light/dark toggle needs no Tailwind rebuild. termbg/termtext/termts
+        // stay fixed literals — the terminal pane is always dark.
+        bg: "var(--c-bg)", panel: "var(--c-panel)", panel2: "var(--c-panel2)",
+        line: "var(--c-line)", row: "var(--c-row)", rowhover: "var(--c-rowhover)",
+        ink: "var(--c-ink)", inkhi: "var(--c-inkhi)", mut: "var(--c-mut)",
+        signal: "var(--c-signal)", signalhi: "var(--c-signalhi)",
+        phosphor: "var(--c-phosphor)", build: "var(--c-build)", fail: "var(--c-fail)",
+        side: "var(--c-side)",
         termbg: "#060607", termtext: "#9BE9BC", termts: "#4A4A52",
       },
       fontFamily: {

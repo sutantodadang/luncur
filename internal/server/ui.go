@@ -438,18 +438,44 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 	kind := r.PostFormValue("kind")
 	schedule := r.PostFormValue("schedule")
 	gitURL := r.PostFormValue("git_url")
+	image := strings.TrimSpace(r.PostFormValue("image"))
 
+	var a store.App
 	var err error
 	if gitURL != "" {
-		_, err = s.st.CreateGitApp(p.ID, name, port, gitURL, r.PostFormValue("git_branch"), kind, schedule)
+		a, err = s.st.CreateGitApp(p.ID, name, port, gitURL, r.PostFormValue("git_branch"), kind, schedule)
 	} else {
-		_, err = s.st.CreateApp(p.ID, name, port, kind, schedule)
+		a, err = s.st.CreateApp(p.ID, name, port, kind, schedule)
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
+
+	if image == "" {
+		http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
+		return
+	}
+
+	// One-click deploy from a prebuilt image: same applyImageDeploy core
+	// deployImage (API) and rollback use. Any failure past this point leaves
+	// the app created — only the deploy itself failed — so we redirect to
+	// the app page with ?err= instead of erroring the whole create.
+	if s.kube == nil {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: kubernetes is not configured"), http.StatusSeeOther)
+		return
+	}
+	d, err := s.st.CreateDeployment(a.ID, "deploying", image, 0)
+	if err != nil {
+		log.Printf("ui create app: create deployment: %v", err)
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: internal error"), http.StatusSeeOther)
+		return
+	}
+	if err := s.applyImageDeploy(r.Context(), p, a, d, image); err != nil {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: "+err.Error()), http.StatusSeeOther)
+		return
+	}
+	uiRedirect(w, r, p, a)
 }
 
 func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -625,7 +651,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"IsGit":          a.SourceType == "git",
 		"WebhookEnabled": a.WebhookSecret != nil,
 		"WebhookURL":     "http://" + r.Host + webhookPath(p.Name, a.Name),
-		"Domains":        domains, "Volumes": volumes, "Warning": r.URL.Query().Get("warn"),
+		"Domains": domains, "Volumes": volumes, "Warning": firstNonEmpty(r.URL.Query().Get("warn"), r.URL.Query().Get("err")),
 		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	}
@@ -699,6 +725,18 @@ func (s *server) handleUIWebhookDisable(w http.ResponseWriter, r *http.Request, 
 // (scale/env/deploy) was posted from.
 func uiRedirect(w http.ResponseWriter, r *http.Request, p store.Project, a store.App) {
 	http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name, http.StatusSeeOther)
+}
+
+// firstNonEmpty returns the first non-empty string, or "" if all are empty.
+// Used to fold the app page's "warn" and "err" query params into the single
+// Warning banner slot — both render identically (see app.html's .err class).
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.User) {

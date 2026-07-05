@@ -137,7 +137,7 @@ func newServer(d Deps) *server {
 	}
 
 	s.tmpl = template.Must(template.New("").Funcs(template.FuncMap{
-		"v": func() string { return s.version },
+		"v": func() string { return staticHash() },
 	}).ParseFS(templateFS, "templates/*.html"))
 
 	if d.Store != nil {

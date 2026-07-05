@@ -33,7 +33,7 @@ control teaches its CLI command back (see CLI-echo). A user should never be
 - **Accent (signal orange):** `#FF6A00`, hover `#FF7E22`. **Discipline rule:** orange is ONLY for primary actions (deploy, create, save), active-nav indicator, and focus rings. Never for status, never for decoration. If orange appears more than ~2 times per viewport, something is wrong.
 - **Semantic:** live/ok `#3DDC84` (phosphor green) · building/warn `#FFB224` (pulses while building) · failed/error `#FF4D4F` · idle/muted slate `#6E6E78`. Chips: 10% tinted bg + 25% tinted border + colored mono text.
 - **Terminal pane:** bg `#060607`, log text `#9BE9BC`, timestamps `#4A4A52`.
-- **Dark mode:** dark-ONLY by design (operator tool). No light theme, no toggle. Do not add one without explicit owner approval.
+- **Theme:** dark by default, with a light theme + sidebar toggle (persisted to `localStorage`). Tokens live as CSS custom properties (`--c-*`, see `build/ui/input.css`) so Tailwind's palette resolves per-theme without a rebuild. Light values: bg `#F4F4F2` · panel `#FFFFFF` · panel-raised `#FAFAF8` · border `#E2E2DE` · row `#EFEFEA` · text `#33333A` · headings `#111114` · muted `#75757E` · accent hover `#E85F00` · live/ok `#1FA55C` · building/warn `#B87A00` · failed/error `#D93336` · sidebar bg `#ECECE8`. Terminal pane stays fixed dark literals in both themes.
 - **Forbidden:** purple/indigo accents, gradients of any kind, colored icon-circles.
 
 ## Spacing
@@ -69,3 +69,4 @@ description must say why not.
 | 2026-07-05 | IBM Plex vendored, no CDN | Air-gapped rule; Plex fits industrial direction; one-binary philosophy extends to fonts |
 | 2026-07-05 | CLI-echo signature pattern | Product differentiator (escape-hatch transparency) expressed in the UI; teaches CLI for free |
 | 2026-07-05 | Dark-only, no light theme | Operator tool; halves CSS surface; matches category expectation |
+| 2026-07-05 | Light theme + toggle added | Owner request (field feedback); tokens moved to CSS variables |
