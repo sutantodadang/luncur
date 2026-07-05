@@ -129,6 +129,65 @@ func TestRenderBuildJobWithoutBuildPath(t *testing.T) {
 	}
 }
 
+func TestRenderBuildJobWithBuildEnv(t *testing.T) {
+	obj, err := RenderBuildJob(BuildParams{
+		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
+		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+		BuildEnv: map[string]string{"B": "2", "A": "1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := jobEnv(t, obj)
+	if env["LUNCUR_BUILDARG_A"] != "1" || env["LUNCUR_BUILDARG_B"] != "2" {
+		t.Fatalf("build env vars missing/wrong: %+v", env)
+	}
+
+	// Deterministic ordering: sorted by key, so JSON marshaling of the same
+	// BuildEnv is byte-identical across calls (tests, not just behavior).
+	var j struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Env []struct{ Name, Value string } `json:"env"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(obj.JSON, &j); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, e := range j.Spec.Template.Spec.Containers[0].Env {
+		if strings.HasPrefix(e.Name, "LUNCUR_BUILDARG_") {
+			names = append(names, e.Name)
+		}
+	}
+	if len(names) != 2 || names[0] != "LUNCUR_BUILDARG_A" || names[1] != "LUNCUR_BUILDARG_B" {
+		t.Fatalf("build env vars not sorted: %v", names)
+	}
+}
+
+func TestRenderBuildJobWithoutBuildEnv(t *testing.T) {
+	obj, err := RenderBuildJob(BuildParams{
+		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
+		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
+		RegistryHost: "registry.luncur-system:5000", SourceType: "tarball", DeployID: 42,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := jobEnv(t, obj)
+	for k := range env {
+		if strings.HasPrefix(k, "LUNCUR_BUILDARG_") {
+			t.Fatalf("unexpected build-arg env var %q present: %+v", k, env)
+		}
+	}
+}
+
 func TestRenderBuildJob(t *testing.T) {
 	obj, err := RenderBuildJob(BuildParams{
 		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",

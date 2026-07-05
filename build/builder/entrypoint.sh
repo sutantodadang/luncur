@@ -63,12 +63,26 @@ fi
 # ===== Build Logic =====
 echo "Detecting build configuration..."
 
+# Build-time env: every LUNCUR_BUILDARG_<KEY> env var becomes a Docker
+# build-arg (Dockerfile path — the Dockerfile must declare ARG <KEY>) and
+# a nixpacks --env (nixpacks path). Values may contain '=' — split on the
+# first '=' only via ${!var}. Computed before both build paths since
+# nixpacks needs its flags at generation time.
+BUILDARG_FLAGS=()
+NIXPACKS_ENV_FLAGS=()
+for var in $(compgen -e | grep '^LUNCUR_BUILDARG_' || true); do
+  key="${var#LUNCUR_BUILDARG_}"
+  BUILDARG_FLAGS+=(--opt "build-arg:${key}=${!var}")
+  NIXPACKS_ENV_FLAGS+=(--env "${key}=${!var}")
+  echo "Build arg: ${key}"
+done
+
 if [ -f "$BUILD_DIR/Dockerfile" ]; then
   echo "Found Dockerfile in workspace. Using it."
   DOCKERFILE_DIR="$BUILD_DIR"
 else
   echo "No Dockerfile found. Generating with nixpacks..."
-  nixpacks build "$BUILD_DIR" --out "$BUILD_DIR/.nixpacks"
+  nixpacks build "$BUILD_DIR" --out "$BUILD_DIR/.nixpacks" "${NIXPACKS_ENV_FLAGS[@]}"
   DOCKERFILE_DIR="$BUILD_DIR/.nixpacks"
 fi
 
@@ -115,7 +129,8 @@ buildctl-daemonless.sh build \
   --local context="${BUILD_DIR}" \
   --local dockerfile="${DOCKERFILE_DIR}" \
   --output type=image,name="${LUNCUR_IMAGE_REF}",push=true,registry.insecure=true \
-  "${CACHE_FLAGS[@]}"
+  "${CACHE_FLAGS[@]}" \
+  "${BUILDARG_FLAGS[@]}"
 
 echo ""
 echo "==== build complete ===="

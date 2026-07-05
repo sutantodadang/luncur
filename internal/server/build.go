@@ -245,6 +245,14 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 		cacheRef = ""
 	}
 
+	// A sealed env that can't be unsealed must not silently build with
+	// missing build-args — same contract renderApp uses further down this
+	// same deploy for runtime env.
+	buildEnv, err := s.plainEnv(a)
+	if err != nil {
+		return fail(err)
+	}
+
 	s.buildLogf(d, "rendering build job")
 	job, err := build.RenderBuildJob(build.BuildParams{
 		Namespace:    s.systemNamespace,
@@ -259,6 +267,7 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 		DeployID:     d.ID,
 		CacheRef:     cacheRef,
 		BuildPath:    a.BuildPath,
+		BuildEnv:     buildEnv,
 	})
 	if err != nil {
 		return fail(err)

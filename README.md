@@ -365,6 +365,30 @@ luncur env list myapp --project myproj
 luncur edit myapp Deployment --project myproj
 ```
 
+**Build-time env:**
+
+The same values set with `luncur env set` also reach the build itself, not
+just the running container: each var is passed to the builder as a Docker
+build-arg (Dockerfile path) or a nixpacks `--env` (nixpacks path). This
+matters for frontend frameworks that bake env into the bundle at build time
+instead of reading it at runtime — e.g. Vite:
+
+```dockerfile
+ARG VITE_API_URL=http://localhost:8000
+ENV VITE_API_URL=$VITE_API_URL
+RUN npm run build
+```
+
+`luncur env set myapp VITE_API_URL=https://api.myapp.example --project myproj`
+then makes the next build inline the real URL instead of the Dockerfile's
+localhost default. The Dockerfile must declare `ARG <KEY>` for a var to be
+picked up; unreferenced vars are simply ignored by `docker build`.
+
+Build-args are not a safe place for high-grade secrets — they can leak into
+build cache metadata and image history. Keep secrets runtime-only (don't
+reference them from any `ARG`); use build-time env only for values that are
+fine to be visible in a built image.
+
 **Status:**
 ```sh
 # List apps in a project (name + URL)
