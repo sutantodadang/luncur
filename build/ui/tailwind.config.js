@@ -14,6 +14,21 @@ module.exports = {
     "status-issued", "status-pending", "status-none", "status-external",
     "chip-ok", "chip-warn", "chip-bad", "chip-muted",
   ],
-  theme: { extend: {} },
+  theme: {
+    extend: {
+      colors: {
+        bg: "#0A0A0B", panel: "#131316", panel2: "#18181C",
+        line: "#26262B", row: "#1C1C20",
+        ink: "#C9C9D1", inkhi: "#F4F4F6", mut: "#6E6E78",
+        signal: "#FF6A00", signalhi: "#FF7E22",
+        phosphor: "#3DDC84", build: "#FFB224", fail: "#FF4D4F",
+        termbg: "#060607", termtext: "#9BE9BC", termts: "#4A4A52",
+      },
+      fontFamily: {
+        sans: ['"IBM Plex Sans"', "sans-serif"],
+        mono: ['"IBM Plex Mono"', "monospace"],
+      },
+    },
+  },
   plugins: [],
 }

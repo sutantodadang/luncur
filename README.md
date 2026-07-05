@@ -340,14 +340,18 @@ After `luncur up`, the panel is served at `http://panel.<ip>.sslip.io/ui/`
 (login with the admin credentials printed by `luncur up`, or any user added
 via `luncur user add` or an invite). It's a dark, server-rendered dashboard
 (Tailwind CSS + htmx, fully embedded and air-gapped — no CDN, no external
-requests) covering nearly everything the CLI can do:
+requests) covering the CLI end to end — every CLI verb has a UI control,
+with `luncur restore` the one deliberate exception (destructive enough to
+stay a CLI-only, deliberate action):
 
-- **Projects & apps** — browse projects and apps, scale replicas/cpu/memory,
-  edit env vars and volumes, manage domains, trigger a deploy, roll back to a
-  previous deploy, and watch build/runtime logs stream live via
+- **Projects & apps** — create a project and add members (admin), browse
+  projects and apps, scale replicas/cpu/memory, edit env vars and volumes,
+  manage domains (including retrying a failed cert), attach/upgrade/detach
+  addons, trigger a deploy, roll back to a previous deploy, eject/adopt an
+  app, destroy an app, and watch build/runtime logs stream live via
   Server-Sent Events. Each app page shows deploy history, a live status
-  chip, and a stats line (cpu/memory when `metrics-server` is available,
-  ready/desired replicas, deploy count).
+  chip, a stats line (cpu/memory when `metrics-server` is available,
+  ready/desired replicas, deploy count), and a Danger zone for eject/destroy.
 - **Audit** (`/ui/audit`, admin) — every mutating action, who did it, and when.
 - **Users & invites** (`/ui/users`, admin) — list every user (email, role,
   created, active token count), delete a user, and mint invites — each

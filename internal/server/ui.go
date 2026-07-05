@@ -45,10 +45,16 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/registry-gc", s.uiPage(s.handleUIRegistryGC))
 	mux.HandleFunc("GET /ui/doctor", s.uiPage(s.handleUIDoctor))
 	mux.HandleFunc("GET /ui/", s.uiPage(s.handleUIProjects))
+	mux.HandleFunc("POST /ui/projects", s.uiPage(s.handleUIProjectCreate))
+	mux.HandleFunc("POST /ui/projects/{project}/members", s.uiPage(s.handleUIAddMember))
 	mux.HandleFunc("GET /ui/projects/{project}", s.uiPage(s.handleUIApps))
 	mux.HandleFunc("POST /ui/projects/{project}/apps", s.uiPage(s.handleUICreateApp))
+	mux.HandleFunc("POST /ui/projects/{project}/addons/upgrade", s.uiPage(s.handleUIAddonUpgrade))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}", s.uiPage(s.handleUIApp))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/chip", s.uiPage(s.handleUIChip))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/destroy", s.uiPage(s.handleUIAppDestroy))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/eject", s.uiPage(s.handleUIEject))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/retry", s.uiPage(s.handleUIDomainRetry))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/scale", s.uiPage(s.handleUIScale))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/health", s.uiPage(s.handleUIHealth))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook", s.uiPage(s.handleUIWebhookEnable))
@@ -272,7 +278,74 @@ func (s *server) handleUIProjects(w http.ResponseWriter, r *http.Request, u stor
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.renderPage(w, "projects.html", map[string]any{"User": u, "Projects": list, "CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin"})
+	var banner string
+	if e := r.URL.Query().Get("err"); e != "" {
+		banner = "error: " + e
+	}
+	s.renderPage(w, "projects.html", map[string]any{
+		"User": u, "Projects": list, "Banner": banner,
+		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
+	})
+}
+
+// handleUIProjectCreate is handleCreateProject's UI twin: same store
+// CreateProject core, admin-gated, redirect instead of a 201 body.
+func (s *server) handleUIProjectCreate(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !s.uiAdmin(w, u) {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.st.CreateProject(r.PostFormValue("name")); err != nil {
+		msg := "internal error"
+		var ve *store.ValidationError
+		switch {
+		case strings.Contains(err.Error(), "UNIQUE constraint failed: projects."):
+			msg = "project already exists"
+		case errors.As(err, &ve):
+			msg = ve.Error()
+		default:
+			log.Printf("ui create project: %v", err)
+		}
+		http.Redirect(w, r, "/ui/?err="+url.QueryEscape(msg), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+}
+
+// handleUIAddMember is handleAddMember's UI twin: same GetUserByEmail+
+// AddMember core, admin-gated, redirect back to the project page instead of
+// a 204.
+func (s *server) handleUIAddMember(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !s.uiAdmin(w, u) {
+		return
+	}
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	member, err := s.st.GetUserByEmail(r.PostFormValue("email"))
+	if errors.Is(err, store.ErrNotFound) {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"?err="+url.QueryEscape("no such user"), http.StatusSeeOther)
+		return
+	}
+	if err != nil {
+		log.Printf("ui add member: get user: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.st.AddMember(p.ID, member.ID); err != nil {
+		log.Printf("ui add member: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
 // uiAppRow is apps.html's per-row view model: the store.App plus its
@@ -324,8 +397,18 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	members, err := s.st.ListMembers(p.ID)
+	if err != nil {
+		log.Printf("ui members: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	var banner string
+	if e := r.URL.Query().Get("err"); e != "" {
+		banner = "error: " + e
+	}
 	s.renderPage(w, "apps.html", map[string]any{
-		"User": u, "Project": p, "Apps": rows, "Addons": addons,
+		"User": u, "Project": p, "Apps": rows, "Addons": addons, "Members": members, "Banner": banner,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	})
 }
@@ -1132,6 +1215,122 @@ func (s *server) handleUIRollback(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 	uiRedirect(w, r, p, a)
+}
+
+// handleUIAppDestroy is handleDeleteApp's UI twin: same destroyApp core,
+// redirect back to the project page instead of a 204.
+func (s *server) handleUIAppDestroy(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if !a.Ejected && s.kube == nil {
+		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.destroyApp(r.Context(), p, a); err != nil {
+		log.Printf("ui destroy app: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
+}
+
+// handleUIEject is handleEjectApp's UI twin: same ejectApp core, redirect
+// back to the app page (whose ejected banner then tells the story) instead
+// of returning the rendered YAML in the body.
+func (s *server) handleUIEject(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if s.refuseEjected(w, a) {
+		return
+	}
+	if _, _, err := s.ejectApp(p, a); err != nil {
+		log.Printf("ui eject %s: %v", a.Name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIDomainRetry is handleRetryDomain's UI twin: same retryDomain core,
+// redirect back to the app page instead of a 202.
+func (s *server) handleUIDomainRetry(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if s.refuseEjected(w, a) {
+		return
+	}
+	if s.certProviderName() != "builtin" {
+		http.Error(w, "cert retry only applies to the builtin provider", http.StatusConflict)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	if err := s.retryDomain(p, a, r.PostFormValue("hostname")); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "no such domain", http.StatusNotFound)
+			return
+		}
+		log.Printf("ui domain retry: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIAddonUpgrade is handleUpgradeAddon's UI twin: same upgradeAddon
+// core, redirect back to the project page instead of a 200 body.
+func (s *server) handleUIAddonUpgrade(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	if s.kube == nil {
+		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	ad, ok := s.uiAddon(w, p, r.PostFormValue("name"))
+	if !ok {
+		return
+	}
+	version := r.PostFormValue("version")
+	if version == "" {
+		http.Error(w, "version is required", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.upgradeAddon(r.Context(), p, ad, version); err != nil {
+		if errors.Is(err, errSealerUnavailable) {
+			http.Error(w, "sealer is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		log.Printf("ui upgrade addon %s: %v", ad.Name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
 // registerPageData builds register.html's view-model for a given token,

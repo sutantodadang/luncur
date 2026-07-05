@@ -2,53 +2,121 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/ui/static/plex-sans-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/ui/static/plex-sans-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/ui/static/plex-sans-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/ui/static/plex-sans-700.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/ui/static/plex-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/ui/static/plex-mono-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/ui/static/plex-mono-600.woff2") format("woff2");
+}
+
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-400 transition-colors;
+    @apply inline-flex items-center justify-center rounded bg-signal px-4 py-[7px] text-[13px] font-semibold text-[#0A0A0B] hover:bg-signalhi transition-colors;
   }
   .btn-danger {
-    @apply inline-flex items-center justify-center rounded-md bg-rose-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-rose-500 transition-colors;
+    @apply inline-flex items-center justify-center rounded border border-[rgba(255,77,79,.35)] bg-transparent px-4 py-[7px] text-[13px] font-semibold text-fail hover:bg-[rgba(255,77,79,.1)] transition-colors;
   }
   .btn-ghost {
-    @apply inline-flex items-center justify-center rounded-md border border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-300 hover:bg-slate-800 transition-colors;
+    @apply inline-flex items-center justify-center rounded border border-line bg-transparent px-4 py-[7px] text-[13px] font-semibold text-ink hover:border-mut hover:text-inkhi transition-colors;
   }
   .input {
-    @apply w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none;
+    @apply w-full rounded-[4px] border border-line bg-bg px-2.5 py-1.5 text-[13px] text-ink focus:border-signal focus:outline-none;
   }
   .card {
-    @apply rounded-lg border border-slate-800 bg-slate-900 p-4;
+    @apply rounded-md border border-line bg-panel p-5;
   }
   .chip {
-    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+    @apply inline-flex items-center rounded-[4px] px-2 py-0.5 font-mono text-[11px] font-medium;
   }
   .chip-ok {
-    @apply bg-emerald-500/10 text-emerald-400;
+    @apply border border-[rgba(61,220,132,.25)] bg-[rgba(61,220,132,.1)] text-phosphor;
   }
   .chip-warn {
-    @apply bg-amber-500/10 text-amber-400;
+    @apply border border-[rgba(255,178,36,.25)] bg-[rgba(255,178,36,.1)] text-build;
   }
   .chip-bad {
-    @apply bg-rose-500/10 text-rose-400;
+    @apply border border-[rgba(255,77,79,.25)] bg-[rgba(255,77,79,.1)] text-fail;
   }
   .chip-muted {
-    @apply bg-slate-500/10 text-slate-400;
+    @apply border border-line bg-[rgba(110,110,120,.1)] text-mut;
   }
 
   .tbl {
-    @apply w-full text-sm;
+    @apply w-full text-[13px];
   }
   .tbl th {
-    @apply py-2 pr-4 text-left text-xs font-medium uppercase tracking-wide text-slate-500;
+    @apply pb-2 pr-4 text-left font-mono text-[11px] font-semibold uppercase tracking-[.1em] text-mut border-b border-line;
   }
   .tbl td {
-    @apply border-b border-slate-800/60 py-2 pr-4;
+    @apply h-8 border-b border-row px-3 py-[7px];
+  }
+  .tbl tr:hover td {
+    @apply bg-[#17171B];
   }
 
   /* card section headings — kept as bare <h2> in templates (some UI tests
      assert the literal "<h2>Section</h2>" markup), styled here instead of
      via inline classes. */
   .card h2 {
-    @apply mb-3 text-sm font-semibold uppercase tracking-wide text-white;
+    @apply mb-3 font-mono text-[11px] font-semibold uppercase tracking-[.14em] text-mut;
+  }
+
+  .seclabel {
+    @apply font-mono text-[11px] font-semibold uppercase tracking-[.14em] text-mut;
+  }
+
+  .cli-echo {
+    @apply mt-1.5 font-mono text-[11px] text-mut;
+  }
+  .cli-echo b {
+    @apply font-normal text-[#8A8A94];
+  }
+
+  .term {
+    @apply rounded-md border border-line bg-termbg p-3 font-mono text-[12px] leading-relaxed text-termtext;
   }
 
   /* Legacy status-* / err classes are kept as literal class names in the
@@ -56,23 +124,28 @@
      dark-theme chips instead of the old inline <style> colors. */
   .status-live,
   .status-issued {
-    @apply inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400;
+    @apply inline-flex items-center rounded-[4px] border border-[rgba(61,220,132,.25)] bg-[rgba(61,220,132,.1)] px-2 py-0.5 font-mono text-[11px] font-medium text-phosphor;
   }
   .status-building,
   .status-deploying {
-    @apply inline-flex animate-pulse items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400;
+    @apply inline-flex animate-pulse;
+  }
+  .status-building,
+  .status-deploying,
+  .status-pending {
+    @apply items-center rounded-[4px] border border-[rgba(255,178,36,.25)] bg-[rgba(255,178,36,.1)] px-2 py-0.5 font-mono text-[11px] font-medium text-build;
   }
   .status-pending {
-    @apply inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400;
+    @apply inline-flex;
   }
   .status-failed {
-    @apply inline-flex items-center rounded-full bg-rose-500/10 px-2 py-0.5 text-xs font-medium text-rose-400;
+    @apply inline-flex items-center rounded-[4px] border border-[rgba(255,77,79,.25)] bg-[rgba(255,77,79,.1)] px-2 py-0.5 font-mono text-[11px] font-medium text-fail;
   }
   .status-none,
   .status-external {
-    @apply inline-flex items-center rounded-full bg-slate-500/10 px-2 py-0.5 text-xs font-medium text-slate-400;
+    @apply inline-flex items-center rounded-[4px] border border-line bg-[rgba(110,110,120,.1)] px-2 py-0.5 font-mono text-[11px] font-medium text-mut;
   }
   .err {
-    @apply mb-3 block text-sm text-rose-400;
+    @apply mb-3 block text-sm text-fail;
   }
 }

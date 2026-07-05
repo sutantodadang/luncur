@@ -23,6 +23,42 @@ func (s *server) refuseEjected(w http.ResponseWriter, a store.App) bool {
 	return true
 }
 
+// ejectApp is handleEjectApp's and handleUIEject's shared core: render the
+// app's current manifests, mark it ejected in the store, and best-effort
+// save the rendered YAML under dataDir/ejected for reference. The caller
+// must have already refused an already-ejected app.
+func (s *server) ejectApp(p store.Project, a store.App) (yamlOut []byte, savedTo string, err error) {
+	image, err := s.appImage(a)
+	if err != nil {
+		return nil, "", fmt.Errorf("image: %w", err)
+	}
+	rendered, err := s.renderApp(p, a, image, true)
+	if err != nil {
+		return nil, "", fmt.Errorf("render: %w", err)
+	}
+	y, err := render.YAML(rendered)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if err := s.st.SetAppEjected(a.ID); err != nil {
+		return nil, "", err
+	}
+
+	saved := ""
+	if s.dataDir != "" {
+		dir := filepath.Join(s.dataDir, "ejected")
+		if err := os.MkdirAll(dir, 0o700); err == nil {
+			saved = filepath.Join(dir, fmt.Sprintf("%s-%s.yaml", p.Name, a.Name))
+			if err := os.WriteFile(saved, y, 0o600); err != nil {
+				log.Printf("eject %s: save yaml: %v", a.Name, err)
+				saved = ""
+			}
+		}
+	}
+	return y, saved, nil
+}
+
 func (s *server) handleEjectApp(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.requireProject(w, u, r.PathValue("project"))
 	if !ok {
@@ -36,40 +72,11 @@ func (s *server) handleEjectApp(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	image, err := s.appImage(a)
+	y, saved, err := s.ejectApp(p, a)
 	if err != nil {
-		log.Printf("eject %s: image: %v", a.Name, err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-	rendered, err := s.renderApp(p, a, image, true)
-	if err != nil {
-		log.Printf("eject %s: render: %v", a.Name, err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-	y, err := render.YAML(rendered)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-
-	if err := s.st.SetAppEjected(a.ID); err != nil {
 		log.Printf("eject %s: %v", a.Name, err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
-	}
-
-	saved := ""
-	if s.dataDir != "" {
-		dir := filepath.Join(s.dataDir, "ejected")
-		if err := os.MkdirAll(dir, 0o700); err == nil {
-			saved = filepath.Join(dir, fmt.Sprintf("%s-%s.yaml", p.Name, a.Name))
-			if err := os.WriteFile(saved, y, 0o600); err != nil {
-				log.Printf("eject %s: save yaml: %v", a.Name, err)
-				saved = ""
-			}
-		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"yaml": string(y), "saved_to": saved})
 }

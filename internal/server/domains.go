@@ -179,6 +179,29 @@ func (s *server) handleDeleteDomain(w http.ResponseWriter, r *http.Request, u st
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// retryDomain is handleRetryDomain's and handleUIDomainRetry's shared core:
+// reset hostname's cert status to "none" and nudge the cert manager. Returns
+// store.ErrNotFound if hostname isn't one of the app's domains. The caller
+// must have already checked the app isn't ejected and the provider is
+// "builtin".
+func (s *server) retryDomain(p store.Project, a store.App, hostname string) error {
+	list, err := s.st.ListDomains(a.ID)
+	if err != nil {
+		return err
+	}
+	for _, d := range list {
+		if d.Hostname == hostname {
+			if err := s.st.SetDomainCert(d.ID, "none", "", ""); err != nil {
+				return err
+			}
+			d.CertStatus, d.CertError = "none", ""
+			s.kickCerts(p, a, d)
+			return nil
+		}
+	}
+	return store.ErrNotFound
+}
+
 func (s *server) handleRetryDomain(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.requireProject(w, u, r.PathValue("project"))
 	if !ok {
@@ -195,24 +218,15 @@ func (s *server) handleRetryDomain(w http.ResponseWriter, r *http.Request, u sto
 		writeError(w, http.StatusConflict, "wrong_provider", "cert retry only applies to the builtin provider")
 		return
 	}
-	list, err := s.st.ListDomains(a.ID)
-	if err != nil {
+	if err := s.retryDomain(p, a, r.PathValue("hostname")); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "no such domain")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	for _, d := range list {
-		if d.Hostname == r.PathValue("hostname") {
-			if err := s.st.SetDomainCert(d.ID, "none", "", ""); err != nil {
-				writeError(w, http.StatusInternalServerError, "internal", "internal error")
-				return
-			}
-			d.CertStatus, d.CertError = "none", ""
-			s.kickCerts(p, a, d)
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-	}
-	writeError(w, http.StatusNotFound, "not_found", "no such domain")
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // kickCerts nudges the cert manager about a domain. Wired by the builtin

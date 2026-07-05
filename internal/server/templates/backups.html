@@ -1,8 +1,8 @@
 {{define "backups.html"}}
 {{template "head" .}}{{template "nav" .}}
-<h1 class="mb-4 text-xl font-semibold text-white">Backups</h1>
+<h1 class="mb-4 text-xl font-semibold text-inkhi">Backups</h1>
 <div class="card">
-{{if not .Backups}}<p class="mb-3 text-sm text-slate-600">no backups yet.</p>{{end}}
+{{if not .Backups}}<p class="mb-1 text-sm text-mut">no backups yet.</p><div class="cli-echo mb-2">$ <b>luncur backup create</b></div>{{end}}
 <table class="tbl"><tr><th>When</th><th>File</th><th>Size</th><th>Uploaded</th></tr>
 {{range .Backups}}<tr>
   <td>{{.CreatedAt}}</td>
@@ -21,7 +21,9 @@
   <button type="submit" class="btn-ghost" hx-confirm="Prune old backups beyond the configured keep count?">prune old</button>
 </form>
 </div>
-<p class="mt-3 text-xs text-slate-600">Restore is CLI-only &mdash; <code>luncur restore &lt;file&gt;</code></p>
+<div class="cli-echo">$ <b>luncur backup create</b></div>
+<p class="mt-3 text-xs text-mut">Restore is CLI-only &mdash; <code>luncur restore &lt;file&gt;</code></p>
+<div class="cli-echo">$ <b>luncur restore &lt;archive&gt;</b></div>
 </div>
 {{template "foot" .}}
 {{end}}

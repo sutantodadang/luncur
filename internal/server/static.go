@@ -17,8 +17,9 @@ var staticFS embed.FS
 // this server ships to their Content-Type. Anything else 404s rather than
 // guessing.
 var staticContentType = map[string]string{
-	".css": "text/css; charset=utf-8",
-	".js":  "text/javascript; charset=utf-8",
+	".css":   "text/css; charset=utf-8",
+	".js":    "text/javascript; charset=utf-8",
+	".woff2": "font/woff2",
 }
 
 // handleUIStatic serves the embedded CSS/JS assets under /ui/static/{file}.

@@ -452,6 +452,36 @@ func (s *server) handleDeleteAddon(w http.ResponseWriter, r *http.Request, u sto
 // image tag; it cannot run engine-level data migrations.
 const addonUpgradeWarning = "major version DB upgrades may require manual migration — take a backup first."
 
+// upgradeAddon is handleUpgradeAddon's and handleUIAddonUpgrade's shared
+// core: persist the new version, re-render the addon's manifests at that
+// version, and SSA-apply them (rolling restart). The PVC and credentials are
+// untouched. The caller must have already confirmed kube is configured.
+func (s *server) upgradeAddon(ctx context.Context, p store.Project, a store.Addon, version string) (store.Addon, error) {
+	if err := s.st.SetAddonVersion(a.ID, version); err != nil {
+		return store.Addon{}, err
+	}
+	a.Version = version
+
+	creds, err := s.unsealCreds(a)
+	if err != nil {
+		return store.Addon{}, err
+	}
+	objs, err := addon.Render(addon.Params{
+		Namespace: p.Namespace, Type: a.Type, Name: a.Name, Version: a.Version,
+		SizeGB: a.SizeGB, Creds: creds,
+	})
+	if err != nil {
+		return store.Addon{}, fmt.Errorf("render: %w", err)
+	}
+	if err := s.kube.EnsureNamespace(ctx, p.Namespace); err != nil {
+		return store.Addon{}, fmt.Errorf("namespace: %w", err)
+	}
+	if err := s.kube.Apply(ctx, p.Namespace, objs); err != nil {
+		return store.Addon{}, fmt.Errorf("apply: %w", err)
+	}
+	return a, nil
+}
+
 // handleUpgradeAddon re-renders an addon's manifests at a new version and
 // SSA-applies them (rolling restart). The PVC and credentials are untouched.
 func (s *server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -475,45 +505,19 @@ func (s *server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request, u st
 		return
 	}
 
-	if err := s.st.SetAddonVersion(a.ID, req.Version); err != nil {
-		log.Printf("upgrade addon %s: %v", a.Name, err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-	a.Version = req.Version
-
-	creds, err := s.unsealCreds(a)
+	updated, err := s.upgradeAddon(r.Context(), p, a, req.Version)
 	if err != nil {
 		if errors.Is(err, errSealerUnavailable) {
 			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", "sealer is not configured")
 			return
 		}
-		log.Printf("upgrade addon %s: creds: %v", a.Name, err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-	objs, err := addon.Render(addon.Params{
-		Namespace: p.Namespace, Type: a.Type, Name: a.Name, Version: a.Version,
-		SizeGB: a.SizeGB, Creds: creds,
-	})
-	if err != nil {
-		log.Printf("upgrade addon %s: render: %v", a.Name, err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-	if err := s.kube.EnsureNamespace(r.Context(), p.Namespace); err != nil {
-		log.Printf("upgrade addon %s: namespace: %v", a.Name, err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-	if err := s.kube.Apply(r.Context(), p.Namespace, objs); err != nil {
-		log.Printf("upgrade addon %s: apply: %v", a.Name, err)
+		log.Printf("upgrade addon %s: %v", a.Name, err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"name": a.Name, "type": a.Type, "version": a.Version,
+		"name": updated.Name, "type": updated.Type, "version": updated.Version,
 		"warning": addonUpgradeWarning,
 	})
 }

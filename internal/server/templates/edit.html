@@ -1,10 +1,10 @@
 {{define "edit.html"}}
 {{template "head" .}}{{template "nav" .}}
-<p class="mb-1 text-sm"><a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}">&larr; {{.App.Name}}</a></p>
-<h1 class="mb-4 text-xl font-semibold text-white">Edit {{.Kind}} — {{.App.Name}}</h1>
+<p class="mb-1 font-mono text-[11px] text-mut"><a class="hover:text-inkhi" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}">&larr; {{.App.Name}}</a></p>
+<h1 class="mb-4 text-xl font-semibold text-inkhi">Edit {{.Kind}} — {{.App.Name}}</h1>
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 <div class="card">
-<p class="mb-3 text-sm text-slate-500">Changes are stored as an override patch and survive redeploys.</p>
+<p class="mb-3 text-sm text-mut">Changes are stored as an override patch and survive redeploys.</p>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/{{.Kind}}">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <textarea class="input mb-3 h-96 font-mono text-xs" name="yaml" rows="30">{{.YAML}}</textarea>

@@ -1,6 +1,6 @@
 {{define "users.html"}}
 {{template "head" .}}{{template "nav" .}}
-<h1 class="mb-4 text-xl font-semibold text-white">Users</h1>
+<h1 class="mb-4 text-xl font-semibold text-inkhi">Users</h1>
 <div class="card mb-6">
 <table class="tbl"><tr><th>Email</th><th>Role</th><th>Created</th><th>Tokens</th><th></th></tr>
 {{range .Users}}<tr>
@@ -32,11 +32,11 @@
   {{end}}</td>
 </tr>{{end}}
 </table>
-{{if .MailNote}}<p class="mt-3 text-sm text-slate-400"><em>{{.MailNote}}</em></p>{{end}}
+{{if .MailNote}}<p class="mt-3 text-sm text-mut"><em>{{.MailNote}}</em></p>{{end}}
 <form method="post" action="/ui/users/invite" class="mt-3 flex flex-wrap items-center gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <label class="flex items-center gap-1 text-sm text-slate-400">role <select class="input w-auto" name="role"><option>member</option><option>admin</option></select></label>
-  <label class="flex items-center gap-1 text-sm text-slate-400">email <input class="input w-auto" name="email" size="28" placeholder="optional — email the link"></label>
+  <label class="flex items-center gap-1 text-sm text-mut">role <select class="input w-auto" name="role"><option>member</option><option>admin</option></select></label>
+  <label class="flex items-center gap-1 text-sm text-mut">email <input class="input w-auto" name="email" size="28" placeholder="optional — email the link"></label>
   <button type="submit" class="btn">create invite</button>
 </form>
 </div>

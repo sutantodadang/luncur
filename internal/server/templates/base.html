@@ -8,25 +8,26 @@
 <link rel="stylesheet" href="/ui/static/app.css?v={{v}}">
 <script src="/ui/static/htmx.min.js?v={{v}}" defer></script>
 </head>
-<body hx-boost="true" class="bg-slate-950 text-slate-300 min-h-screen antialiased">
+<body hx-boost="true" class="bg-bg text-ink min-h-screen antialiased font-sans">
 <div class="flex min-h-screen">
 {{end}}
 
 {{define "nav"}}
-<aside class="flex w-56 flex-col gap-1 border-r border-slate-800 p-4">
-  <a href="/ui/" class="mb-4 text-lg font-semibold text-white">luncur</a>
-  <a href="/ui/" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Projects</a>
-  <a href="/ui/tokens" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Tokens</a>
-  <a href="/ui/sshkeys" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">SSH keys</a>
+<aside class="flex w-56 flex-col gap-1 border-r border-line bg-[#0D0D0F] p-4">
+  <a href="/ui/" class="mb-4 text-lg font-semibold text-inkhi">luncur<span class="text-signal">_</span></a>
+  <a href="/ui/" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Projects</a>
+  <a href="/ui/tokens" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Tokens</a>
+  <a href="/ui/sshkeys" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">SSH keys</a>
   {{if .IsAdmin}}
-  <a href="/ui/audit" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Audit</a>
-  <a href="/ui/users" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Users</a>
-  <a href="/ui/backups" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Backups</a>
-  <a href="/ui/settings" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Settings</a>
-  <a href="/ui/doctor" class="block rounded-md px-3 py-1.5 text-sm hover:bg-slate-800 hover:text-white">Doctor</a>
+  <p class="seclabel mt-3 mb-1 px-3">Admin</p>
+  <a href="/ui/audit" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Audit</a>
+  <a href="/ui/users" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Users</a>
+  <a href="/ui/backups" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Backups</a>
+  <a href="/ui/settings" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Settings</a>
+  <a href="/ui/doctor" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Doctor</a>
   {{end}}
   <div class="mt-auto flex flex-col gap-2">
-    <span class="truncate text-xs text-slate-500">{{.User.Email}}</span>
+    <span class="truncate text-xs text-mut">{{.User.Email}}</span>
     <form method="post" action="/ui/logout">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
       <button type="submit" class="btn-ghost w-full">log out</button>
