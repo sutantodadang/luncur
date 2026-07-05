@@ -102,6 +102,14 @@ fi
 # NOTE: the wrapper itself execs `buildctl "$@"` — do NOT prefix the args
 # with `buildctl`, or the CLI sees `buildctl buildctl build` and exits 3
 # with "No help topic for 'buildctl'".
+#
+# BUILDKITD_FLAGS: --oci-worker-no-process-sandbox is the third documented
+# requirement for rootless BuildKit on Kubernetes (alongside unconfined
+# seccomp/AppArmor, which the Job's pod spec sets). Without it buildkitd
+# starts fine and can pull/extract images, but CANNOT execute containers —
+# the first container exec (the docker/dockerfile:1 syntax frontend, or any
+# RUN step) dies with a bare "failed to solve: exit code: 1".
+export BUILDKITD_FLAGS="--oci-worker-no-process-sandbox ${BUILDKITD_FLAGS:-}"
 buildctl-daemonless.sh build \
   --frontend dockerfile.v0 \
   --local context="${BUILD_DIR}" \
