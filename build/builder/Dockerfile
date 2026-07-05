@@ -29,10 +29,10 @@ RUN apk add --no-cache git ca-certificates bash
 # Install nixpacks: download the release binary directly from GitHub.
 # This avoids needing curl+bash+curl script; we just fetch the binary.
 # Using the static binary from the release assets.
-ARG NIXPACKS_VERSION=1.19.3
+ARG NIXPACKS_VERSION=1.41.0
 RUN apk add --no-cache curl && \
-    curl -sSL -o /tmp/nixpacks.tar.gz \
-      "https://github.com/railwayapp/nixpacks/releases/download/v${NIXPACKS_VERSION}/nixpacks-x86_64-unknown-linux-musl.tar.gz" && \
+    curl -fsSL -o /tmp/nixpacks.tar.gz \
+      "https://github.com/railwayapp/nixpacks/releases/download/v${NIXPACKS_VERSION}/nixpacks-v${NIXPACKS_VERSION}-x86_64-unknown-linux-musl.tar.gz" && \
     tar -xzf /tmp/nixpacks.tar.gz -C /usr/local/bin && \
     rm /tmp/nixpacks.tar.gz && \
     apk del curl && \
