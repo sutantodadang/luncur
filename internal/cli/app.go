@@ -16,6 +16,7 @@ func appCmd() *cobra.Command {
 	var port int
 	var gitURL, branch string
 	var kind, schedule string
+	var buildPath string
 
 	create := &cobra.Command{
 		Use:   "create <name>",
@@ -28,9 +29,9 @@ func appCmd() *cobra.Command {
 			}
 			var a client.AppInfo
 			if gitURL != "" {
-				a, err = c.CreateGitApp(project, args[0], port, gitURL, branch, kind, schedule)
+				a, err = c.CreateGitApp(project, args[0], port, gitURL, branch, kind, schedule, buildPath)
 			} else {
-				a, err = c.CreateApp(project, args[0], port, kind, schedule)
+				a, err = c.CreateApp(project, args[0], port, kind, schedule, buildPath)
 			}
 			if err != nil {
 				return err
@@ -49,6 +50,7 @@ func appCmd() *cobra.Command {
 	create.Flags().StringVar(&branch, "branch", "", "git branch (default: main)")
 	create.Flags().StringVar(&kind, "kind", "web", "app kind: web, worker, or cron")
 	create.Flags().StringVar(&schedule, "schedule", "", "cron schedule, 5-field (cron kind only)")
+	create.Flags().StringVar(&buildPath, "path", "", "subdirectory to build (monorepo)")
 
 	var listProject string
 	list := &cobra.Command{

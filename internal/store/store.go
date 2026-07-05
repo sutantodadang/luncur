@@ -70,6 +70,7 @@ func migrate(db *sql.DB) error {
 		{"apps", "kind", `ALTER TABLE apps ADD COLUMN kind TEXT NOT NULL DEFAULT 'web'`},
 		{"apps", "schedule", `ALTER TABLE apps ADD COLUMN schedule TEXT NOT NULL DEFAULT ''`},
 		{"apps", "webhook_secret", `ALTER TABLE apps ADD COLUMN webhook_secret BLOB`},
+		{"apps", "build_path", `ALTER TABLE apps ADD COLUMN build_path TEXT NOT NULL DEFAULT ''`},
 	} {
 		var n int
 		if err := db.QueryRow(

@@ -39,6 +39,28 @@ func testEnv(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// testEnvStore is testEnv's twin for tests that need direct store access to
+// verify state the CLI/API don't surface in responses (e.g. build_path,
+// which mirrors git_url in not being exposed via GET/app info).
+func testEnvStore(t *testing.T) (*httptest.Server, *store.Store) {
+	t.Helper()
+	t.Setenv("LUNCUR_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUser("root@b.co", "pw123456", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(server.New(server.Deps{Store: st, Sealer: sealer, DataDir: t.TempDir()}))
+	t.Cleanup(func() { srv.Close(); st.Close() })
+	return srv, st
+}
+
 func run(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	root := newRoot()

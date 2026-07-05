@@ -82,13 +82,18 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		GitBranch string `json:"git_branch"`
 		Kind      string `json:"kind"`
 		Schedule  string `json:"schedule"`
+		BuildPath string `json:"build_path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
+	buildPath, err := validBuildPath(req.BuildPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "build_path: "+err.Error())
+		return
+	}
 	var a store.App
-	var err error
 	if req.GitURL != "" {
 		a, err = s.st.CreateGitApp(p.ID, req.Name, req.Port, req.GitURL, req.GitBranch, req.Kind, req.Schedule)
 	} else {
@@ -106,6 +111,14 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		}
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
+	}
+	if buildPath != "" {
+		if err := s.st.SetBuildPath(a.ID, buildPath); err != nil {
+			log.Printf("set build path: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		a.BuildPath = buildPath
 	}
 	writeJSON(w, http.StatusCreated, s.appJSON(a))
 }

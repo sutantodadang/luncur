@@ -25,6 +25,7 @@ type BuildParams struct {
 	GitBranch    string
 	DeployID     int64
 	CacheRef     string
+	BuildPath    string
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -54,6 +55,9 @@ func RenderBuildJob(p BuildParams) (render.Object, error) {
 	}
 	if p.CacheRef != "" {
 		env = append(env, corev1.EnvVar{Name: "LUNCUR_CACHE_REF", Value: p.CacheRef})
+	}
+	if p.BuildPath != "" {
+		env = append(env, corev1.EnvVar{Name: "LUNCUR_BUILD_PATH", Value: p.BuildPath})
 	}
 
 	container := corev1.Container{

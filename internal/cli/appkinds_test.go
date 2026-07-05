@@ -50,6 +50,35 @@ func TestAppCreateKindFlagMatrix(t *testing.T) {
 	}
 }
 
+// TestAppCreateBuildPathFlag checks that `app create --path` round-trips
+// through the API into the stored build_path (not surfaced via app info/list
+// responses, mirroring how git_url isn't either — verified directly against
+// the store).
+func TestAppCreateBuildPathFlag(t *testing.T) {
+	srv, st := testEnvStore(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "app", "create", "api", "--project", "p", "--port", "3000", "--path", "backend"); err != nil {
+		t.Fatal(err)
+	}
+
+	proj, err := st.GetProject("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.GetApp(proj.ID, "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.BuildPath != "backend" {
+		t.Fatalf("build path: got %q, want %q", a.BuildPath, "backend")
+	}
+}
+
 // TestAppListShowsKind checks `app list`'s KIND column and that non-web apps
 // show "-" instead of a URL.
 func TestAppListShowsKind(t *testing.T) {
