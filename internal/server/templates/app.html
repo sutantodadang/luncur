@@ -3,7 +3,7 @@
 <p class="mb-1 text-sm"><a class="text-indigo-400 hover:text-indigo-300" href="/ui/projects/{{.Project.Name}}">&larr; {{.Project.Name}}</a></p>
 <h1 class="mb-1 flex flex-wrap items-center gap-2 text-xl font-semibold text-white">
   {{.App.Name}}
-  <span class="status-{{.Status}}">{{.Status}}</span>
+  {{template "statuschip" .Chip}}
   {{if .App.Ejected}} <span class="status-failed">ejected</span>{{end}}
   {{if ne .App.Kind "web"}} <span class="status-pending">{{.App.Kind}}</span>{{end}}
 </h1>
@@ -17,8 +17,8 @@
 {{if .Warning}}<p class="err">{{.Warning}}</p>{{end}}
 
 {{if .App.Ejected}}
-<div class="card mb-6">
-<p class="mb-3 text-sm text-slate-400">This app is ejected — luncur no longer manages it.</p>
+<div class="card mb-6 border-amber-500/40 bg-amber-500/10">
+<p class="mb-3 text-sm text-amber-400">This app is ejected — luncur no longer manages its manifests. Adopt to resume management.</p>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/adopt">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <button type="submit" class="btn">adopt — luncur manages it again</button>
@@ -67,7 +67,7 @@
 <p class="mb-3"><input class="input font-mono text-xs" readonly size="64" value="{{.WebhookURL}}"></p>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/webhook/disable">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <button type="submit" class="btn-danger">disable webhook</button>
+  <button type="submit" class="btn-danger" hx-confirm="Disable webhook for {{.App.Name}}? This cannot be undone.">disable webhook</button>
 </form>
 {{else}}
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/webhook">
@@ -84,7 +84,7 @@
 <table class="tbl">{{range .EnvKeys}}<tr><td><code>{{.}}</code></td><td>
   <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/env/delete">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-    <input type="hidden" name="key" value="{{.}}"><button type="submit" class="btn-ghost">unset</button>
+    <input type="hidden" name="key" value="{{.}}"><button type="submit" class="btn-ghost" hx-confirm="Unset env var {{.}}? This cannot be undone.">unset</button>
   </form></td></tr>{{end}}
 </table>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/env" class="mt-3 flex flex-wrap items-center gap-2">
@@ -98,16 +98,17 @@
 
 <div class="card mb-6">
 <h2>Deploys</h2>
-<table class="tbl"><tr><th>ID</th><th>Status</th><th>Image</th><th>When</th><th></th></tr>
-{{range .History}}<tr>
+<table class="tbl"><tr><th>ID</th><th>Status</th><th>Image</th><th>Actor</th><th>When</th><th></th></tr>
+{{range .Deploys}}<tr>
   <td>{{.ID}}</td><td><span class="status-{{.Status}}">{{.Status}}</span></td>
-  <td><code>{{.ImageRef}}</code>{{if .RolledBackFrom}} <em>(rollback of {{.RolledBackFrom}})</em>{{end}}</td>
-  <td>{{.CreatedAt}}</td>
+  <td><code class="font-mono text-xs" title="{{.ImageRef}}">{{.ImageTag}}</code>{{if .RolledBackFrom}} <em>(rollback of {{.RolledBackFrom}})</em>{{end}}</td>
+  <td class="text-xs text-slate-500">{{.Actor}}</td>
+  <td class="text-xs text-slate-500">{{.CreatedAt}}</td>
   <td>{{if and .ImageRef (ne .ID $.LatestID) (not $.App.Ejected)}}
     <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollback">
       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
       <input type="hidden" name="deploy_id" value="{{.ID}}">
-      <button type="submit" class="btn-ghost">rollback</button>
+      <button type="submit" class="btn-ghost" hx-confirm="Rollback {{$.App.Name}} to deploy #{{.ID}}?">rollback</button>
     </form>
   {{end}}</td>
 </tr>{{end}}
@@ -124,7 +125,7 @@
   <td>{{.CertExpiresAt}}</td>
   <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/domains/delete">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-    <input type="hidden" name="hostname" value="{{.Hostname}}"><button type="submit" class="btn-danger">remove</button>
+    <input type="hidden" name="hostname" value="{{.Hostname}}"><button type="submit" class="btn-danger" hx-confirm="Delete domain {{.Hostname}}? This cannot be undone.">remove</button>
   </form></td>
 </tr>{{end}}
 </table>
@@ -148,7 +149,7 @@
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
     <input type="hidden" name="name" value="{{.Name}}">
     <label class="text-xs text-slate-400"><input type="checkbox" name="purge" value="1"> purge data</label>
-    <button type="submit" class="btn-danger">remove</button>
+    <button type="submit" class="btn-danger" hx-confirm="Remove volume {{.Name}}? Data is deleted only if purge is checked. This cannot be undone.">remove</button>
   </form></td>
 </tr>{{end}}
 </table>
@@ -173,7 +174,7 @@
   <td>{{.Version}}</td>
   <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/addons/detach">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-    <input type="hidden" name="name" value="{{.Name}}"><button type="submit" class="btn-ghost">detach</button>
+    <input type="hidden" name="name" value="{{.Name}}"><button type="submit" class="btn-ghost" hx-confirm="Detach addon {{.Name}} from {{$.App.Name}}?">detach</button>
   </form></td>
 </tr>{{end}}
 </table>
@@ -190,6 +191,7 @@
 
 <div class="card">
 <h2>Logs</h2>
+<p class="mb-2 text-xs text-slate-600">streaming build/runtime logs</p>
 <pre id="logs" class="max-h-96 overflow-auto rounded-lg bg-black/60 p-4 font-mono text-xs text-emerald-300" data-project="{{.Project.Name}}" data-app="{{.App.Name}}"></pre>
 <script>
 (function () {
@@ -215,3 +217,10 @@
 </div>
 {{template "foot" .}}
 {{end}}
+
+{{/* statuschip is the polling fragment: while the latest deploy is still
+     building/deploying it re-fetches itself every 3s; once it lands on a
+     terminal status (live/failed/none/never_deployed) the returned markup
+     carries no hx-* attributes, so htmx has nothing left to re-trigger and
+     polling stops on its own. */}}
+{{define "statuschip"}}<span id="app-status-chip" class="status-{{.Status}}"{{if .Building}} hx-get="/ui/projects/{{.ProjectName}}/apps/{{.AppName}}/chip" hx-trigger="every 3s" hx-swap="outerHTML"{{end}}>{{.Status}}</span>{{end}}

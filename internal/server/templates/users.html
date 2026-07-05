@@ -9,7 +9,7 @@
     <form class="inline" method="post" action="/ui/users/delete">
       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
       <input type="hidden" name="id" value="{{.ID}}">
-      <button type="submit" class="btn-danger">delete</button>
+      <button type="submit" class="btn-danger" hx-confirm="Delete user {{.Email}}? This cannot be undone.">delete</button>
     </form>
   {{end}}</td>
 </tr>{{end}}
@@ -27,7 +27,7 @@
     <form class="inline" method="post" action="/ui/users/invite/revoke">
       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
       <input type="hidden" name="token" value="{{.Token}}">
-      <button type="submit" class="btn-ghost">revoke</button>
+      <button type="submit" class="btn-ghost" hx-confirm="Revoke this invite? This cannot be undone.">revoke</button>
     </form>
   {{end}}</td>
 </tr>{{end}}

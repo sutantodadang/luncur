@@ -8,17 +8,24 @@
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps" class="flex flex-wrap items-center gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <input class="input w-auto flex-1" name="name" placeholder="name" required>
-  <select class="input w-auto" name="kind">
+  <select class="input w-auto" name="kind" onchange="uiKindChange(this.value)">
     <option value="web">web</option>
     <option value="worker">worker</option>
     <option value="cron">cron</option>
   </select>
-  <input class="input w-auto" type="number" name="port" placeholder="port (web only)">
-  <input class="input w-auto flex-1" name="schedule" placeholder="schedule (cron only), e.g. 0 3 * * *">
+  <span id="port-field"><input class="input w-auto" type="number" name="port" placeholder="port (web only)"></span>
+  <span id="schedule-field"><input class="input w-auto flex-1" name="schedule" placeholder="schedule (cron only), e.g. 0 3 * * *"></span>
   <input class="input w-auto flex-1" name="git_url" placeholder="git URL (optional)">
   <input class="input w-auto" name="git_branch" placeholder="branch (optional)">
   <button type="submit" class="btn">create app</button>
 </form>
+<script>
+function uiKindChange(k) {
+  document.getElementById("port-field").style.display = k === "web" ? "" : "none";
+  document.getElementById("schedule-field").style.display = k === "cron" ? "" : "none";
+}
+uiKindChange("web");
+</script>
 </div>
 
 {{if not .Apps}}<p class="mb-6 text-sm text-slate-600">No apps yet. Create one above or with <code>luncur app create</code>.</p>{{end}}
@@ -28,6 +35,7 @@
   <div class="mb-1 flex items-center justify-between">
     <a class="font-medium text-white hover:text-indigo-300" href="/ui/projects/{{$.Project.Name}}/apps/{{.Name}}">{{.Name}}</a>
     <span class="flex gap-1">
+      {{if .Status}}<span class="status-{{.Status}}">{{.Status}}</span>{{else}}<span class="chip chip-muted">no deploys</span>{{end}}
       {{if ne .Kind "web"}}<span class="chip chip-muted">{{.Kind}}</span>{{end}}
       {{if .Ejected}}<span class="chip chip-bad">ejected</span>{{end}}
     </span>
@@ -52,7 +60,7 @@
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
     <input type="hidden" name="name" value="{{.Name}}">
     <label class="text-xs text-slate-400"><input type="checkbox" name="force" value="1"> force</label>
-    <button type="submit" class="btn-danger">remove</button>
+    <button type="submit" class="btn-danger" hx-confirm="Delete addon {{.Name}}? This cannot be undone.">remove</button>
   </form></td>
 </tr>{{end}}
 </table>

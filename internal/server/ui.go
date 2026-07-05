@@ -38,6 +38,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/projects/{project}", s.uiPage(s.handleUIApps))
 	mux.HandleFunc("POST /ui/projects/{project}/apps", s.uiPage(s.handleUICreateApp))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}", s.uiPage(s.handleUIApp))
+	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/chip", s.uiPage(s.handleUIChip))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/scale", s.uiPage(s.handleUIScale))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/health", s.uiPage(s.handleUIHealth))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook", s.uiPage(s.handleUIWebhookEnable))
@@ -265,7 +266,8 @@ func (s *server) handleUIProjects(w http.ResponseWriter, r *http.Request, u stor
 }
 
 // uiAppRow is apps.html's per-row view model: the store.App plus its
-// derived public URL.
+// derived public URL and latest-deploy status (empty when the app has never
+// been deployed — the template renders a "no deploys" chip for that case).
 type uiAppRow struct {
 	Name     string
 	Kind     string
@@ -273,6 +275,7 @@ type uiAppRow struct {
 	Replicas int
 	URL      string
 	Ejected  bool
+	Status   string
 }
 
 func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -292,9 +295,17 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		if a.Kind != "web" {
 			url = ""
 		}
+		status := ""
+		if d, err := s.st.LatestDeployment(a.ID); err == nil {
+			status = d.Status
+		} else if !errors.Is(err, store.ErrNotFound) {
+			log.Printf("ui apps latest deployment: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 		rows = append(rows, uiAppRow{
 			Name: a.Name, Kind: a.Kind, Schedule: a.Schedule,
-			Replicas: a.Replicas, URL: url, Ejected: a.Ejected,
+			Replicas: a.Replicas, URL: url, Ejected: a.Ejected, Status: status,
 		})
 	}
 	addons, err := s.addonRows(r.Context(), p)
@@ -358,6 +369,87 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 		return
 	}
 	s.renderAppDetail(w, r, u, p, a, nil)
+}
+
+// uiChipData is the "statuschip" fragment's view model: enough to render
+// the chip itself plus, while the deploy is still in flight, the route the
+// fragment polls to re-fetch its own next state.
+type uiChipData struct {
+	ProjectName string
+	AppName     string
+	Status      string
+	Building    bool
+}
+
+// chipData classifies a latest-deploy status into the chip's view model.
+// Shared by renderAppDetail (initial render) and handleUIChip (the polling
+// fragment) so "what counts as still building" lives in exactly one place.
+func chipData(projectName, appName, status string) uiChipData {
+	return uiChipData{
+		ProjectName: projectName, AppName: appName, Status: status,
+		Building: status == "building" || status == "deploying",
+	}
+}
+
+// handleUIChip is the polling fragment app.html's "statuschip" block
+// re-fetches every 3s while a deploy is building/deploying. It renders only
+// that one template block, not the full page.
+func (s *server) handleUIChip(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	status := "never_deployed"
+	if d, err := s.st.LatestDeployment(a.ID); err == nil {
+		status = d.Status
+	} else if !errors.Is(err, store.ErrNotFound) {
+		log.Printf("ui chip: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "statuschip", chipData(p.Name, a.Name, status)); err != nil {
+		log.Printf("render statuschip: %v", err)
+	}
+}
+
+// uiDeployRow is app.html's Deploys-card view model: store.Deployment plus
+// the image tag (the part of ImageRef after its last ":", full ref kept for
+// the row's title attribute) and an actor placeholder. No store surface maps
+// a user id to an email cheaply yet, so every row shows "-" for actor rather
+// than adding one just for this column.
+type uiDeployRow struct {
+	ID             int64
+	Status         string
+	ImageRef       string
+	ImageTag       string
+	CreatedAt      string
+	RolledBackFrom int64
+	Actor          string
+}
+
+// uiDeployRows builds the Deploys card's view model from ListDeployments'
+// newest-first history, capped at limit rows.
+func uiDeployRows(history []store.Deployment, limit int) []uiDeployRow {
+	if len(history) > limit {
+		history = history[:limit]
+	}
+	rows := make([]uiDeployRow, 0, len(history))
+	for _, d := range history {
+		tag := d.ImageRef
+		if idx := strings.LastIndex(d.ImageRef, ":"); idx >= 0 {
+			tag = d.ImageRef[idx+1:]
+		}
+		rows = append(rows, uiDeployRow{
+			ID: d.ID, Status: d.Status, ImageRef: d.ImageRef, ImageTag: tag,
+			CreatedAt: d.CreatedAt, RolledBackFrom: d.RolledBackFrom, Actor: "-",
+		})
+	}
+	return rows
 }
 
 // renderAppDetail assembles app.html's full view model and renders it.
@@ -431,10 +523,12 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
+	chip := chipData(p.Name, a.Name, status)
 	data := map[string]any{
 		"User": u, "Project": p, "App": a,
 		"Status": status, "LatestID": latestID, "URL": "http://" + hostFor(a.Name, s.externalIP),
-		"History": history, "EnvKeys": envKeys,
+		"Chip": chip, "Building": chip.Building,
+		"Deploys": uiDeployRows(history, 10), "EnvKeys": envKeys,
 		"IsGit":          a.SourceType == "git",
 		"WebhookEnabled": a.WebhookSecret != nil,
 		"WebhookURL":     "http://" + r.Host + webhookPath(p.Name, a.Name),

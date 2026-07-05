@@ -13,7 +13,7 @@
     <form class="inline" method="post" action="/ui/tokens/revoke">
       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
       <input type="hidden" name="id" value="{{.ID}}">
-      <button type="submit" class="btn-danger">revoke</button>
+      <button type="submit" class="btn-danger" hx-confirm="Revoke token {{.Name}}? This cannot be undone.">revoke</button>
     </form>
   </td>
 </tr>{{end}}
