@@ -16,9 +16,18 @@ import (
 type Source struct{ dir string }
 
 func NewSource(dataDir string) (*Source, error) {
+	// The Build Job's rootless pod (uid 1000) must traverse these dirs to
+	// read tarballs and append to its log file, while the server usually
+	// runs as root — world-accessible on purpose. Chmod explicitly because
+	// MkdirAll's mode is filtered by the umask and the dirs may pre-exist
+	// from an older, stricter version.
 	for _, sub := range []string{"sources", "logs"} {
-		if err := os.MkdirAll(filepath.Join(dataDir, sub), 0o700); err != nil {
+		p := filepath.Join(dataDir, sub)
+		if err := os.MkdirAll(p, 0o777); err != nil {
 			return nil, fmt.Errorf("create %s dir: %w", sub, err)
+		}
+		if err := os.Chmod(p, 0o777); err != nil {
+			return nil, fmt.Errorf("chmod %s dir: %w", sub, err)
 		}
 	}
 	return &Source{dir: dataDir}, nil
@@ -34,11 +43,15 @@ func (s *Source) LogPath(deployID int64) string {
 
 func (s *Source) Save(deployID int64, r io.Reader) (string, error) {
 	path := s.TarballPath(deployID)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	// 0644: the rootless builder pod (uid 1000) reads this tarball.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
+	if err := f.Chmod(0o644); err != nil {
+		return "", err
+	}
 	if _, err := io.Copy(f, r); err != nil {
 		return "", err
 	}

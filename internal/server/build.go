@@ -50,16 +50,28 @@ func (s *server) buildLogf(d store.Deployment, format string, args ...any) {
 		return
 	}
 	path := s.src.LogPath(d.ID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	// The builder pod appends to this same file as uid 1000 (rootless
+	// BuildKit) while the server typically runs as root — dir and file must
+	// be world-writable or the builder's tee degrades to stdout-only and
+	// the UI log pane never sees builder output. Chmod explicitly:
+	// MkdirAll/O_CREATE modes get filtered by the umask.
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o777); err != nil {
 		log.Printf("build log %d: mkdir: %v", d.ID, err)
 		return
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err := os.Chmod(dir, 0o777); err != nil {
+		log.Printf("build log %d: chmod dir: %v", d.ID, err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o666)
 	if err != nil {
 		log.Printf("build log %d: open: %v", d.ID, err)
 		return
 	}
 	defer f.Close()
+	if err := f.Chmod(0o666); err != nil {
+		log.Printf("build log %d: chmod: %v", d.ID, err)
+	}
 	msg := fmt.Sprintf(format, args...)
 	if _, err := fmt.Fprintf(f, "[luncur] %s %s\n", time.Now().UTC().Format(time.RFC3339), msg); err != nil {
 		log.Printf("build log %d: write: %v", d.ID, err)
