@@ -168,4 +168,12 @@
   .err {
     @apply mb-3 block text-sm text-fail;
   }
+
+  /* Subtle 1px engineering-grid texture (DESIGN.md §Aesthetic) — applied to
+     select panels only. Uses --c-row so it adapts to the light theme. */
+  .grid-tex {
+    background-image: linear-gradient(var(--c-row) 1px, transparent 1px), linear-gradient(90deg, var(--c-row) 1px, transparent 1px);
+    background-size: 24px 24px;
+    background-position: -1px -1px;
+  }
 }

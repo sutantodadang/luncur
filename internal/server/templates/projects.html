@@ -1,23 +1,37 @@
 {{define "projects.html"}}
 {{template "head" .}}{{template "nav" .}}
-<h1 class="mb-4 text-xl font-semibold text-inkhi">Projects</h1>
+<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+  <h1 class="text-xl font-semibold text-inkhi">Projects</h1>
+  {{if .IsAdmin}}
+  <div>
+    <form method="post" action="/ui/projects" class="flex flex-wrap items-center gap-2">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <input class="input w-auto flex-1" name="name" placeholder="name" required>
+      <button type="submit" class="btn">create project</button>
+    </form>
+    <div class="cli-echo text-right">$ <b>luncur project create &lt;name&gt;</b></div>
+  </div>
+  {{end}}
+</div>
 {{if .Banner}}<p class="err mb-4">{{.Banner}}</p>{{end}}
-{{if .IsAdmin}}
-<div class="card mb-6">
-<h2>Create project</h2>
-<form method="post" action="/ui/projects" class="flex flex-wrap items-center gap-2">
-  <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <input class="input w-auto flex-1" name="name" placeholder="name" required>
-  <button type="submit" class="btn">create project</button>
-</form>
-<div class="cli-echo">$ <b>luncur project create &lt;name&gt;</b></div>
+{{if not .Projects}}
+<div class="card grid-tex text-center">
+  <p class="mb-1 text-sm text-mut">No projects yet. Create one with <code>luncur project create</code>.</p>
+  <div class="cli-echo">$ <b>luncur project create &lt;name&gt;</b></div>
+</div>
+{{else}}
+<div class="grid gap-4 sm:grid-cols-2">
+{{range .Projects}}
+<div class="card grid-tex">
+  <div class="mb-1 flex items-center justify-between">
+    <a class="font-medium text-inkhi hover:text-signal" href="/ui/projects/{{.Name}}">{{.Name}}</a>
+    <span class="font-mono text-[11px] text-mut">{{.Namespace}}</span>
+  </div>
+  <p class="mb-1 font-mono text-[12px] text-mut">{{.Apps}} app{{if ne .Apps 1}}s{{end}}{{if .Live}} &middot; <span class="text-phosphor">{{.Live}} live</span>{{end}}{{if .Building}} &middot; <span class="text-build">{{.Building}} building</span>{{end}}{{if .Failed}} &middot; <span class="text-fail">{{.Failed}} failed</span>{{end}}</p>
+  <p class="font-mono text-[11px] text-mut">members: {{.Members}}{{if $.IsAdmin}} &middot; <a class="text-signal hover:underline" href="/ui/projects/{{.Name}}">+ add</a>{{end}}</p>
 </div>
 {{end}}
-<div class="card">
-{{if not .Projects}}<p class="mb-1 text-sm text-mut">No projects yet. Create one with <code>luncur project create</code>.</p><div class="cli-echo mb-2">$ <b>luncur project create</b></div>{{end}}
-<table class="tbl"><tr><th>Name</th><th>Namespace</th></tr>
-{{range .Projects}}<tr><td><a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Name}}">{{.Name}}</a></td><td>{{.Namespace}}</td></tr>{{end}}
-</table>
 </div>
+{{end}}
 {{template "foot" .}}
 {{end}}
