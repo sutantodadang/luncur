@@ -30,6 +30,26 @@ func (s *Store) AddMember(projectID, userID int64) error {
 	return err
 }
 
+// RemoveMember drops userID from projectID's membership. ErrNotFound when
+// the membership didn't exist.
+func (s *Store) RemoveMember(projectID, userID int64) error {
+	res, err := s.db.Exec(
+		`DELETE FROM project_members WHERE project_id = ? AND user_id = ?`,
+		projectID, userID,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) IsMember(projectID, userID int64) (bool, error) {
 	var n int
 	err := s.db.QueryRow(

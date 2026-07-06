@@ -37,6 +37,48 @@ func (s *Store) CreateProject(name string) (Project, error) {
 	return Project{ID: id, Name: name, Namespace: ns}, nil
 }
 
+// RenameProject changes a project's display/API name. The Kubernetes
+// namespace is derived at creation and never renamed — existing cluster
+// objects stay where they are.
+func (s *Store) RenameProject(id int64, name string) error {
+	if !validName(name) {
+		return validationErrorf("invalid project name %q (lowercase letters, digits, dashes; max 40 chars)", name)
+	}
+	res, err := s.db.Exec(`UPDATE projects SET name = ? WHERE id = ?`, name, id)
+	if err != nil {
+		return fmt.Errorf("rename project: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteProject removes the project row and its memberships. App and addon
+// rows are the caller's job (destroyApp/removeAddon per row) so kube
+// teardown can't be skipped by a bare row delete.
+func (s *Store) DeleteProject(id int64) error {
+	if _, err := s.db.Exec(`DELETE FROM project_members WHERE project_id = ?`, id); err != nil {
+		return fmt.Errorf("delete project members: %w", err)
+	}
+	res, err := s.db.Exec(`DELETE FROM projects WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete project: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) GetProject(name string) (Project, error) {
 	var p Project
 	err := s.db.QueryRow(

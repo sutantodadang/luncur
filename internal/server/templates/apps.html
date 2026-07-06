@@ -3,6 +3,7 @@
 <p class="mb-1 font-mono text-[11px] text-mut"><a class="hover:text-inkhi" href="/ui/">&larr; Projects</a></p>
 <h1 class="mb-4 text-xl font-semibold text-inkhi">{{.Project.Name}}</h1>
 {{if .Banner}}<p class="err mb-4">{{.Banner}}</p>{{end}}
+{{if .PErrNote}}<p class="err mb-4">{{.PErrNote}}</p>{{end}}
 
 <div class="card mb-6">
 <h2>Create app</h2>
@@ -115,10 +116,14 @@ function uiPresetChange(preset) {
 <div class="cli-echo">$ <b>luncur addon url &lt;name&gt;</b></div>
 </div>
 
-<div class="card">
+<div class="card mb-6">
 <h2>Members</h2>
-<table class="tbl"><tr><th>Email</th><th>Role</th></tr>
-{{range .Members}}<tr><td>{{.Email}}</td><td>{{.Role}}</td></tr>{{end}}
+<table class="tbl"><tr><th>Email</th><th>Role</th><th></th></tr>
+{{range .Members}}<tr><td>{{.Email}}</td><td>{{.Role}}</td><td>{{if $.IsAdmin}}<form class="inline-flex" method="post" action="/ui/projects/{{$.Project.Name}}/members/remove">
+  <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+  <input type="hidden" name="email" value="{{.Email}}">
+  <button type="submit" class="btn-ghost" hx-confirm="Remove {{.Email}} from this project?">remove</button>
+</form>{{end}}</td></tr>{{end}}
 </table>
 {{if .IsAdmin}}
 <form method="post" action="/ui/projects/{{.Project.Name}}/members" class="mt-3 flex flex-wrap items-center gap-2">
@@ -129,5 +134,24 @@ function uiPresetChange(preset) {
 <div class="cli-echo">$ <b>luncur project add-member {{.Project.Name}} &lt;email&gt;</b></div>
 {{end}}
 </div>
+
+{{if .IsAdmin}}
+<div class="card">
+<h2>Project settings</h2>
+<form method="post" action="/ui/projects/{{.Project.Name}}/rename" class="flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input w-auto flex-1" name="name" value="{{.Project.Name}}" required>
+  <button type="submit" class="btn-ghost">rename</button>
+</form>
+<p class="mb-2 text-xs text-mut">namespace {{.Project.Namespace}} stays — only the name changes.</p>
+<div class="cli-echo mb-4">$ <b>luncur project rename {{.Project.Name}} &lt;new-name&gt;</b></div>
+
+<form method="post" action="/ui/projects/{{.Project.Name}}/delete">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn-danger" hx-confirm="Delete project {{.Project.Name}}? ALL its apps, addons, domains and volumes are destroyed. This cannot be undone.">delete project</button>
+</form>
+<div class="cli-echo">$ <b>luncur project rm {{.Project.Name}}</b></div>
+</div>
+{{end}}
 {{template "foot" .}}
 {{end}}
