@@ -297,6 +297,41 @@ func TestUIAddonUpgrade(t *testing.T) {
 	}
 }
 
+// TestUIAddonURL checks the on-demand connection-reveal fragment: 200 with
+// the KEY=URL body for a logged-in session, 303 (login redirect) without
+// one, and 404 for an unknown addon name.
+func TestUIAddonURL(t *testing.T) {
+	_, srv, st, _ := addonTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/addons", admin, `{"type":"postgres","name":"postgres1"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+
+	status, body := getUIPage(t, client, srv.URL, "/ui/projects/proj/addons/url?name=postgres1", ck)
+	if status != http.StatusOK {
+		t.Fatalf("addon url fragment: want 200, got %d", status)
+	}
+	if !strings.Contains(body, "DATABASE_URL=postgresql://") || !strings.Contains(body, "readonly") {
+		t.Fatalf("fragment missing expected content: %s", body)
+	}
+
+	status, _ = getUIPage(t, client, srv.URL, "/ui/projects/proj/addons/url?name=postgres1", nil)
+	if status != http.StatusSeeOther {
+		t.Fatalf("no session: want 303, got %d", status)
+	}
+
+	status, _ = getUIPage(t, client, srv.URL, "/ui/projects/proj/addons/url?name=nope", ck)
+	if status != http.StatusNotFound {
+		t.Fatalf("unknown addon: want 404, got %d", status)
+	}
+}
+
 // TestUIProjectsMembersPageFields checks the projects/apps pages render the
 // new create-project and add-member forms for an admin, and hide the write
 // forms (but still show the list) for a plain member.

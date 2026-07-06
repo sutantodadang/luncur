@@ -135,7 +135,7 @@ func (s *server) handleUISettings(w http.ResponseWriter, r *http.Request, u stor
 
 	s.renderPage(w, "settings.html", map[string]any{
 		"User": u, "Groups": groups, "Banner": banner,
-		"CSRF": s.csrf(w, r), "IsAdmin": true,
+		"CSRF": s.csrf(w, r), "IsAdmin": true, "Version": s.version,
 	})
 }
 
@@ -168,6 +168,34 @@ func (s *server) handleUISettingsSet(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 	http.Redirect(w, r, "/ui/settings?saved="+url.QueryEscape(key), http.StatusSeeOther)
+}
+
+// handleUISettingsUpdate is the settings page's self-update form: same
+// updateServerImage core the JSON API's handleSystemUpdate uses, redirect
+// back to the settings page instead of a status code/body.
+func (s *server) handleUISettingsUpdate(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !s.uiAdmin(w, u) {
+		return
+	}
+	if s.kube == nil {
+		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := s.updateServerImage(r.Context(), r.PostFormValue("version"), ""); err != nil {
+		if errors.Is(err, errInvalidUpdateRequest) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		log.Printf("ui system update: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/ui/settings?saved=update", http.StatusSeeOther)
 }
 
 // handleUIRegistryGC runs the same core the /v1/registry/gc API uses,

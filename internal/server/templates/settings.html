@@ -30,6 +30,17 @@
 </div>
 {{end}}
 
+<div class="card mb-6">
+<h2>Update</h2>
+<p class="mb-3 text-sm text-mut">Running version: <code>{{.Version}}</code>. Bumps luncur's own server Deployment to a new image tag — no fresh reinstall.</p>
+<form method="post" action="/ui/settings/update" class="flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input" name="version" placeholder="v0.4.2" required>
+  <button type="submit" class="btn" hx-confirm="Update luncur server to this version? Pods will roll.">update</button>
+</form>
+<div class="cli-echo">$ <b>luncur update v0.4.2</b></div>
+</div>
+
 <div class="card">
 <h2>Registry maintenance</h2>
 <p class="mb-3 text-sm text-mut">Delete unreferenced image manifests and reclaim blob storage.</p>

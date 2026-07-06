@@ -9,6 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	ktesting "k8s.io/client-go/testing"
+
+	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -166,6 +171,58 @@ func TestUISettingsUnknownKey(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("post unknown key: want 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestUISettingsUpdate checks the settings page shows an Update card with
+// the running version, and that POSTing a version rolls luncur's own
+// Deployment via the same updateServerImage core the JSON API uses.
+func TestUISettingsUpdate(t *testing.T) {
+	st := newTestStore(t)
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil
+	})
+	srv := newHTTPTest(t, Deps{Store: st, Sealer: sealer, Kube: kube.NewFromDynamic(dyn), Version: "v1.2.3-test"})
+	admin, err := st.CreateUser("root@b.co", "password123", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := st.CreateUser("m@b.co", "password123", "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := noRedirectClient()
+	adminCk := uiSessionCookie(t, st, admin.ID)
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	status, body := getUIPage(t, client, srv.URL, "/ui/settings", adminCk)
+	if status != http.StatusOK {
+		t.Fatalf("GET settings: want 200, got %d", status)
+	}
+	if !strings.Contains(body, "Update") || !strings.Contains(body, "v1.2.3-test") {
+		t.Fatalf("settings page missing Update card/running version, got: %s", body)
+	}
+
+	resp := uiPost(t, client, srv.URL+"/ui/settings/update", csrfCk, adminCk,
+		url.Values{"version": {"v9.9.9"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("post update: want 303, got %d", resp.StatusCode)
+	}
+
+	// Non-admin -> 404 (uiAdmin's leak-nothing policy).
+	memberCk := uiSessionCookie(t, st, member.ID)
+	resp = uiPost(t, client, srv.URL+"/ui/settings/update", csrfCk, memberCk,
+		url.Values{"version": {"v9.9.9"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("member post update: want 404, got %d", resp.StatusCode)
 	}
 }
 
