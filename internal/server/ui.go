@@ -58,6 +58,8 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/projects/{project}/addons/url", s.uiPage(s.handleUIAddonURL))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}", s.uiPage(s.handleUIApp))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/chip", s.uiPage(s.handleUIChip))
+	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/chart", s.uiPage(s.handleUIAppChart))
+	mux.HandleFunc("GET /ui/nodes/charts", s.uiPage(s.handleUINodeCharts))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/destroy", s.uiPage(s.handleUIAppDestroy))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/eject", s.uiPage(s.handleUIEject))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/retry", s.uiPage(s.handleUIDomainRetry))

@@ -793,6 +793,47 @@ func (c *Client) AppMetrics(ctx context.Context, namespace, app string) (AppMetr
 	return out, true
 }
 
+// ClusterPodUsage sums CPU/memory usage per luncur app across ALL
+// namespaces in one metrics.k8s.io list — the monitor samples every app on
+// one API call instead of one per app. Keys are "<namespace>/<app>" using
+// the app.kubernetes.io/name label; unlabeled pods are skipped.
+// ok=false when metrics-server (or the dynamic client) is unavailable.
+func (c *Client) ClusterPodUsage(ctx context.Context) (map[string]AppMetrics, bool) {
+	if c.dyn == nil {
+		return nil, false
+	}
+	list, err := c.dyn.Resource(gvrByKind["PodMetrics"]).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, false
+	}
+	out := make(map[string]AppMetrics, len(list.Items))
+	for _, item := range list.Items {
+		app := item.GetLabels()["app.kubernetes.io/name"]
+		if app == "" {
+			continue
+		}
+		key := item.GetNamespace() + "/" + app
+		m := out[key]
+		m.Pods++
+		containers, _, _ := unstructured.NestedSlice(item.Object, "containers")
+		for _, ci := range containers {
+			cm, ok := ci.(map[string]any)
+			if !ok {
+				continue
+			}
+			usage, _, _ := unstructured.NestedStringMap(cm, "usage")
+			if q, err := resource.ParseQuantity(usage["cpu"]); err == nil {
+				m.CPUMilli += q.MilliValue()
+			}
+			if q, err := resource.ParseQuantity(usage["memory"]); err == nil {
+				m.MemoryMiB += q.Value() / (1 << 20)
+			}
+		}
+		out[key] = m
+	}
+	return out, true
+}
+
 // DeploymentStatus reports ready/desired replicas; absent → zeros.
 func (c *Client) DeploymentStatus(ctx context.Context, namespace, name string) (ready, desired int64, err error) {
 	u, err := c.dyn.Resource(gvrByKind["Deployment"]).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
