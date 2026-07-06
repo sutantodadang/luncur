@@ -224,3 +224,38 @@ func TestUIEjectBanner(t *testing.T) {
 		t.Fatalf("non-ejected app page should not show the eject banner, got: %s", body)
 	}
 }
+
+// TestUIAppPageBuildLogFollow guards the app page's log script against the
+// nanoid regression: with a building deploy, the inline script must embed
+// the deploy id as a quoted string and gate the follow URL on a string
+// check — the old `latest > 0` never matched a nanoid id (string > 0 is
+// always false in JS), so the log pane stayed blind during builds.
+func TestUIAppPageBuildLogFollow(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+	id := appID(t, st, "proj", "web")
+
+	dep, err := st.CreateDeployment(id, "building", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+
+	status, body := getUIPage(t, noRedirectClient(), srv.URL, "/ui/projects/proj/apps/web", ck)
+	if status != http.StatusOK {
+		t.Fatalf("app page: want 200, got %d", status)
+	}
+	if !strings.Contains(body, `latest = "`+dep.ID+`"`) {
+		t.Fatalf("app page script should embed quoted deploy id %q", dep.ID)
+	}
+	if !strings.Contains(body, `latest !== ""`) {
+		t.Fatal("app page script should gate log follow on a string check, not `latest > 0`")
+	}
+}
