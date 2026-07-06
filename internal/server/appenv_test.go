@@ -72,3 +72,51 @@ func TestOverrideAndRaw(t *testing.T) {
 		t.Fatal("base render must exclude overrides")
 	}
 }
+
+// TestRenderInjectsPortEnv: apps built from source follow the buildpack
+// contract and bind to $PORT. renderApp must inject PORT=<app.port> so the
+// container listens where the Service targets — and a user-set PORT wins.
+func TestRenderInjectsPortEnv(t *testing.T) {
+	s, srv, st, _ := addonTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+
+	p, err := st.GetProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.GetApp(p.ID, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secretJSON := func(t *testing.T) string {
+		t.Helper()
+		rendered, err := s.renderApp(p, a, "nginx:1", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, o := range rendered.Objects {
+			if o.Kind == "Secret" {
+				return string(o.JSON)
+			}
+		}
+		t.Fatal("no Secret object rendered")
+		return ""
+	}
+
+	if sec := secretJSON(t); !strings.Contains(sec, `"PORT":"8080"`) {
+		t.Fatalf("rendered secret missing injected PORT: %s", sec)
+	}
+
+	// User-set PORT wins over the injected default.
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/proj/apps/web/env", admin, `{"key":"PORT","value":"9999"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("set env: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if sec := secretJSON(t); !strings.Contains(sec, `"PORT":"9999"`) {
+		t.Fatalf("user PORT should win over injected default: %s", sec)
+	}
+}
