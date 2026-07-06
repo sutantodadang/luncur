@@ -186,6 +186,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/rollback", s.authed(s.handleRollback))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/env", s.authed(s.handleGetEnv))
 	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/env", s.authed(s.handleSetEnv))
+	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/env/bulk", s.authed(s.handleBulkSetEnv))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/env/{key}", s.authed(s.handleUnsetEnv))
 	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/overrides/{kind}", s.authed(s.handleSetOverride))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/overrides/{kind}", s.authed(s.handleDeleteOverride))

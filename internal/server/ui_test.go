@@ -1222,6 +1222,62 @@ func TestUIYAMLEditor(t *testing.T) {
 	}
 }
 
+// TestUIEnvBulk exercises the app page's bulk .env textarea form: a POST
+// with a small .env payload upserts every pair and redirects back to the app
+// page, which then lists the new keys (values are never rendered, per the
+// sealed-at-rest UI contract).
+func TestUIEnvBulk(t *testing.T) {
+	_, srv, st, _ := addonTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	appPage := func(t *testing.T) string {
+		t.Helper()
+		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(ck)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET app page: want 200, got %d", resp.StatusCode)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	if body := appPage(t); !strings.Contains(body, "bulk edit (.env)") {
+		t.Fatalf("app page: want bulk edit form present, got: %s", body)
+	}
+
+	resp := uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/env/bulk", csrfCk, ck, url.Values{"dotenv": {"FOO=bar\nBAZ=qux"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST env/bulk: want 303, got %d", resp.StatusCode)
+	}
+
+	body := appPage(t)
+	if !strings.Contains(body, "FOO") || !strings.Contains(body, "BAZ") {
+		t.Fatalf("app page after bulk set: want FOO and BAZ listed, got: %s", body)
+	}
+}
+
 // TestUIAddons exercises the project-page create/delete and app-page
 // attach/detach addon forms end to end, reusing addons_test.go's
 // fake-kube fixture (addonTestServer) since these handlers need a kube
