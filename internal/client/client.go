@@ -97,6 +97,31 @@ func (c *Client) CreateUser(email, password, role string) (UserInfo, error) {
 	return out, err
 }
 
+// ListUsers fetches every user (admin only).
+func (c *Client) ListUsers() ([]UserInfo, error) {
+	var out []UserInfo
+	err := c.do("GET", "/v1/users", nil, &out)
+	return out, err
+}
+
+// ChangePassword updates the logged-in user's password.
+func (c *Client) ChangePassword(oldPW, newPW string) error {
+	return c.do("PUT", "/v1/me/password",
+		map[string]string{"old_password": oldPW, "new_password": newPW}, nil)
+}
+
+// ChangeEmail updates the logged-in user's login email.
+func (c *Client) ChangeEmail(password, email string) error {
+	return c.do("PUT", "/v1/me/email",
+		map[string]string{"password": password, "email": email}, nil)
+}
+
+// SetUserPassword sets any user's password (admin only).
+func (c *Client) SetUserPassword(id int64, password string) error {
+	return c.do("PUT", fmt.Sprintf("/v1/users/%d/password", id),
+		map[string]string{"password": password}, nil)
+}
+
 // doRaw sends a request with raw byte body and returns raw byte response.
 // Non-2xx responses still decode the JSON error envelope.
 func (c *Client) doRaw(method, path string, body []byte) ([]byte, error) {

@@ -5,15 +5,25 @@
 <table class="tbl"><tr><th>Email</th><th>Role</th><th>Created</th><th>Tokens</th><th></th></tr>
 {{range .Users}}<tr>
   <td>{{.Email}}</td><td>{{.Role}}</td><td>{{.CreatedAt}}</td><td>{{.TokenCount}}</td>
-  <td>{{if ne .ID $.Self}}
+  <td>
+    <form class="inline" method="post" action="/ui/users/password">
+      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <input class="input w-auto" type="password" name="password" size="14" placeholder="new password" autocomplete="new-password">
+      <button type="submit" class="btn-ghost">reset</button>
+    </form>
+    {{if ne .ID $.Self}}
     <form class="inline" method="post" action="/ui/users/delete">
       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
       <input type="hidden" name="id" value="{{.ID}}">
       <button type="submit" class="btn-danger" hx-confirm="Delete user {{.Email}}? This cannot be undone.">delete</button>
     </form>
-  {{end}}</td>
+    {{end}}
+  </td>
 </tr>{{end}}
 </table>
+{{if .PwNote}}<p class="mt-3 text-sm text-mut">{{.PwNote}}</p>{{end}}
+<div class="cli-echo">$ <b>luncur user passwd &lt;email&gt;</b></div>
 </div>
 
 <div class="card">

@@ -1,0 +1,30 @@
+{{define "account.html"}}
+{{template "head" .}}{{template "nav" .}}
+<h1 class="mb-4 text-xl font-semibold text-inkhi">Account</h1>
+{{if .Note}}<p class="mb-3 text-sm text-phosphor">{{.Note}}</p>{{end}}
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+
+<div class="card mb-6">
+<h2>Change password</h2>
+<form method="post" action="/ui/account/password" class="mt-3 flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input w-auto" type="password" name="old" placeholder="current password" autocomplete="current-password">
+  <input class="input w-auto" type="password" name="new" placeholder="new password (min 8 chars)" autocomplete="new-password">
+  <button type="submit" class="btn">change password</button>
+</form>
+<div class="cli-echo">$ <b>luncur account passwd</b></div>
+</div>
+
+<div class="card">
+<h2>Change email</h2>
+<p class="mb-1 text-sm text-mut">signed in as {{.User.Email}}</p>
+<form method="post" action="/ui/account/email" class="mt-3 flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input w-auto" type="password" name="password" placeholder="current password" autocomplete="current-password">
+  <input class="input w-auto" type="email" name="email" placeholder="new email">
+  <button type="submit" class="btn">change email</button>
+</form>
+<div class="cli-echo">$ <b>luncur account email &lt;new-email&gt;</b></div>
+</div>
+{{template "foot" .}}
+{{end}}
