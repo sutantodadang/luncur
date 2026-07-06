@@ -248,6 +248,23 @@ func (c *Client) AddMember(project, email string) error {
 		map[string]string{"email": email}, nil)
 }
 
+// RenameProject changes a project's name in place; its k8s namespace never
+// changes, so cluster objects stay where they are.
+func (c *Client) RenameProject(name, newName string) error {
+	return c.do("PUT", "/v1/projects/"+url.PathEscape(name),
+		map[string]string{"name": newName}, nil)
+}
+
+// DeleteProject destroys a project and everything in it: apps, addons,
+// domains, volumes, and the project's namespace.
+func (c *Client) DeleteProject(name string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(name), nil, nil)
+}
+
+func (c *Client) RemoveMember(project, email string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/members/"+url.PathEscape(email), nil, nil)
+}
+
 func (c *Client) CreateApp(project, name string, port int, kind, schedule, buildPath string, internal bool) (AppInfo, error) {
 	var out AppInfo
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",

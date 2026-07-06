@@ -56,6 +56,9 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/", s.uiPage(s.handleUIProjects))
 	mux.HandleFunc("POST /ui/projects", s.uiPage(s.handleUIProjectCreate))
 	mux.HandleFunc("POST /ui/projects/{project}/members", s.uiPage(s.handleUIAddMember))
+	mux.HandleFunc("POST /ui/projects/{project}/members/remove", s.uiPage(s.handleUIMemberRemove))
+	mux.HandleFunc("POST /ui/projects/{project}/rename", s.uiPage(s.handleUIProjectRename))
+	mux.HandleFunc("POST /ui/projects/{project}/delete", s.uiPage(s.handleUIProjectDelete))
 	mux.HandleFunc("GET /ui/projects/{project}", s.uiPage(s.handleUIApps))
 	mux.HandleFunc("POST /ui/projects/{project}/apps", s.uiPage(s.handleUICreateApp))
 	mux.HandleFunc("POST /ui/projects/{project}/addons/upgrade", s.uiPage(s.handleUIAddonUpgrade))
@@ -414,6 +417,105 @@ func (s *server) handleUIAddMember(w http.ResponseWriter, r *http.Request, u sto
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
+// handleUIMemberRemove is handleRemoveMember's UI twin: same GetUserByEmail+
+// RemoveMember core, admin-gated, redirect back to the project page. A
+// non-member or unknown email redirects back the same as success — nothing
+// for the admin to fix, the end state is already what they wanted.
+func (s *server) handleUIMemberRemove(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !s.uiAdmin(w, u) {
+		return
+	}
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	member, err := s.st.GetUserByEmail(r.PostFormValue("email"))
+	if err == nil {
+		if err := s.st.RemoveMember(p.ID, member.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			log.Printf("ui remove member: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		log.Printf("ui remove member: get user: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
+}
+
+// handleUIProjectRename is handleRenameProject's UI twin: same RenameProject
+// core, admin-gated, redirect to the renamed project's new page on success
+// or back to the old page with a fixed perr code on failure.
+func (s *server) handleUIProjectRename(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !s.uiAdmin(w, u) {
+		return
+	}
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	newName := r.PostFormValue("name")
+	if err := s.st.RenameProject(p.ID, newName); err != nil {
+		var ve *store.ValidationError
+		switch {
+		case strings.Contains(err.Error(), "UNIQUE constraint failed: projects."):
+			http.Redirect(w, r, "/ui/projects/"+p.Name+"?perr=taken", http.StatusSeeOther)
+		case errors.As(err, &ve):
+			http.Redirect(w, r, "/ui/projects/"+p.Name+"?perr=invalid", http.StatusSeeOther)
+		default:
+			log.Printf("ui rename project: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	http.Redirect(w, r, "/ui/projects/"+newName, http.StatusSeeOther)
+}
+
+// handleUIProjectDelete is handleDeleteProject's UI twin: same
+// list-apps/list-addons + deleteProject core, admin-gated, redirect to the
+// project list on success or back to the project page with perr=nokube when
+// kube is required but unconfigured.
+func (s *server) handleUIProjectDelete(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !s.uiAdmin(w, u) {
+		return
+	}
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	apps, err := s.st.ListApps(p.ID)
+	if err != nil {
+		log.Printf("ui delete project: list apps: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	addons, err := s.st.ListAddons(p.ID)
+	if err != nil {
+		log.Printf("ui delete project: list addons: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if projectNeedsKube(apps, addons) && s.kube == nil {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"?perr=nokube", http.StatusSeeOther)
+		return
+	}
+	if err := s.deleteProject(r.Context(), p, apps, addons); err != nil {
+		log.Printf("ui delete project: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+}
+
 // uiAppRow is apps.html's per-row view model: the store.App plus its
 // derived public URL and latest-deploy status (empty when the app has never
 // been deployed — the template renders a "no deploys" chip for that case).
@@ -480,9 +582,21 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	if e := r.URL.Query().Get("err"); e != "" {
 		banner = "error: " + e
 	}
+	// perr carries handleUIProjectRename/handleUIProjectDelete's outcome
+	// back to this page — fixed strings only, same idiom as users.html's
+	// "mail" notice, never the raw error or user input.
+	var perrNote string
+	switch r.URL.Query().Get("perr") {
+	case "invalid":
+		perrNote = "invalid project name"
+	case "taken":
+		perrNote = "name already in use"
+	case "nokube":
+		perrNote = "kubernetes unavailable — cannot destroy apps"
+	}
 	s.renderPage(w, "apps.html", map[string]any{
 		"User": u, "Project": p, "Apps": rows, "Addons": addons, "Members": members, "Banner": banner,
-		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
+		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin", "PErrNote": perrNote,
 	})
 }
 

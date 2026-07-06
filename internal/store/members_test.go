@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestMembers(t *testing.T) {
 	s := openTest(t)
@@ -34,5 +37,28 @@ func TestMembers(t *testing.T) {
 	}
 	if len(members) != 1 || members[0].Email != "m@b.co" {
 		t.Fatalf("ListMembers = %+v, want one m@b.co entry", members)
+	}
+}
+
+func TestRemoveMember(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	u, err := s.CreateUser("m@b.co", "pw123456", "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMember(p.ID, u.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RemoveMember(p.ID, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.IsMember(p.ID, u.ID); ok {
+		t.Fatal("want not a member")
+	}
+
+	if err := s.RemoveMember(p.ID, u.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
