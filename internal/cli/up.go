@@ -41,13 +41,19 @@ func upCmd() *cobra.Command {
 				if runtime.GOOS != "linux" {
 					return fmt.Errorf("luncur up installs K3s and must run on linux (use --kubeconfig to target an existing cluster)")
 				}
-				cmd.Println("==> ensuring K3s")
-				installed, err := up.EnsureK3s(runner)
+				// registries.yaml must exist before k3s first starts: the
+				// install script launches the service immediately, and
+				// containerd only reads mirror config at startup. Writing
+				// it afterwards left a fresh install pulling
+				// registry.luncur-system over https — every app image
+				// failed with "no such host" until a manual restart.
+				cmd.Println("==> writing registries.yaml")
+				changed, err := up.WriteRegistriesYAML(up.RegistriesPath)
 				if err != nil {
 					return err
 				}
-				cmd.Println("==> writing registries.yaml")
-				changed, err := up.WriteRegistriesYAML(up.RegistriesPath)
+				cmd.Println("==> ensuring K3s")
+				installed, err := up.EnsureK3s(runner)
 				if err != nil {
 					return err
 				}

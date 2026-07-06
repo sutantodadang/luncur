@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	netv1 "k8s.io/api/networking/v1"
@@ -69,6 +70,14 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 	}
 	if len(collisions) > 0 {
 		log.Printf("app %s: addon env collides with user env, user wins: %s", a.Name, strings.Join(collisions, ", "))
+	}
+
+	// Buildpack contract: apps built from source (nixpacks, most
+	// Dockerfiles) bind to $PORT. Without it they fall back to their own
+	// default (8000, 3000, ...) while the Service targets a.Port and every
+	// request 502s. User-set PORT wins, like addon env.
+	if _, taken := env["PORT"]; !taken && a.Port > 0 {
+		env["PORT"] = strconv.Itoa(a.Port)
 	}
 
 	overrides := map[string]string{}

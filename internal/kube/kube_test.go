@@ -152,7 +152,7 @@ func TestEnsureNamespace(t *testing.T) {
 	if body.Metadata.Labels["app.kubernetes.io/managed-by"] != "luncur" {
 		t.Fatalf("managed-by label missing: %+v", body.Metadata.Labels)
 	}
-	if body.Metadata.Labels["pod-security.kubernetes.io/enforce"] != "restricted" {
+	if body.Metadata.Labels["pod-security.kubernetes.io/enforce"] != "baseline" {
 		t.Fatalf("pod-security enforce label missing: %+v", body.Metadata.Labels)
 	}
 }

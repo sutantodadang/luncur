@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,18 +34,22 @@ func (s *server) certProviderName() string {
 }
 
 // dnsWarning checks that hostname resolves to the advertised IP. Returns a
-// human warning ("" when all good). Never blocks domain creation.
-func dnsWarning(ctx context.Context, hostname, wantIP string) string {
+// human warning ("" when all good). Never blocks domain creation. dns01
+// softens the mismatch message: issuance validates over DNS-01, so a
+// proxied domain (e.g. Cloudflare) resolving to the proxy's IPs is
+// expected — claiming "issuance will fail" there is simply wrong.
+func dnsWarning(ctx context.Context, hostname, wantIP string, dns01 bool) string {
 	rctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	addrs, err := (&net.Resolver{}).LookupHost(rctx, hostname)
 	if err != nil {
 		return fmt.Sprintf("DNS lookup failed for %s — point an A record at %s", hostname, wantIP)
 	}
-	for _, a := range addrs {
-		if a == wantIP {
-			return ""
-		}
+	if slices.Contains(addrs, wantIP) {
+		return ""
+	}
+	if dns01 {
+		return fmt.Sprintf("%s resolves to %v, not %s — fine if the domain is proxied (e.g. Cloudflare); certs are validated over DNS-01", hostname, addrs, wantIP)
 	}
 	return fmt.Sprintf("%s resolves to %v, not %s — TLS issuance will fail until DNS points here", hostname, addrs, wantIP)
 }
@@ -97,7 +102,7 @@ func (s *server) addDomain(ctx context.Context, p store.Project, a store.App, ho
 	warning := ""
 	if !isWildcard {
 		// A wildcard can't be resolved directly; skip the A-record check.
-		warning = dnsWarning(ctx, d.Hostname, s.externalIP)
+		warning = dnsWarning(ctx, d.Hostname, s.externalIP, s.dnsProviderName() != "none")
 	}
 	s.syncIfLive(ctx, p, a)
 	s.kickCerts(p, a, d)
