@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -773,6 +774,13 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
+	var pods []kube.PodInfo
+	if s.kube != nil {
+		if list, err := s.kube.AppPodInfos(r.Context(), p.Namespace, a.Name); err == nil {
+			pods = list
+		}
+	}
+
 	url := "http://" + hostFor(a.Name, s.externalIP)
 	internalURL := ""
 	if a.Internal {
@@ -789,7 +797,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"WebhookEnabled": a.WebhookSecret != nil,
 		"WebhookURL":     "http://" + r.Host + webhookPath(p.Name, a.Name),
 		"Domains": domains, "Volumes": volumes, "Warning": firstNonEmpty(r.URL.Query().Get("warn"), r.URL.Query().Get("err")),
-		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics,
+		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics, "Pods": pods,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	}
 	for k, v := range extra {

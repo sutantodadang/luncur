@@ -4,13 +4,15 @@
 <div class="card">
 {{if .Error}}<p class="text-sm text-mut">{{.Error}}</p>
 {{else}}
-<table class="tbl"><tr><th>Name</th><th>Role</th><th>Status</th><th>IP</th><th>Version</th></tr>
+<table class="tbl"><tr><th>Name</th><th>Role</th><th>Status</th><th>IP</th><th>Version</th><th>CPU</th><th>Memory</th></tr>
 {{range .Nodes}}<tr>
   <td>{{.Name}}</td>
   <td>{{.Role}}</td>
   <td><span class="chip {{if .Ready}}chip-ok{{else}}chip-bad{{end}}">{{if .Ready}}ready{{else}}not ready{{end}}</span></td>
   <td>{{.IP}}</td>
   <td>{{.Version}}</td>
+  <td class="font-mono text-xs">{{if .MetricsOK}}{{.CPUMilli}}m / {{.CPUCapMilli}}m{{else}}&ndash; / {{.CPUCapMilli}}m{{end}}</td>
+  <td class="font-mono text-xs">{{if .MetricsOK}}{{.MemMiB}}Mi / {{.MemCapMiB}}Mi{{else}}&ndash; / {{.MemCapMiB}}Mi{{end}}</td>
 </tr>{{end}}
 </table>
 {{end}}

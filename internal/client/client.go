@@ -859,11 +859,16 @@ func (c *Client) Doctor() (serverVersion string, checks []DoctorCheck, err error
 
 // Node is one cluster node as returned by GET /v1/nodes.
 type Node struct {
-	Name    string `json:"name"`
-	Role    string `json:"role"`
-	Ready   bool   `json:"ready"`
-	IP      string `json:"ip"`
-	Version string `json:"version"`
+	Name        string `json:"name"`
+	Role        string `json:"role"`
+	Ready       bool   `json:"ready"`
+	IP          string `json:"ip"`
+	Version     string `json:"version"`
+	CPUCapMilli int64  `json:"cpu_capacity_millicores"`
+	CPUMilli    int64  `json:"cpu_used_millicores"`
+	MemCapMiB   int64  `json:"memory_capacity_mib"`
+	MemMiB      int64  `json:"memory_used_mib"`
+	MetricsOK   bool   `json:"metrics_available"`
 }
 
 // ListNodes fetches every cluster node (admin only).
@@ -873,6 +878,29 @@ func (c *Client) ListNodes() ([]Node, error) {
 	}
 	err := c.do("GET", "/v1/nodes", nil, &out)
 	return out.Nodes, err
+}
+
+// Pod is one running pod as returned by GET .../apps/{app}/pods.
+type Pod struct {
+	Name      string `json:"name"`
+	Phase     string `json:"phase"`
+	Reason    string `json:"reason"`
+	Ready     bool   `json:"ready"`
+	Restarts  int32  `json:"restarts"`
+	Node      string `json:"node"`
+	StartedAt string `json:"started_at"`
+	CPUMilli  int64  `json:"cpu_millicores"`
+	MemoryMiB int64  `json:"memory_mib"`
+	MetricsOK bool   `json:"metrics_available"`
+}
+
+// AppPods fetches an app's live pods with per-pod usage.
+func (c *Client) AppPods(project, app string) ([]Pod, error) {
+	var out struct {
+		Pods []Pod `json:"pods"`
+	}
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/pods", nil, &out)
+	return out.Pods, err
 }
 
 // AuditList fetches the audit log (admin only), newest first. limit <= 0

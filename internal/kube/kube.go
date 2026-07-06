@@ -46,6 +46,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"ClusterIssuer":         {Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"},
 	"StatefulSet":           {Group: "apps", Version: "v1", Resource: "statefulsets"},
 	"PodMetrics":            {Group: "metrics.k8s.io", Version: "v1beta1", Resource: "pods"},
+	"NodeMetrics":           {Group: "metrics.k8s.io", Version: "v1beta1", Resource: "nodes"},
 }
 
 // clusterScoped marks kinds Apply must patch without a namespace.
@@ -397,6 +398,105 @@ func (c *Client) AppPods(ctx context.Context, namespace, app string) ([]string, 
 	return names, nil
 }
 
+// PodInfo is one pod's live status plus its metrics.k8s.io usage for the
+// pods API. CPU/Memory stay zero with MetricsOK=false when metrics-server
+// is unavailable — never an error.
+type PodInfo struct {
+	Name      string `json:"name"`
+	Phase     string `json:"phase"`
+	Reason    string `json:"reason,omitempty"`
+	Ready     bool   `json:"ready"`
+	Restarts  int32  `json:"restarts"`
+	Node      string `json:"node"`
+	StartedAt string `json:"started_at,omitempty"`
+	CPUMilli  int64  `json:"cpu_millicores"`
+	MemoryMiB int64  `json:"memory_mib"`
+	MetricsOK bool   `json:"metrics_available"`
+}
+
+// AppPodInfos lists an app's pods with status and (when metrics-server is
+// reachable) per-pod CPU/memory usage. No clientset wired (some test clients
+// only wire the dynamic half) -> (nil, nil).
+func (c *Client) AppPodInfos(ctx context.Context, namespace, app string) ([]PodInfo, error) {
+	if c.cs == nil {
+		return nil, nil
+	}
+	selector := "app.kubernetes.io/name=" + app
+	list, err := c.cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("list pods: %w", err)
+	}
+	out := make([]PodInfo, 0, len(list.Items))
+	for _, p := range list.Items {
+		phase := string(p.Status.Phase)
+		if p.DeletionTimestamp != nil {
+			phase = "Terminating"
+		}
+		ready := false
+		for _, cond := range p.Status.Conditions {
+			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+				ready = true
+				break
+			}
+		}
+		var restarts int32
+		var reason string
+		for _, cst := range p.Status.ContainerStatuses {
+			restarts += cst.RestartCount
+			if reason == "" && cst.State.Waiting != nil && cst.State.Waiting.Reason != "" {
+				reason = cst.State.Waiting.Reason
+			}
+		}
+		startedAt := ""
+		if p.Status.StartTime != nil {
+			startedAt = p.Status.StartTime.Format(time.RFC3339)
+		}
+		out = append(out, PodInfo{
+			Name: p.Name, Phase: phase, Reason: reason, Ready: ready,
+			Restarts: restarts, Node: p.Spec.NodeName, StartedAt: startedAt,
+		})
+	}
+
+	if c.dyn == nil {
+		return out, nil
+	}
+	mlist, err := c.dyn.Resource(gvrByKind["PodMetrics"]).Namespace(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return out, nil
+	}
+	usage := make(map[string]struct {
+		cpuMilli, memMiB int64
+	}, len(mlist.Items))
+	for _, item := range mlist.Items {
+		var cpuMilli, memMiB int64
+		containers, _, _ := unstructured.NestedSlice(item.Object, "containers")
+		for _, ci := range containers {
+			cm, ok := ci.(map[string]any)
+			if !ok {
+				continue
+			}
+			u, _, _ := unstructured.NestedStringMap(cm, "usage")
+			if q, err := resource.ParseQuantity(u["cpu"]); err == nil {
+				cpuMilli += q.MilliValue()
+			}
+			if q, err := resource.ParseQuantity(u["memory"]); err == nil {
+				memMiB += q.Value() / (1 << 20)
+			}
+		}
+		usage[item.GetName()] = struct{ cpuMilli, memMiB int64 }{cpuMilli, memMiB}
+	}
+	for i := range out {
+		if m, ok := usage[out[i].Name]; ok {
+			out[i].CPUMilli = m.cpuMilli
+			out[i].MemoryMiB = m.memMiB
+			out[i].MetricsOK = true
+		}
+	}
+	return out, nil
+}
+
 // PodLogStream streams a pod's logs, optionally following new output.
 func (c *Client) PodLogStream(ctx context.Context, namespace, pod string, follow bool) (io.ReadCloser, error) {
 	return c.cs.CoreV1().Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Follow: follow}).Stream(ctx)
@@ -516,20 +616,44 @@ func (c *Client) NodesReady(ctx context.Context) (total int, notReady []string, 
 
 // NodeInfo is a summary of one cluster node for the nodes API.
 type NodeInfo struct {
-	Name    string `json:"name"`
-	Role    string `json:"role"`
-	Ready   bool   `json:"ready"`
-	IP      string `json:"ip"`
-	Version string `json:"version"`
+	Name        string `json:"name"`
+	Role        string `json:"role"`
+	Ready       bool   `json:"ready"`
+	IP          string `json:"ip"`
+	Version     string `json:"version"`
+	CPUCapMilli int64  `json:"cpu_capacity_millicores"`
+	CPUMilli    int64  `json:"cpu_used_millicores"`
+	MemCapMiB   int64  `json:"memory_capacity_mib"`
+	MemMiB      int64  `json:"memory_used_mib"`
+	MetricsOK   bool   `json:"metrics_available"`
 }
 
 // ListNodes summarizes every cluster node: role (control-plane label or
-// agent), readiness, preferred address, and kubelet version.
+// agent), readiness, preferred address, kubelet version, and (allocatable
+// capacity plus, when metrics-server is reachable, used) CPU/memory.
 func (c *Client) ListNodes(ctx context.Context) ([]NodeInfo, error) {
 	nodes, err := c.cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list nodes: %w", err)
 	}
+
+	usage := map[string]struct{ cpuMilli, memMiB int64 }{}
+	if c.dyn != nil {
+		if mlist, err := c.dyn.Resource(gvrByKind["NodeMetrics"]).List(ctx, metav1.ListOptions{}); err == nil {
+			for _, item := range mlist.Items {
+				u, _, _ := unstructured.NestedStringMap(item.Object, "usage")
+				var cpuMilli, memMiB int64
+				if q, err := resource.ParseQuantity(u["cpu"]); err == nil {
+					cpuMilli = q.MilliValue()
+				}
+				if q, err := resource.ParseQuantity(u["memory"]); err == nil {
+					memMiB = q.Value() / (1 << 20)
+				}
+				usage[item.GetName()] = struct{ cpuMilli, memMiB int64 }{cpuMilli, memMiB}
+			}
+		}
+	}
+
 	out := make([]NodeInfo, 0, len(nodes.Items))
 	for _, n := range nodes.Items {
 		role := "agent"
@@ -557,10 +681,18 @@ func (c *Client) ListNodes(ctx context.Context) ([]NodeInfo, error) {
 		if ip == "" {
 			ip = internal
 		}
-		out = append(out, NodeInfo{
+		info := NodeInfo{
 			Name: n.Name, Role: role, Ready: ready, IP: ip,
-			Version: n.Status.NodeInfo.KubeletVersion,
-		})
+			Version:     n.Status.NodeInfo.KubeletVersion,
+			CPUCapMilli: n.Status.Allocatable.Cpu().MilliValue(),
+			MemCapMiB:   n.Status.Allocatable.Memory().Value() / (1 << 20),
+		}
+		if m, ok := usage[n.Name]; ok {
+			info.CPUMilli = m.cpuMilli
+			info.MemMiB = m.memMiB
+			info.MetricsOK = true
+		}
+		out = append(out, info)
 	}
 	return out, nil
 }
