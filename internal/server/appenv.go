@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 
 	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
@@ -39,6 +40,36 @@ func (s *server) setAppEnv(ctx context.Context, p store.Project, a store.App, ke
 		return err
 	}
 
+	s.syncIfLive(ctx, p, a)
+	return nil
+}
+
+// setAppEnvBulk upserts many env vars in one pass: parse errors and the
+// ejected/sealer guards reject the whole batch up front, then vars are
+// sealed and stored one by one (store validation can still fail a key
+// mid-batch — earlier keys stay set, same as re-pasting would) and the
+// app is synced once at the end instead of per key.
+func (s *server) setAppEnvBulk(ctx context.Context, p store.Project, a store.App, vars map[string]string) error {
+	if a.Ejected {
+		return errAppEjected
+	}
+	if s.sealer == nil {
+		return errSealerUnavailable
+	}
+	keys := make([]string, 0, len(vars))
+	for k := range vars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		sealed, err := s.sealer.Seal([]byte(vars[k]))
+		if err != nil {
+			return fmt.Errorf("seal env %q: %w", k, err)
+		}
+		if err := s.st.SetEnv(a.ID, k, sealed); err != nil {
+			return err
+		}
+	}
 	s.syncIfLive(ctx, p, a)
 	return nil
 }
@@ -129,6 +160,54 @@ func (s *server) handleSetEnv(w http.ResponseWriter, r *http.Request, u store.Us
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleBulkSetEnv accepts raw .env text and upserts every pair in it.
+func (s *server) handleBulkSetEnv(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Dotenv string `json:"dotenv"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+
+	vars, err := parseDotenv(req.Dotenv)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_dotenv", err.Error())
+		return
+	}
+	if len(vars) == 0 {
+		writeError(w, http.StatusBadRequest, "bad_dotenv", "no KEY=VALUE pairs found")
+		return
+	}
+
+	if err := s.setAppEnvBulk(r.Context(), p, a, vars); err != nil {
+		var ve *store.ValidationError
+		switch {
+		case errors.Is(err, errAppEjected):
+			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
+		case errors.Is(err, errSealerUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", "sealer is not configured")
+		case errors.As(err, &ve):
+			writeError(w, http.StatusBadRequest, "bad_request", ve.Error())
+		default:
+			log.Printf("bulk set env: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"set": len(vars)})
 }
 
 // handleUnsetEnv deletes one env var, then opportunistically syncs.

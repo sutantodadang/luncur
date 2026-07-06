@@ -359,6 +359,16 @@ func (c *Client) EnvSet(project, app, key, value string) error {
 		map[string]string{"key": key, "value": value}, nil)
 }
 
+// EnvPush bulk-upserts env vars from raw .env text; returns count set.
+func (c *Client) EnvPush(project, app, dotenv string) (int, error) {
+	var out struct {
+		Set int `json:"set"`
+	}
+	err := c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env/bulk",
+		map[string]string{"dotenv": dotenv}, &out)
+	return out.Set, err
+}
+
 func (c *Client) EnvUnset(project, app, key string) error {
 	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env/"+url.PathEscape(key), nil, nil)
 }
