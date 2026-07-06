@@ -78,6 +78,9 @@ type server struct {
 	lastRegistryGC time.Time
 
 	tmpl *template.Template
+
+	// mon collects live app/node CPU/memory samples in memory; see monitor.go.
+	mon *monitor
 }
 
 // newServer wires all server fields (including build config defaults) but
@@ -120,6 +123,7 @@ func newServer(d Deps) *server {
 		version:         d.Version,
 		nowFn:           time.Now,
 		httpClient:      &http.Client{Timeout: 5 * time.Second},
+		mon:             newMonitor(),
 	}
 	if d.Kube != nil {
 		s.execer = d.Kube
@@ -193,6 +197,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/raw", s.authed(s.handleRawManifest))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/logs", s.authed(s.handleRuntimeLogs))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/metrics", s.authed(s.handleAppMetrics))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/metrics/history", s.authed(s.handleAppMetricsHistory))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/pods", s.authed(s.handleAppPods))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/volumes", s.authed(s.handleAddVolume))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/volumes", s.authed(s.handleListVolumes))

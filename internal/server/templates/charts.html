@@ -1,0 +1,28 @@
+{{define "metricschart"}}
+{{if .Collecting}}<p class="text-sm text-mut">collecting samples&hellip; first chart appears within ~30s.</p>
+{{else}}
+<div class="grid gap-4 sm:grid-cols-2">
+  <div>
+    <p class="mb-1 font-mono text-[11px] text-mut">cpu <span class="text-phosphor">{{.CPUNow}}m</span> &middot; peak {{.CPUPeak}}m &middot; 30m</p>
+    <svg viewBox="0 0 600 48" preserveAspectRatio="none" class="block h-12 w-full rounded border border-line bg-termbg">
+      <polyline points="{{.CPUPoints}}" fill="none" stroke="var(--c-phosphor)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+    </svg>
+  </div>
+  <div>
+    <p class="mb-1 font-mono text-[11px] text-mut">mem <span class="text-phosphor">{{.MemNow}}Mi</span> &middot; peak {{.MemPeak}}Mi &middot; 30m</p>
+    <svg viewBox="0 0 600 48" preserveAspectRatio="none" class="block h-12 w-full rounded border border-line bg-termbg">
+      <polyline points="{{.MemPoints}}" fill="none" stroke="var(--c-phosphor)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+    </svg>
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{define "nodecharts"}}
+{{if .}}
+{{range .}}
+<p class="mb-1 mt-3 font-mono text-[11px] text-mut">{{.Title}}</p>
+{{template "metricschart" .}}
+{{end}}
+{{else}}<p class="text-sm text-mut">collecting samples&hellip;</p>{{end}}
+{{end}}

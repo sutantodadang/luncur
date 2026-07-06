@@ -903,6 +903,22 @@ func (c *Client) AppPods(project, app string) ([]Pod, error) {
 	return out.Pods, err
 }
 
+// MetricSample is one point of an app's live usage history.
+type MetricSample struct {
+	At            string `json:"at"`
+	CPUMillicores int64  `json:"cpu_millicores"`
+	MemoryMiB     int64  `json:"memory_mib"`
+}
+
+// MetricsHistory fetches an app's sampled usage (last ~30 minutes).
+func (c *Client) MetricsHistory(project, app string) ([]MetricSample, error) {
+	var out struct {
+		Samples []MetricSample `json:"samples"`
+	}
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/metrics/history", nil, &out)
+	return out.Samples, err
+}
+
 // AuditList fetches the audit log (admin only), newest first. limit <= 0
 // leaves it unset (the server defaults/caps it); user/contains filter by
 // exact email and by substring match respectively, both optional.

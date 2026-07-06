@@ -16,6 +16,7 @@
 </tr>{{end}}
 </table>
 {{end}}
+<div hx-get="/ui/nodes/charts" hx-trigger="load, every 15s" hx-swap="innerHTML"></div>
 <p class="mt-4 text-sm text-mut">add a VPS: run <span class="font-mono">luncur node join-command</span> on the server, then paste its output on the new machine.</p>
 <div class="cli-echo">$ <b>luncur node ls</b></div>
 </div>
