@@ -52,6 +52,8 @@ func newRoot() *cobra.Command {
 	root.AddCommand(registryCmd())
 	root.AddCommand(auditCmd())
 	root.AddCommand(doctorCmd())
+	root.AddCommand(joinCmd())
+	root.AddCommand(nodeCmd())
 	return root
 }
 

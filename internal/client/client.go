@@ -836,6 +836,24 @@ func (c *Client) Doctor() (serverVersion string, checks []DoctorCheck, err error
 	return out.ServerVersion, out.Checks, err
 }
 
+// Node is one cluster node as returned by GET /v1/nodes.
+type Node struct {
+	Name    string `json:"name"`
+	Role    string `json:"role"`
+	Ready   bool   `json:"ready"`
+	IP      string `json:"ip"`
+	Version string `json:"version"`
+}
+
+// ListNodes fetches every cluster node (admin only).
+func (c *Client) ListNodes() ([]Node, error) {
+	var out struct {
+		Nodes []Node `json:"nodes"`
+	}
+	err := c.do("GET", "/v1/nodes", nil, &out)
+	return out.Nodes, err
+}
+
 // AuditList fetches the audit log (admin only), newest first. limit <= 0
 // leaves it unset (the server defaults/caps it); user/contains filter by
 // exact email and by substring match respectively, both optional.

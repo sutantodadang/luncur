@@ -24,6 +24,7 @@ const (
 	K3sKubeconfig    = "/etc/rancher/k3s/k3s.yaml"
 	RegistriesPath   = "/etc/rancher/k3s/registries.yaml"
 	RegistryNodePort = 30500
+	NodeTokenPath    = "/var/lib/rancher/k3s/server/node-token"
 )
 
 // EnsureK3s installs K3s (official script, pinned version) when missing.
@@ -35,6 +36,21 @@ func EnsureK3s(r Runner) (bool, error) {
 		"curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=%s sh -", K3sVersion)
 	if out, err := r.Run("sh", "-c", script); err != nil {
 		return false, fmt.Errorf("k3s install failed: %v\n%s", err, out)
+	}
+	return true, nil
+}
+
+// EnsureK3sAgent installs K3s in agent mode (official script, pinned
+// version) joined to serverURL, when k3s is missing on this machine.
+func EnsureK3sAgent(r Runner, serverURL, token string) (bool, error) {
+	if _, err := r.Run("which", "k3s"); err == nil {
+		return false, nil
+	}
+	script := fmt.Sprintf(
+		"curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=%s K3S_URL=%s K3S_TOKEN=%s sh -",
+		K3sVersion, serverURL, token)
+	if out, err := r.Run("sh", "-c", script); err != nil {
+		return false, fmt.Errorf("k3s agent install failed: %v\n%s", err, out)
 	}
 	return true, nil
 }

@@ -94,6 +94,24 @@ luncur domain add web www.example.com --project demo   # cert issues automatical
 Re-running `sudo ./luncur up` is always safe: every step is
 skip-or-repair, so it doubles as upgrade and self-heal.
 
+## Multi-node
+
+Add another VPS as a worker node:
+
+```sh
+# on the existing server
+luncur node join-command
+
+# on the new VPS (as root) — paste the printed command
+luncur join https://<server-ip>:6443 --token <node-token>
+
+# verify
+luncur node ls
+```
+
+Note: apps with volumes use K3s local-path storage, which pins a pod to the
+node where its volume was first created.
+
 ## 🔍 How it works
 
 ```text

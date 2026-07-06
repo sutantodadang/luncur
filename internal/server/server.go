@@ -215,6 +215,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/tokens/{id}", s.authed(s.handleRevokeToken))
 	mux.HandleFunc("GET /v1/audit", s.adminOnly(s.handleListAudit))
 	mux.HandleFunc("GET /v1/doctor", s.adminOnly(s.handleDoctor))
+	mux.HandleFunc("GET /v1/nodes", s.adminOnly(s.handleListNodes))
 
 	// ACME HTTP-01 challenge path: served by luncur itself, no auth (the
 	// ACME CA fetches it directly). Nil-guarded: tests may build a server

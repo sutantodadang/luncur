@@ -1,0 +1,21 @@
+{{define "nodes.html"}}
+{{template "head" .}}{{template "nav" .}}
+<h1 class="mb-4 text-xl font-semibold text-inkhi">Nodes</h1>
+<div class="card">
+{{if .Error}}<p class="text-sm text-mut">{{.Error}}</p>
+{{else}}
+<table class="tbl"><tr><th>Name</th><th>Role</th><th>Status</th><th>IP</th><th>Version</th></tr>
+{{range .Nodes}}<tr>
+  <td>{{.Name}}</td>
+  <td>{{.Role}}</td>
+  <td><span class="chip {{if .Ready}}chip-ok{{else}}chip-bad{{end}}">{{if .Ready}}ready{{else}}not ready{{end}}</span></td>
+  <td>{{.IP}}</td>
+  <td>{{.Version}}</td>
+</tr>{{end}}
+</table>
+{{end}}
+<p class="mt-4 text-sm text-mut">add a VPS: run <span class="font-mono">luncur node join-command</span> on the server, then paste its output on the new machine.</p>
+<div class="cli-echo">$ <b>luncur node ls</b></div>
+</div>
+{{template "foot" .}}
+{{end}}
