@@ -396,6 +396,29 @@ func TestWaitDeployment(t *testing.T) {
 	}
 }
 
+func TestSetDeploymentImage(t *testing.T) {
+	c, log := fakeClient(t)
+	if err := c.SetDeploymentImage(context.Background(), "luncur-system", "luncur", "luncur", "x:y"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*log) != 1 {
+		t.Fatalf("want 1 action, got %d: %+v", len(*log), *log)
+	}
+	rec := (*log)[0]
+	if rec.verb != "patch" || rec.resource != "deployments" {
+		t.Fatalf("want patch deployments, got %+v", rec)
+	}
+	if rec.namespace != "luncur-system" || rec.name != "luncur" {
+		t.Fatalf("want luncur-system/luncur, got ns=%s name=%s", rec.namespace, rec.name)
+	}
+	if rec.patchType != "application/strategic-merge-patch+json" {
+		t.Fatalf("want strategic-merge patch type, got %s", rec.patchType)
+	}
+	if !strings.Contains(string(rec.patch), `"image":"x:y"`) || !strings.Contains(string(rec.patch), `"name":"luncur"`) {
+		t.Fatalf("patch missing expected fields: %s", rec.patch)
+	}
+}
+
 func TestHasGroupVersion(t *testing.T) {
 	cs := k8sfake.NewSimpleClientset()
 	cs.Resources = []*metav1.APIResourceList{

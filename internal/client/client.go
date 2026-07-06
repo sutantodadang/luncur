@@ -647,6 +647,17 @@ func (c *Client) RemoveAddon(project, name string, force, keepData bool) error {
 	return c.do("DELETE", path, nil, nil)
 }
 
+// AddonURL fetches an addon's connection URL and the env key it is
+// injected as.
+func (c *Client) AddonURL(project, name string) (envKey, connURL string, err error) {
+	var out struct {
+		EnvKey string `json:"env_key"`
+		URL    string `json:"url"`
+	}
+	err = c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/url", nil, &out)
+	return out.EnvKey, out.URL, err
+}
+
 func (c *Client) GetSetting(key string) (string, error) {
 	var out struct {
 		Value string `json:"value"`
@@ -887,4 +898,14 @@ func (c *Client) AuditList(limit int, user, contains string) ([]AuditEntry, erro
 	}
 	err := c.do("GET", path, nil, &out)
 	return out.Entries, err
+}
+
+// SystemUpdate asks the server to roll itself to a new image; returns
+// the image it accepted.
+func (c *Client) SystemUpdate(version, image string) (string, error) {
+	var out struct {
+		Image string `json:"image"`
+	}
+	err := c.do("POST", "/v1/system/update", map[string]string{"version": version, "image": image}, &out)
+	return out.Image, err
 }

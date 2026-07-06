@@ -5,6 +5,8 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"net/url"
@@ -42,6 +44,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/backups/prune", s.uiPage(s.handleUIBackupPrune))
 	mux.HandleFunc("GET /ui/settings", s.uiPage(s.handleUISettings))
 	mux.HandleFunc("POST /ui/settings", s.uiPage(s.handleUISettingsSet))
+	mux.HandleFunc("POST /ui/settings/update", s.uiPage(s.handleUISettingsUpdate))
 	mux.HandleFunc("POST /ui/registry-gc", s.uiPage(s.handleUIRegistryGC))
 	mux.HandleFunc("GET /ui/doctor", s.uiPage(s.handleUIDoctor))
 	mux.HandleFunc("GET /ui/nodes", s.uiPage(s.handleUINodes))
@@ -51,6 +54,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/projects/{project}", s.uiPage(s.handleUIApps))
 	mux.HandleFunc("POST /ui/projects/{project}/apps", s.uiPage(s.handleUICreateApp))
 	mux.HandleFunc("POST /ui/projects/{project}/addons/upgrade", s.uiPage(s.handleUIAddonUpgrade))
+	mux.HandleFunc("GET /ui/projects/{project}/addons/url", s.uiPage(s.handleUIAddonURL))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}", s.uiPage(s.handleUIApp))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/chip", s.uiPage(s.handleUIChip))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/destroy", s.uiPage(s.handleUIAppDestroy))
@@ -622,6 +626,36 @@ func (s *server) handleUIChip(w http.ResponseWriter, r *http.Request, u store.Us
 	if err := s.tmpl.ExecuteTemplate(w, "statuschip", chipData(p.Name, a.Name, status)); err != nil {
 		log.Printf("render statuschip: %v", err)
 	}
+}
+
+// handleUIAddonURL is an on-demand reveal fragment: the project page never
+// renders an addon's connection URL by default, only on this explicit
+// hx-get, so credentials don't sit in the page's initial HTML/history.
+func (s *server) handleUIAddonURL(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	ad, ok := s.uiAddon(w, p, r.URL.Query().Get("name"))
+	if !ok {
+		return
+	}
+
+	creds, err := s.unsealCreds(ad)
+	if err != nil {
+		if errors.Is(err, errSealerUnavailable) {
+			http.Error(w, "sealer is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		log.Printf("ui addon url %s: %v", ad.Name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	key, url := addonKeyURL(ad.Type, ad.Name, p.Namespace, creds)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<input class="input w-full font-mono text-xs" readonly value="%s">`,
+		template.HTMLEscapeString(key+"="+url))
 }
 
 // uiDeployRow is app.html's Deploys-card view model: store.Deployment plus

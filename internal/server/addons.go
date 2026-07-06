@@ -58,6 +58,25 @@ func (s *server) unsealCreds(a store.Addon) (addon.Creds, error) {
 	return c, nil
 }
 
+// addonKeyURL returns the injected env key and connection URL for an
+// addon's credentials. Shared by env injection and the connection-info
+// endpoints so the URL users copy is byte-identical to what apps get.
+func addonKeyURL(typ, name, namespace string, creds addon.Creds) (key, url string) {
+	host := addon.ServiceName(name) + "." + namespace
+	switch typ {
+	case "postgres":
+		key = "DATABASE_URL"
+		// postgresql:// not postgres://: SQLAlchemy dropped the short
+		// scheme and errors on it; every other client (psql, pgx,
+		// node-postgres, Prisma) accepts the long form.
+		url = fmt.Sprintf("postgresql://%s:%s@%s:5432/%s", creds.User, creds.Password, host, creds.DB)
+	case "redis":
+		key = "REDIS_URL"
+		url = fmt.Sprintf("redis://:%s@%s:6379", creds.Password, host)
+	}
+	return key, url
+}
+
 // addonEnv computes the connection env an app's attached addons inject:
 // DATABASE_URL / REDIS_URL, or DATABASE_URL_<NAME> (name uppercased,
 // dashes→underscores) for a second addon of the same type. A key already
@@ -76,20 +95,7 @@ func (s *server) addonEnv(p store.Project, a store.App, userEnv map[string]strin
 		if err != nil {
 			return nil, nil, fmt.Errorf("unseal addon %s creds: %w", ad.Name, err)
 		}
-		host := addon.ServiceName(ad.Name) + "." + p.Namespace
-
-		var key, url string
-		switch ad.Type {
-		case "postgres":
-			key = "DATABASE_URL"
-			// postgresql:// not postgres://: SQLAlchemy dropped the short
-			// scheme and errors on it; every other client (psql, pgx,
-			// node-postgres, Prisma) accepts the long form.
-			url = fmt.Sprintf("postgresql://%s:%s@%s:5432/%s", creds.User, creds.Password, host, creds.DB)
-		case "redis":
-			key = "REDIS_URL"
-			url = fmt.Sprintf("redis://:%s@%s:6379", creds.Password, host)
-		}
+		key, url := addonKeyURL(ad.Type, ad.Name, p.Namespace, creds)
 		if seenType[ad.Type] {
 			key = key + "_" + strings.ToUpper(strings.ReplaceAll(ad.Name, "-", "_"))
 		}
@@ -290,6 +296,34 @@ func (s *server) handleListAddons(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 	writeJSON(w, http.StatusOK, rows)
+}
+
+// handleAddonURL exposes an addon's connection URL and the env key apps
+// receive it under — the same values addonEnv injects, so what users copy
+// here matches what their app sees.
+func (s *server) handleAddonURL(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	ad, ok := s.requireAddon(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+
+	creds, err := s.unsealCreds(ad)
+	if err != nil {
+		if errors.Is(err, errSealerUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", "sealer is not configured")
+			return
+		}
+		log.Printf("unseal addon %s creds: %v", ad.Name, err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+
+	key, url := addonKeyURL(ad.Type, ad.Name, p.Namespace, creds)
+	writeJSON(w, http.StatusOK, map[string]any{"env_key": key, "url": url})
 }
 
 // attachAddon is the shared core of handleAttachAddon: attach the addon to

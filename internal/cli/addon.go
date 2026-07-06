@@ -181,6 +181,27 @@ func addonCmd() *cobra.Command {
 	upgrade.Flags().StringVar(&upgradeVersion, "version", "", "target version (image tag)")
 	upgrade.MarkFlagRequired("version")
 
-	cmd.AddCommand(create, add, attach, detach, list, remove, upgrade)
+	var urlProject string
+	urlCmd := &cobra.Command{
+		Use:   "url <name>",
+		Short: "Show an addon's connection URL and the env key it's injected as",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			envKey, connURL, err := c.AddonURL(urlProject, args[0])
+			if err != nil {
+				return err
+			}
+			cmd.Printf("%s=%s\n", envKey, connURL)
+			return nil
+		},
+	}
+	urlCmd.Flags().StringVar(&urlProject, "project", "", "project name")
+	urlCmd.MarkFlagRequired("project")
+
+	cmd.AddCommand(create, add, attach, detach, list, remove, upgrade, urlCmd)
 	return cmd
 }

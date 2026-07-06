@@ -150,6 +150,39 @@ func TestAddonCreateAttachInject(t *testing.T) {
 	}
 }
 
+func TestAddonURL(t *testing.T) {
+	_, srv, st, _ := addonTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/addons", admin, `{"type":"postgres","name":"postgres1"}`).Body.Close()
+
+	resp := doAuthed(t, "GET", srv.URL+"/v1/projects/proj/addons/postgres1/url", admin, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("addon url: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		EnvKey string `json:"env_key"`
+		URL    string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.EnvKey != "DATABASE_URL" {
+		t.Fatalf("env_key = %q, want DATABASE_URL", out.EnvKey)
+	}
+	if !strings.HasPrefix(out.URL, "postgresql://app:") || !strings.Contains(out.URL, "addon-postgres1.") || !strings.Contains(out.URL, ":5432/app") {
+		t.Fatalf("url = %q, missing expected pieces", out.URL)
+	}
+
+	// Unknown addon name -> 404.
+	resp = doAuthed(t, "GET", srv.URL+"/v1/projects/proj/addons/nope/url", admin, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown addon: want 404, got %d", resp.StatusCode)
+	}
+}
+
 func TestAddonRemoveGuard(t *testing.T) {
 	_, srv, st, actions := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
