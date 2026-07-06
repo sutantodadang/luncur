@@ -219,12 +219,31 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 		return nil, err
 	}
 
+	ingObj, err := PanelIngress(p.ExternalIP, "", "")
+	if err != nil {
+		return nil, err
+	}
+	objs = append(objs, ingObj)
+
+	return objs, nil
+}
+
+// PanelIngress builds luncur's own panel Ingress: a base rule for the
+// sslip.io host (PanelHost), plus — when customHost is set — a second rule
+// for the custom domain sharing the same backend. tlsSecret (only meaningful
+// alongside a non-empty customHost) adds a TLS block covering customHost;
+// the sslip.io host is always served over plain HTTP. Called with
+// customHost="", tlsSecret="" this reproduces LuncurObjects' original
+// single-rule Ingress byte-for-byte.
+func PanelIngress(externalIP, customHost, tlsSecret string) (render.Object, error) {
+	labels := map[string]string{
+		"app.kubernetes.io/name":       "luncur",
+		"app.kubernetes.io/managed-by": "luncur",
+	}
 	pathType := netv1.PathTypePrefix
-	ing := &netv1.Ingress{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
-		ObjectMeta: metav1.ObjectMeta{Name: "luncur", Namespace: systemNamespace, Labels: labels},
-		Spec: netv1.IngressSpec{Rules: []netv1.IngressRule{{
-			Host: PanelHost(p.ExternalIP),
+	rule := func(host string) netv1.IngressRule {
+		return netv1.IngressRule{
+			Host: host,
 			IngressRuleValue: netv1.IngressRuleValue{HTTP: &netv1.HTTPIngressRuleValue{
 				Paths: []netv1.HTTPIngressPath{{
 					Path: "/", PathType: &pathType,
@@ -233,11 +252,26 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 					}},
 				}},
 			}},
-		}}},
-	}
-	if err := add("Ingress", ing); err != nil {
-		return nil, err
+		}
 	}
 
-	return objs, nil
+	rules := []netv1.IngressRule{rule(PanelHost(externalIP))}
+	if customHost != "" {
+		rules = append(rules, rule(customHost))
+	}
+	spec := netv1.IngressSpec{Rules: rules}
+	if tlsSecret != "" && customHost != "" {
+		spec.TLS = []netv1.IngressTLS{{Hosts: []string{customHost}, SecretName: tlsSecret}}
+	}
+
+	ing := &netv1.Ingress{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
+		ObjectMeta: metav1.ObjectMeta{Name: "luncur", Namespace: systemNamespace, Labels: labels},
+		Spec:       spec,
+	}
+	b, err := json.Marshal(ing)
+	if err != nil {
+		return render.Object{}, err
+	}
+	return render.Object{Kind: "Ingress", JSON: b}, nil
 }

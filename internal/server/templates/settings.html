@@ -30,6 +30,14 @@
 </div>
 {{end}}
 
+{{if .PanelDomain}}
+<div class="card mb-6">
+<h2>Panel domain</h2>
+<p class="mb-1 text-sm text-mut">panel cert: {{.PanelCertStatus}}{{if .PanelCertError}} — {{.PanelCertError}}{{end}}{{if .PanelCertExpiresAt}} (expires {{.PanelCertExpiresAt}}){{end}}</p>
+<p class="text-sm text-mut">Point an A record for {{.PanelDomain}} at {{.ExternalIP}} first (or use a Cloudflare-proxied record with dns_provider set).</p>
+</div>
+{{end}}
+
 <div class="card mb-6">
 <h2>Update</h2>
 <p class="mb-3 text-sm text-mut">Running version: <code>{{.Version}}</code>. Bumps luncur's own server Deployment to a new image tag — no fresh reinstall.</p>
