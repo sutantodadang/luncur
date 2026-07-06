@@ -69,9 +69,9 @@
 (function () {
   var pre = document.getElementById("logs");
   var p = pre.dataset.project, a = pre.dataset.app;
-  var status = "{{.Status}}", latest = {{.LatestID}};
+  var status = "{{.Status}}", latest = "{{.LatestID}}";
   var url = "/v1/projects/" + p + "/apps/" + a + "/logs?follow=1";
-  if ((status === "building" || status === "deploying") && latest > 0) {
+  if ((status === "building" || status === "deploying") && latest !== "") {
     url = "/v1/projects/" + p + "/apps/" + a + "/deploys/" + latest + "/logs?follow=1";
   }
   var es = new EventSource(url);
