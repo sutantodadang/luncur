@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ var settableKeys = map[string]func(string) bool{
 	},
 	"acme_email":           func(v string) bool { return true },
 	"acme_directory":       func(v string) bool { return true },
+	"panel_domain":         validPanelDomain,
 	"backup_s3_endpoint":   func(v string) bool { return v != "" },
 	"backup_s3_bucket":     func(v string) bool { return v != "" },
 	"backup_s3_prefix":     func(v string) bool { return v != "" },
@@ -157,6 +159,11 @@ func (s *server) handleSetSetting(w http.ResponseWriter, r *http.Request, _ stor
 			writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		}
 		return
+	}
+	if key == "panel_domain" {
+		if err := s.panelDomainChanged(r.Context()); err != nil {
+			log.Printf("panel domain changed: %v", err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -27,6 +27,10 @@ type certJob struct {
 	p store.Project
 	a store.App
 	d store.Domain
+
+	// panelHost, when non-empty, diverts issue() to issuePanel: this job is
+	// luncur's own panel custom domain, not an app's, so p/a/d are unset.
+	panelHost string
 }
 
 // certManager drives builtin-provider cert issuance and renewal.
@@ -73,7 +77,16 @@ func (m *certManager) Challenges() http.Handler { return m.challenges }
 // full (the renewal sweep will pick it up again).
 func (m *certManager) Kick(p store.Project, a store.App, d store.Domain) {
 	select {
-	case m.jobs <- certJob{p, a, d}:
+	case m.jobs <- certJob{p: p, a: a, d: d}:
+	default:
+	}
+}
+
+// KickPanel enqueues issuance for luncur's own panel custom domain; same
+// drop-if-full semantics as Kick (the daily sweep will retry).
+func (m *certManager) KickPanel(host string) {
+	select {
+	case m.jobs <- certJob{panelHost: host}:
 	default:
 	}
 }
@@ -129,11 +142,39 @@ func (m *certManager) sweep(ctx context.Context) {
 		}
 		m.Kick(p, a, d)
 	}
+
+	// Panel custom domain: same builtin-only lifecycle as an app domain
+	// above (renew "none"/"pending", renew "issued" nearing expiry), but
+	// state lives in panel_cert_* settings rather than a domains row.
+	if provider == "builtin" {
+		host, _ := m.s.st.GetSetting("panel_domain")
+		if host != "" {
+			status, _ := m.s.st.GetSetting("panel_cert_status")
+			renew := false
+			switch status {
+			case "none", "pending":
+				renew = true
+			case "issued":
+				if exp, err := m.s.st.GetSetting("panel_cert_expires_at"); err == nil {
+					if t, err := time.Parse(time.RFC3339, exp); err == nil {
+						renew = acme.NeedsRenewal(t, time.Now())
+					}
+				}
+			}
+			if renew {
+				m.KickPanel(host)
+			}
+		}
+	}
 }
 
 // issue runs one domain's issuance end to end.
 func (m *certManager) issue(ctx context.Context, j certJob) {
 	if m.s.kube == nil {
+		return
+	}
+	if j.panelHost != "" {
+		m.issuePanel(ctx, j.panelHost)
 		return
 	}
 	st := m.s.st
@@ -220,6 +261,106 @@ func (m *certManager) issue(ctx context.Context, j certJob) {
 	}
 	log.Printf("cert issued for %s (expires %s)", j.d.Hostname, notAfter.Format(time.RFC3339))
 	m.s.notify(notifyEvent{Event: "cert_issued", Project: j.p.Name, App: j.a.Name, URL: j.d.Hostname})
+}
+
+// issuePanel issues (or renews) the builtin cert for luncur's own panel
+// custom domain. Same ACME mechanics as issue, but: no wildcard case, status
+// lives in the panel_cert_* settings instead of a domains row, the TLS
+// Secret is panelTLSSecret in the system namespace, and success re-applies
+// the panel Ingress (via applyPanelIngress) instead of syncing an app.
+func (m *certManager) issuePanel(ctx context.Context, host string) {
+	st := m.s.st
+	fail := func(err error) {
+		log.Printf("panel cert %s: %v", host, err)
+		if e := st.SetSetting("panel_cert_status", "failed"); e != nil {
+			log.Printf("mark panel cert failed: %v", e)
+		}
+		if e := st.SetSetting("panel_cert_error", err.Error()); e != nil {
+			log.Printf("set panel cert error: %v", e)
+		}
+		m.s.notify(notifyEvent{Event: "cert_failed", Project: "system", App: "panel", URL: host, Err: err.Error()})
+	}
+	if err := st.SetSetting("panel_cert_status", "pending"); err != nil {
+		fail(err)
+		return
+	}
+
+	key, err := m.accountKey(ctx)
+	if err != nil {
+		fail(fmt.Errorf("acme account key: %w", err))
+		return
+	}
+
+	// DNS-01 when a dns provider is configured for this install (no
+	// wildcard case here — the panel domain is never a wildcard); HTTP-01
+	// with the shared challenge Ingress otherwise.
+	var solver acme.Solver
+	if m.s.dnsProviderName() != "none" {
+		prov, err := m.s.dnsProvider()
+		if err != nil {
+			fail(fmt.Errorf("dns provider: %w", err))
+			return
+		}
+		solver = m.newDNS01Solver(prov)
+	} else {
+		if err := m.setChallengeHost(ctx, host, true); err != nil {
+			fail(fmt.Errorf("challenge ingress: %w", err))
+			return
+		}
+		defer func() {
+			if err := m.setChallengeHost(ctx, host, false); err != nil {
+				log.Printf("remove challenge host %s: %v", host, err)
+			}
+		}()
+	}
+
+	email, _ := st.GetSetting("acme_email")
+	iss := &acme.Issuer{
+		DirectoryURL: m.directoryURL, AccountKey: key,
+		Email: email, Challenges: m.challenges, Solver: solver,
+	}
+	ictx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	certPEM, keyPEM, notAfter, err := iss.Issue(ictx, host)
+	if err != nil {
+		fail(err)
+		return
+	}
+
+	secJSON, err := json.Marshal(map[string]any{
+		"apiVersion": "v1", "kind": "Secret",
+		"metadata": map[string]any{
+			"name": panelTLSSecret, "namespace": m.s.systemNamespace,
+			"labels": map[string]string{"app.kubernetes.io/managed-by": "luncur"},
+		},
+		"type": "kubernetes.io/tls",
+		"stringData": map[string]string{
+			"tls.crt": string(certPEM), "tls.key": string(keyPEM),
+		},
+	})
+	if err != nil {
+		fail(err)
+		return
+	}
+	if err := m.s.kube.Apply(ctx, m.s.systemNamespace, []render.Object{{Kind: "Secret", JSON: secJSON}}); err != nil {
+		fail(fmt.Errorf("apply tls secret: %w", err))
+		return
+	}
+	if err := st.SetSetting("panel_cert_status", "issued"); err != nil {
+		fail(err)
+		return
+	}
+	if err := st.SetSetting("panel_cert_error", ""); err != nil {
+		log.Printf("clear panel cert error: %v", err)
+	}
+	if err := st.SetSetting("panel_cert_expires_at", notAfter.UTC().Format(time.RFC3339)); err != nil {
+		log.Printf("set panel cert expiry: %v", err)
+	}
+	if err := m.s.applyPanelIngress(ctx); err != nil {
+		log.Printf("apply panel ingress after cert %s: %v", host, err)
+	}
+	log.Printf("panel cert issued for %s (expires %s)", host, notAfter.Format(time.RFC3339))
+	m.s.notify(notifyEvent{Event: "cert_issued", Project: "system", App: "panel", URL: host})
 }
 
 // readbackExpiry fills cert_expires_at for cert-manager-managed domains by

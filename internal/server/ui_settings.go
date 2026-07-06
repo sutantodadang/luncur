@@ -31,6 +31,7 @@ var settingGroups = []settingGroup{
 		{Key: "cert_provider", Options: []string{"builtin", "traefik", "cert-manager"}},
 		{Key: "acme_email"},
 		{Key: "acme_directory"},
+		{Key: "panel_domain"},
 	}},
 	{Title: "DNS", Fields: []settingField{
 		{Key: "dns_provider", Options: []string{"cloudflare", "route53", "rfc2136", "none"}},
@@ -133,9 +134,23 @@ func (s *server) handleUISettings(w http.ResponseWriter, r *http.Request, u stor
 		banner = "registry GC: " + q.Get("gc") + " manifest(s) deleted"
 	}
 
+	// Panel custom-domain status: a read-only line below the Certificates
+	// group, not one of the settingRow fields (panel_cert_* aren't
+	// settableKeys — they're written internally by the cert manager).
+	panelDomain, _ := s.st.GetSetting("panel_domain")
+	var panelStatus, panelCertErr, panelExpiresAt string
+	if panelDomain != "" {
+		panelStatus, _ = s.st.GetSetting("panel_cert_status")
+		panelCertErr, _ = s.st.GetSetting("panel_cert_error")
+		panelExpiresAt, _ = s.st.GetSetting("panel_cert_expires_at")
+	}
+
 	s.renderPage(w, "settings.html", map[string]any{
 		"User": u, "Groups": groups, "Banner": banner,
 		"CSRF": s.csrf(w, r), "IsAdmin": true, "Version": s.version,
+		"PanelDomain": panelDomain, "PanelCertStatus": panelStatus,
+		"PanelCertError": panelCertErr, "PanelCertExpiresAt": panelExpiresAt,
+		"ExternalIP": s.externalIP,
 	})
 }
 
@@ -166,6 +181,11 @@ func (s *server) handleUISettingsSet(w http.ResponseWriter, r *http.Request, u s
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
 		return
+	}
+	if key == "panel_domain" {
+		if err := s.panelDomainChanged(r.Context()); err != nil {
+			log.Printf("panel domain changed: %v", err)
+		}
 	}
 	http.Redirect(w, r, "/ui/settings?saved="+url.QueryEscape(key), http.StatusSeeOther)
 }

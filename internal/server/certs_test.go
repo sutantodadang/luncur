@@ -321,7 +321,7 @@ func TestIssueDNS01PickedForWildcard(t *testing.T) {
 	fakeDir.SetTXTLookup(prov.txt)
 	srv.certs.directoryURL = fakeDir.DirectoryURL()
 
-	srv.certs.issue(context.Background(), certJob{p, a, d})
+	srv.certs.issue(context.Background(), certJob{p: p, a: a, d: d})
 
 	list, err := st.ListDomains(a.ID)
 	if err != nil || len(list) != 1 {
@@ -381,7 +381,7 @@ func TestCertIssueNotifiesOnSuccess(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	srv.certs.issue(ctx, certJob{p, a, d})
+	srv.certs.issue(ctx, certJob{p: p, a: a, d: d})
 
 	got, err := st.ListDomains(a.ID)
 	if err != nil || len(got) != 1 || got[0].CertStatus != "issued" {
@@ -423,7 +423,7 @@ func TestCertIssueNotifiesOnFailure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	srv.certs.issue(ctx, certJob{p, a, d})
+	srv.certs.issue(ctx, certJob{p: p, a: a, d: d})
 
 	got, err := st.ListDomains(a.ID)
 	if err != nil || len(got) != 1 || got[0].CertStatus != "failed" {

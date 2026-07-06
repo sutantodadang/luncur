@@ -60,3 +60,46 @@ func TestLuncurObjects(t *testing.T) {
 		t.Fatal("PanelHost")
 	}
 }
+
+func TestPanelIngress(t *testing.T) {
+	// No custom host: single sslip.io rule, no tls block — must match what
+	// LuncurObjects itself renders.
+	base, err := PanelIngress("1.2.3.4", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseJSON := string(base.JSON)
+	if !strings.Contains(baseJSON, "panel.1.2.3.4.sslip.io") {
+		t.Fatalf("missing sslip host: %s", baseJSON)
+	}
+	if strings.Contains(baseJSON, `"tls"`) {
+		t.Fatalf("unexpected tls block with no custom host: %s", baseJSON)
+	}
+
+	objs, err := LuncurObjects(Params{Image: "img", ExternalIP: "1.2.3.4", BuilderImage: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range objs {
+		if o.Kind == "Ingress" && string(o.JSON) != baseJSON {
+			t.Fatalf("LuncurObjects Ingress diverged from PanelIngress base case:\n%s\nvs\n%s", o.JSON, baseJSON)
+		}
+	}
+
+	// Custom host + secret: both hosts present, tls block covers only the
+	// custom host.
+	custom, err := PanelIngress("1.2.3.4", "panel.example.com", "luncur-panel-tls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	customJSON := string(custom.JSON)
+	for _, want := range []string{
+		"panel.1.2.3.4.sslip.io",
+		"panel.example.com",
+		`"secretName":"luncur-panel-tls"`,
+	} {
+		if !strings.Contains(customJSON, want) {
+			t.Fatalf("missing %q in: %s", want, customJSON)
+		}
+	}
+}

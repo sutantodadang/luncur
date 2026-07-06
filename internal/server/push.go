@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -146,6 +147,17 @@ func NewWithBackend(d Deps) (http.Handler, *PushBackend, func(ctx context.Contex
 		go s.StartRegistryGC(ctx)
 		go s.reconcileUnfinished(ctx)
 		go s.StartMonitor(ctx)
+		// A previous process may have applied only the base Ingress (e.g.
+		// `luncur up` re-running); re-assert panel_domain here so a custom
+		// domain set before restart isn't silently dropped until the next
+		// settings write or daily cert sweep.
+		go func() {
+			actx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			if err := s.applyPanelIngress(actx); err != nil {
+				log.Printf("apply panel ingress at startup: %v", err)
+			}
+		}()
 	}
 	return s.handler(), &PushBackend{s: s}, start
 }
