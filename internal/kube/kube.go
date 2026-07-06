@@ -441,6 +441,30 @@ func (c *Client) WaitDeployment(ctx context.Context, namespace, name string, pol
 	}
 }
 
+// SetDeploymentImage bumps one container's image via strategic-merge
+// patch — containers merge by name, so nothing else in the pod spec is
+// touched and the Deployment's rolling update takes it from there.
+func (c *Client) SetDeploymentImage(ctx context.Context, namespace, name, container, image string) error {
+	patch, err := json.Marshal(map[string]any{
+		"spec": map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []map[string]any{
+						{"name": container, "image": image},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = c.dyn.Resource(gvrByKind["Deployment"]).Namespace(namespace).Patch(
+		ctx, name, types.StrategicMergePatchType, patch, metav1.PatchOptions{},
+	)
+	return err
+}
+
 // NodeIP returns the first node's ExternalIP, falling back to InternalIP.
 // Single-node K3s is the Phase 1 target, so "first node" is the node.
 func (c *Client) NodeIP(ctx context.Context) (string, error) {

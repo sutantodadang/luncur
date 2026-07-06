@@ -78,13 +78,15 @@ function uiPresetChange(preset) {
 <div class="card mb-6">
 <h2>Addons</h2>
 {{if not .Addons}}<p class="mb-1 text-sm text-mut">No addons yet.</p><div class="cli-echo mb-2">$ <b>luncur addon create postgres</b></div>{{end}}
-<table class="tbl"><tr><th>Name</th><th>Type</th><th>Version</th><th>Ready</th><th>Attached</th><th></th><th></th></tr>
+<table class="tbl"><tr><th>Name</th><th>Type</th><th>Version</th><th>Ready</th><th>Attached</th><th></th><th></th><th></th></tr>
 {{range .Addons}}<tr>
   <td>{{.Name}}</td>
   <td>{{.Type}}</td>
   <td>{{.Version}}</td>
   <td>{{.Ready}}</td>
   <td>{{range .AttachedTo}}{{.}} {{end}}</td>
+  <td><button type="button" class="btn-ghost" hx-get="/ui/projects/{{$.Project.Name}}/addons/url?name={{.Name}}" hx-target="#addon-url-{{.Name}}" hx-swap="innerHTML">connection</button>
+  <div id="addon-url-{{.Name}}" class="mt-1"></div></td>
   <td><form class="inline-flex items-center gap-2" method="post" action="/ui/projects/{{$.Project.Name}}/addons/upgrade">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
     <input type="hidden" name="name" value="{{.Name}}">
@@ -110,6 +112,7 @@ function uiPresetChange(preset) {
 </form>
 <div class="cli-echo">$ <b>luncur addon create postgres</b></div>
 <div class="cli-echo">$ <b>luncur addon upgrade &lt;name&gt;</b></div>
+<div class="cli-echo">$ <b>luncur addon url &lt;name&gt;</b></div>
 </div>
 
 <div class="card">
