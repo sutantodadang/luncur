@@ -193,6 +193,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/raw", s.authed(s.handleRawManifest))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/logs", s.authed(s.handleRuntimeLogs))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/metrics", s.authed(s.handleAppMetrics))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/pods", s.authed(s.handleAppPods))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/volumes", s.authed(s.handleAddVolume))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/volumes", s.authed(s.handleListVolumes))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/volumes/{name}", s.authed(s.handleDeleteVolume))

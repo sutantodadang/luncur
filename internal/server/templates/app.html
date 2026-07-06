@@ -88,6 +88,24 @@
 </script>
 </div>
 
+<div class="card mb-6">
+<h2>Pods</h2>
+{{if .Pods}}
+<table class="tbl"><tr><th>Name</th><th>Status</th><th>Ready</th><th>Restarts</th><th>CPU</th><th>Memory</th><th>Node</th></tr>
+{{range .Pods}}<tr>
+  <td class="font-mono text-xs">{{.Name}}</td>
+  <td><span class="chip {{if eq .Phase "Running"}}chip-ok{{else if eq .Phase "Pending"}}chip-warn{{else}}chip-bad{{end}}">{{.Phase}}</span>{{if .Reason}} <span class="text-xs text-mut">{{.Reason}}</span>{{end}}</td>
+  <td>{{if .Ready}}yes{{else}}no{{end}}</td>
+  <td>{{.Restarts}}</td>
+  <td>{{if .MetricsOK}}{{.CPUMilli}}m{{else}}&ndash;{{end}}</td>
+  <td>{{if .MetricsOK}}{{.MemoryMiB}}Mi{{else}}&ndash;{{end}}</td>
+  <td class="text-xs text-mut">{{.Node}}</td>
+</tr>{{end}}
+</table>
+{{else}}<p class="text-sm text-mut">no pods running.</p>{{end}}
+<div class="cli-echo">$ <b>luncur ps {{.App.Name}} --project {{.Project.Name}}</b></div>
+</div>
+
 {{if not .App.Ejected}}
 <div class="mb-6 grid gap-4 lg:grid-cols-2">
 <div class="card">

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
@@ -26,6 +27,10 @@ func TestUINodesPage(t *testing.T) {
 			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
 			Addresses:  []corev1.NodeAddress{{Type: corev1.NodeExternalIP, Address: "1.2.3.4"}},
 			NodeInfo:   corev1.NodeSystemInfo{KubeletVersion: "v1.32.5+k3s1"},
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4"),
+				corev1.ResourceMemory: resource.MustParse("8Gi"),
+			},
 		},
 	}
 	cs := k8sfake.NewSimpleClientset(cp)
@@ -52,6 +57,9 @@ func TestUINodesPage(t *testing.T) {
 	}
 	if !strings.Contains(body, "ready") {
 		t.Fatalf("nodes page missing status, got: %s", body)
+	}
+	if !strings.Contains(body, "4000m") {
+		t.Fatalf("nodes page missing cpu capacity, got: %s", body)
 	}
 
 	status, _ = getUIPage(t, client, srv.URL, "/ui/nodes", uiSessionCookie(t, st, member.ID))
