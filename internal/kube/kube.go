@@ -490,6 +490,57 @@ func (c *Client) NodesReady(ctx context.Context) (total int, notReady []string, 
 	return total, notReady, nil
 }
 
+// NodeInfo is a summary of one cluster node for the nodes API.
+type NodeInfo struct {
+	Name    string `json:"name"`
+	Role    string `json:"role"`
+	Ready   bool   `json:"ready"`
+	IP      string `json:"ip"`
+	Version string `json:"version"`
+}
+
+// ListNodes summarizes every cluster node: role (control-plane label or
+// agent), readiness, preferred address, and kubelet version.
+func (c *Client) ListNodes(ctx context.Context) ([]NodeInfo, error) {
+	nodes, err := c.cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list nodes: %w", err)
+	}
+	out := make([]NodeInfo, 0, len(nodes.Items))
+	for _, n := range nodes.Items {
+		role := "agent"
+		if _, ok := n.Labels["node-role.kubernetes.io/control-plane"]; ok {
+			role = "control-plane"
+		}
+		ready := false
+		for _, cond := range n.Status.Conditions {
+			if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+				ready = true
+				break
+			}
+		}
+		var ip, internal string
+		for _, a := range n.Status.Addresses {
+			switch a.Type {
+			case corev1.NodeExternalIP:
+				ip = a.Address
+			case corev1.NodeInternalIP:
+				if internal == "" {
+					internal = a.Address
+				}
+			}
+		}
+		if ip == "" {
+			ip = internal
+		}
+		out = append(out, NodeInfo{
+			Name: n.Name, Role: role, Ready: ready, IP: ip,
+			Version: n.Status.NodeInfo.KubeletVersion,
+		})
+	}
+	return out, nil
+}
+
 // ReadyPods counts how many pods matching selector in namespace have a True
 // PodReady condition, alongside the total matched.
 func (c *Client) ReadyPods(ctx context.Context, namespace, selector string) (ready, total int, err error) {
