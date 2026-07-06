@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,62 @@ func TestCreateUserRejectsShortPassword(t *testing.T) {
 	s := openTest(t)
 	if _, err := s.CreateUser("short@b.co", "pw", "member"); err == nil {
 		t.Fatal("want error for short password")
+	}
+}
+
+func TestUpdatePassword(t *testing.T) {
+	s := openTest(t)
+	u, err := s.CreateUser("pw@b.co", "oldpassword", "member")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := s.UpdatePassword(u.ID, "newpassword"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if _, err := s.Authenticate("pw@b.co", "newpassword"); err != nil {
+		t.Fatalf("authenticate new: %v", err)
+	}
+	if _, err := s.Authenticate("pw@b.co", "oldpassword"); !errors.Is(err, ErrAuthFailed) {
+		t.Fatalf("want ErrAuthFailed for old password, got %v", err)
+	}
+
+	var ve *ValidationError
+	if err := s.UpdatePassword(u.ID, "short"); !errors.As(err, &ve) {
+		t.Fatalf("want ValidationError for short password, got %v", err)
+	}
+	if err := s.UpdatePassword(9999, "newpassword"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound for unknown id, got %v", err)
+	}
+}
+
+func TestUpdateEmail(t *testing.T) {
+	s := openTest(t)
+	u1, err := s.CreateUser("one@b.co", "password123", "member")
+	if err != nil {
+		t.Fatalf("create 1: %v", err)
+	}
+	u2, err := s.CreateUser("two@b.co", "password123", "member")
+	if err != nil {
+		t.Fatalf("create 2: %v", err)
+	}
+
+	if err := s.UpdateEmail(u1.ID, " MiXeD@Case.Co "); err != nil {
+		t.Fatalf("update email: %v", err)
+	}
+	if _, err := s.Authenticate("mixed@case.co", "password123"); err != nil {
+		t.Fatalf("authenticate normalized email: %v", err)
+	}
+
+	if err := s.UpdateEmail(u1.ID, "two@b.co"); err == nil || !strings.Contains(err.Error(), "UNIQUE") {
+		t.Fatalf("want UNIQUE constraint error for taken email, got %v", err)
+	}
+
+	var ve *ValidationError
+	if err := s.UpdateEmail(u2.ID, ""); !errors.As(err, &ve) {
+		t.Fatalf("want ValidationError for empty email, got %v", err)
+	}
+	if err := s.UpdateEmail(9999, "nobody@b.co"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound for unknown id, got %v", err)
 	}
 }
 

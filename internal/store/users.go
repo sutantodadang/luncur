@@ -119,6 +119,44 @@ func (s *Store) ListUsers() ([]UserInfo, error) {
 	return out, rows.Err()
 }
 
+// UpdatePassword rehashes and stores a user's password. Same length rule as
+// CreateUser; ErrNotFound for an unknown id.
+func (s *Store) UpdatePassword(id int64, password string) error {
+	if len(password) < 8 {
+		return validationErrorf("password must be at least 8 characters")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	res, err := s.db.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, string(hash), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateEmail changes a user's login email (normalized like CreateUser).
+// ErrNotFound for an unknown id; the users.email UNIQUE constraint surfaces
+// as an error the caller maps to a conflict.
+func (s *Store) UpdateEmail(id int64, email string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return validationErrorf("email required")
+	}
+	res, err := s.db.Exec(`UPDATE users SET email = ? WHERE id = ?`, email, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeleteUser removes a user; tokens, ssh keys, and memberships cascade.
 func (s *Store) DeleteUser(id int64) error {
 	res, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, id)

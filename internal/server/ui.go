@@ -35,6 +35,10 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/users/invite", s.uiPage(s.handleUIInviteCreate))
 	mux.HandleFunc("POST /ui/users/invite/revoke", s.uiPage(s.handleUIInviteRevoke))
 	mux.HandleFunc("POST /ui/users/delete", s.uiPage(s.handleUIUserDelete))
+	mux.HandleFunc("POST /ui/users/password", s.uiPage(s.handleUIUserPassword))
+	mux.HandleFunc("GET /ui/account", s.uiPage(s.handleUIAccount))
+	mux.HandleFunc("POST /ui/account/password", s.uiPage(s.handleUIAccountPassword))
+	mux.HandleFunc("POST /ui/account/email", s.uiPage(s.handleUIAccountEmail))
 	mux.HandleFunc("GET /ui/tokens", s.uiPage(s.handleUITokens))
 	mux.HandleFunc("POST /ui/tokens/revoke", s.uiPage(s.handleUITokenRevoke))
 	mux.HandleFunc("GET /ui/sshkeys", s.uiPage(s.handleUISSHKeys))
@@ -1675,11 +1679,144 @@ func (s *server) handleUIUsers(w http.ResponseWriter, r *http.Request, u store.U
 	case "failed":
 		mailNote = "invite created, but the email failed — copy the link below"
 	}
+	var pwNote string
+	switch r.URL.Query().Get("pw") {
+	case "ok":
+		pwNote = "password updated"
+	case "invalid":
+		pwNote = "password must be at least 8 characters"
+	case "missing":
+		pwNote = "no such user"
+	}
 	s.renderPage(w, "users.html", map[string]any{
 		"User": u, "Users": users, "Invites": rows, "Self": u.ID,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
-		"MailNote": mailNote,
+		"MailNote": mailNote, "PwNote": pwNote,
 	})
+}
+
+// handleUIUserPassword is admin-only password reset for any user — no old
+// password required (the admin isn't the account owner).
+func (s *server) handleUIUserPassword(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !s.uiAdmin(w, u) {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	id, err := strconv.ParseInt(r.PostFormValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid user id", http.StatusBadRequest)
+		return
+	}
+	if err := s.st.UpdatePassword(id, r.PostFormValue("password")); err != nil {
+		var ve *store.ValidationError
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			http.Redirect(w, r, "/ui/users?pw=missing", http.StatusSeeOther)
+		case errors.As(err, &ve):
+			http.Redirect(w, r, "/ui/users?pw=invalid", http.StatusSeeOther)
+		default:
+			log.Printf("ui admin set password: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	http.Redirect(w, r, "/ui/users?pw=ok", http.StatusSeeOther)
+}
+
+// accountNote maps the account page's fixed ok/err query params to display
+// strings — never the submitted value itself, so nothing user-supplied ever
+// gets echoed back into the page.
+func accountNote(r *http.Request) (note, errMsg string) {
+	switch r.URL.Query().Get("ok") {
+	case "password":
+		note = "password changed"
+	case "email":
+		note = "email changed — use it on your next login"
+	}
+	switch r.URL.Query().Get("err") {
+	case "wrong":
+		errMsg = "current password is incorrect"
+	case "invalid":
+		errMsg = "invalid input (password min 8 chars, email required)"
+	case "taken":
+		errMsg = "that email is already in use"
+	}
+	return note, errMsg
+}
+
+// handleUIAccount is the self-service account page: change own password or
+// email, both gated on the current password (checked by the POST handlers,
+// not here).
+func (s *server) handleUIAccount(w http.ResponseWriter, r *http.Request, u store.User) {
+	note, errMsg := accountNote(r)
+	s.renderPage(w, "account.html", map[string]any{
+		"User": u, "CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
+		"Note": note, "Error": errMsg,
+	})
+}
+
+// handleUIAccountPassword is handleChangePassword's UI twin: same
+// Authenticate-then-UpdatePassword core, redirect with a fixed ?ok=/?err=
+// note instead of a JSON envelope.
+func (s *server) handleUIAccountPassword(w http.ResponseWriter, r *http.Request, u store.User) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.st.Authenticate(u.Email, r.PostFormValue("old")); errors.Is(err, store.ErrAuthFailed) {
+		http.Redirect(w, r, "/ui/account?err=wrong", http.StatusSeeOther)
+		return
+	} else if err != nil {
+		log.Printf("ui change password: authenticate: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.st.UpdatePassword(u.ID, r.PostFormValue("new")); err != nil {
+		var ve *store.ValidationError
+		if errors.As(err, &ve) {
+			http.Redirect(w, r, "/ui/account?err=invalid", http.StatusSeeOther)
+			return
+		}
+		log.Printf("ui change password: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/ui/account?ok=password", http.StatusSeeOther)
+}
+
+// handleUIAccountEmail is handleChangeEmail's UI twin: same
+// Authenticate-then-UpdateEmail core, redirect with a fixed ?ok=/?err= note
+// instead of a JSON envelope.
+func (s *server) handleUIAccountEmail(w http.ResponseWriter, r *http.Request, u store.User) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.st.Authenticate(u.Email, r.PostFormValue("password")); errors.Is(err, store.ErrAuthFailed) {
+		http.Redirect(w, r, "/ui/account?err=wrong", http.StatusSeeOther)
+		return
+	} else if err != nil {
+		log.Printf("ui change email: authenticate: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.st.UpdateEmail(u.ID, r.PostFormValue("email")); err != nil {
+		var ve *store.ValidationError
+		switch {
+		case strings.Contains(err.Error(), "UNIQUE constraint failed: users.email"):
+			http.Redirect(w, r, "/ui/account?err=taken", http.StatusSeeOther)
+		case errors.As(err, &ve):
+			http.Redirect(w, r, "/ui/account?err=invalid", http.StatusSeeOther)
+		default:
+			log.Printf("ui change email: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	http.Redirect(w, r, "/ui/account?ok=email", http.StatusSeeOther)
 }
 
 // handleUITokens lists the caller's own tokens — the UI twin of

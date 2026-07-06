@@ -30,13 +30,11 @@ func loginCmd() *cobra.Command {
 				email = strings.TrimSpace(line)
 			}
 			if password == "" {
-				fmt.Fprint(cmd.OutOrStdout(), "password: ")
-				b, err := term.ReadPassword(int(os.Stdin.Fd()))
-				fmt.Fprintln(cmd.OutOrStdout())
+				var err error
+				password, err = promptPassword(cmd, "password: ")
 				if err != nil {
 					return err
 				}
-				password = string(b)
 			}
 			tok, err := client.New(serverURL, "").Login(email, password)
 			if err != nil {
@@ -61,4 +59,16 @@ func apiClient() (*client.Client, error) {
 		return nil, fmt.Errorf("not logged in — run `luncur login <server-url>` first")
 	}
 	return client.New(cfg.Server, cfg.Token), nil
+}
+
+// promptPassword prints label and reads a password from the terminal without
+// echoing it — never logged, never returned in any error message.
+func promptPassword(cmd *cobra.Command, label string) (string, error) {
+	fmt.Fprint(cmd.OutOrStdout(), label)
+	b, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(cmd.OutOrStdout())
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
