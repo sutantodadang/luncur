@@ -60,6 +60,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook", s.uiPage(s.handleUIWebhookEnable))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook/disable", s.uiPage(s.handleUIWebhookDisable))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env", s.uiPage(s.handleUIEnvSet))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/bulk", s.uiPage(s.handleUIEnvBulk))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/delete", s.uiPage(s.handleUIEnvUnset))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains", s.uiPage(s.handleUIDomainAdd))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/delete", s.uiPage(s.handleUIDomainDelete))
@@ -947,6 +948,50 @@ func (s *server) handleUIEnvSet(w http.ResponseWriter, r *http.Request, u store.
 			http.Error(w, ve.Error(), http.StatusBadRequest)
 		default:
 			log.Printf("ui set env: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIEnvBulk is handleBulkSetEnv's UI twin: paste-in-only bulk upsert
+// from a raw .env textarea, redirecting back to the app page on success.
+func (s *server) handleUIEnvBulk(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	vars, err := parseDotenv(r.PostFormValue("dotenv"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(vars) == 0 {
+		http.Error(w, "no KEY=VALUE pairs found", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.setAppEnvBulk(r.Context(), p, a, vars); err != nil {
+		var ve *store.ValidationError
+		switch {
+		case errors.Is(err, errAppEjected):
+			http.Error(w, err.Error(), http.StatusConflict)
+		case errors.Is(err, errSealerUnavailable):
+			http.Error(w, "sealer is not configured", http.StatusServiceUnavailable)
+		case errors.As(err, &ve):
+			http.Error(w, ve.Error(), http.StatusBadRequest)
+		default:
+			log.Printf("ui bulk set env: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
 		return

@@ -152,7 +152,15 @@
   <input class="input w-auto flex-1" name="value" placeholder="value" required>
   <button type="submit" class="btn">set</button>
 </form>
-<div class="cli-echo">$ <b>luncur env set {{.App.Name}} KEY=VALUE</b></div>
+<details class="mt-3">
+  <summary class="cursor-pointer text-xs text-mut">bulk edit (.env)</summary>
+  <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/env/bulk" class="mt-2">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <textarea class="input w-full font-mono text-xs" name="dotenv" rows="6" placeholder="# paste .env here&#10;KEY=value&#10;OTHER=&quot;quoted value&quot;" required></textarea>
+    <button type="submit" class="btn mt-2">set all</button>
+  </form>
+</details>
+<div class="cli-echo">$ <b>luncur env set {{.App.Name}} KEY=VALUE</b> &middot; $ <b>luncur env push {{.App.Name}} .env</b></div>
 </div>
 {{end}}
 
