@@ -43,7 +43,7 @@ control teaches its CLI command back (see CLI-echo). A user should never be
 
 ## Layout
 - **Approach:** grid-disciplined. Fixed left sidebar (180–224px, bg `#0D0D0F`): brand `luncur_` (orange underscore), nav groups with mono uppercase group labels, active item = 2px orange left-border. Main column: mono breadcrumb (`project / app`), page title row with actions right-aligned, then stacked section cards.
-- **Max content width:** 1080px (max-w-6xl).
+- **Max content width:** 1152px (max-w-6xl), column centered in the main area (`mx-auto`). On ≥1536px viewports (2K+) the cap widens to 1600px (`2xl:max-w-[1600px]`) — dense operator screens should use the space, but forms/tables must never stretch edge-to-edge on ultrawide.
 - **Inline actions:** every resource row (deploy, domain, volume, addon, key, token) carries its actions in the rightmost cell — never navigate away for a single action. Destructive = `btn-danger` (outlined red) + `hx-confirm`.
 - **Border radius:** 4px (chips/inputs) · 5px (buttons) · 6px (cards/panels) · 8px (page-level mockups). Nothing rounder — engineered, not friendly.
 - **Empty states:** one muted sentence + the CLI-echo of the command that creates the first item.
@@ -70,3 +70,4 @@ description must say why not.
 | 2026-07-05 | CLI-echo signature pattern | Product differentiator (escape-hatch transparency) expressed in the UI; teaches CLI for free |
 | 2026-07-05 | Dark-only, no light theme | Operator tool; halves CSS surface; matches category expectation |
 | 2026-07-05 | Light theme + toggle added | Owner request (field feedback); tokens moved to CSS variables |
+| 2026-07-06 | Content column centered + 1600px cap on 2xl | Owner field feedback: 2K monitor left content hugging the sidebar with a dead right half; was max-w-5xl left-aligned |
