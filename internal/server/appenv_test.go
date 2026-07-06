@@ -42,6 +42,45 @@ func TestEnvRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBulkSetEnv covers handleBulkSetEnv: a valid .env payload upserts every
+// pair (later duplicate wins, comments/blank lines skipped, quotes unwrapped,
+// export stripped), and malformed/empty payloads are rejected with 400
+// before anything is written.
+func TestBulkSetEnv(t *testing.T) {
+	srv, st, _ := kubeServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	seedWebApi(t, srv, admin)
+
+	body := `{"dotenv":"A=1\n# c\nexport B=\"two words\"\n\nC=x=y"}`
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/env/bulk", admin, body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("bulk set env: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Set int `json:"set"`
+	}
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if out.Set != 3 {
+		t.Fatalf("bulk set env: want set=3, got %d", out.Set)
+	}
+
+	envResp := doAuthed(t, "GET", srv.URL+"/v1/projects/web/apps/api/env", admin, "")
+	var env map[string]string
+	json.NewDecoder(envResp.Body).Decode(&env)
+	envResp.Body.Close()
+	if env["A"] != "1" || env["B"] != "two words" || env["C"] != "x=y" {
+		t.Fatalf("env after bulk set: %v", env)
+	}
+
+	if resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/env/bulk", admin, `{"dotenv":"NOVALUE"}`); resp.StatusCode != 400 {
+		t.Fatalf("malformed dotenv: want 400, got %d", resp.StatusCode)
+	}
+	if resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/env/bulk", admin, `{"dotenv":""}`); resp.StatusCode != 400 {
+		t.Fatalf("empty dotenv: want 400, got %d", resp.StatusCode)
+	}
+}
+
 func TestOverrideAndRaw(t *testing.T) {
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")

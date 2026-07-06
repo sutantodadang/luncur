@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"strings"
 
@@ -87,6 +89,37 @@ func envCmd() *cobra.Command {
 	list.Flags().StringVar(&listProject, "project", "", "project name")
 	list.MarkFlagRequired("project")
 
-	cmd.AddCommand(set, unset, list)
+	var pushProject string
+	push := &cobra.Command{
+		Use:   "push <app> <file>",
+		Short: "Bulk-set environment variables from a .env file (use - for stdin)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var raw []byte
+			var err error
+			if args[1] == "-" {
+				raw, err = io.ReadAll(cmd.InOrStdin())
+			} else {
+				raw, err = os.ReadFile(args[1])
+			}
+			if err != nil {
+				return err
+			}
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			n, err := c.EnvPush(pushProject, args[0], string(raw))
+			if err != nil {
+				return err
+			}
+			cmd.Printf("set %d vars on %s\n", n, args[0])
+			return nil
+		},
+	}
+	push.Flags().StringVar(&pushProject, "project", "", "project name")
+	push.MarkFlagRequired("project")
+
+	cmd.AddCommand(set, unset, list, push)
 	return cmd
 }
