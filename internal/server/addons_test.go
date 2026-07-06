@@ -116,7 +116,8 @@ func TestAddonCreateAttachInject(t *testing.T) {
 		return ""
 	}
 	sec := secretJSON(t)
-	if !strings.Contains(sec, "addon-postgres1."+p.Namespace) || !strings.Contains(sec, ":5432/app") {
+	// postgresql:// scheme, not postgres:// — SQLAlchemy rejects the short form.
+	if !strings.Contains(sec, "postgresql://") || !strings.Contains(sec, "addon-postgres1."+p.Namespace) || !strings.Contains(sec, ":5432/app") {
 		t.Fatalf("secret missing injected DATABASE_URL: %s", sec)
 	}
 

@@ -119,10 +119,16 @@ func nameOf(objJSON []byte) (string, error) {
 	return m.Metadata.Name, nil
 }
 
-// EnsureNamespace stamps a project/app namespace at the "restricted"
-// PodSecurity level — the safe default for tenant workloads.
+// EnsureNamespace stamps a project/app namespace at the "baseline"
+// PodSecurity level. Not "restricted": luncur renders app pods from
+// arbitrary user images (nixpacks output, postgres, nginx) that routinely
+// run as root and set no securityContext, and restricted rejects every
+// such pod at admission — on a live cluster all app ReplicaSets sat at
+// FailedCreate and the ingress served 503s. Baseline still blocks the
+// escalation vectors (privileged, host namespaces, hostPath, added caps);
+// the override denylist blocks them at the API layer too.
 func (c *Client) EnsureNamespace(ctx context.Context, name string) error {
-	return c.EnsureNamespaceWithPolicy(ctx, name, "restricted")
+	return c.EnsureNamespaceWithPolicy(ctx, name, "baseline")
 }
 
 // EnsureNamespaceWithPolicy server-side-applies a namespace stamped with

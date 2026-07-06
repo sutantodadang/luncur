@@ -82,7 +82,10 @@ func (s *server) addonEnv(p store.Project, a store.App, userEnv map[string]strin
 		switch ad.Type {
 		case "postgres":
 			key = "DATABASE_URL"
-			url = fmt.Sprintf("postgres://%s:%s@%s:5432/%s", creds.User, creds.Password, host, creds.DB)
+			// postgresql:// not postgres://: SQLAlchemy dropped the short
+			// scheme and errors on it; every other client (psql, pgx,
+			// node-postgres, Prisma) accepts the long form.
+			url = fmt.Sprintf("postgresql://%s:%s@%s:5432/%s", creds.User, creds.Password, host, creds.DB)
 		case "redis":
 			key = "REDIS_URL"
 			url = fmt.Sprintf("redis://:%s@%s:6379", creds.Password, host)

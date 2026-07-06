@@ -298,3 +298,31 @@ func TestAddDomainRejectedForInternalApp(t *testing.T) {
 		t.Fatalf("error body: %s", body)
 	}
 }
+
+// TestAddDomainDNS01Warning: with a dns_provider configured, a hostname
+// resolving elsewhere (e.g. a Cloudflare-proxied domain) must not claim
+// "TLS issuance will fail" — validation runs over DNS-01, which does not
+// care where the A record points.
+func TestAddDomainDNS01Warning(t *testing.T) {
+	srv, st, _ := kubeServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+	if err := st.SetSetting("dns_provider", "cloudflare"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/web/domains", admin, `{"hostname":"www.example.com"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("add domain: want 201, got %d", resp.StatusCode)
+	}
+	var added map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&added); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	warning, _ := added["dns_warning"].(string)
+	if strings.Contains(warning, "TLS issuance will fail") {
+		t.Fatalf("dns_warning should not claim issuance failure under DNS-01, got: %s", warning)
+	}
+}
