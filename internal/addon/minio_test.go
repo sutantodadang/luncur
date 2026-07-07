@@ -39,9 +39,8 @@ func TestRenderMinio(t *testing.T) {
 	}
 }
 
-func TestRenderRejectsMlflowHere(t *testing.T) {
-	// mlflow is a valid store type but renders via its own path (C5); the
-	// generic addon renderer only knows postgres/redis/minio.
+func TestRenderRejectsUnknownType(t *testing.T) {
+	// The renderer only knows postgres/redis/minio/mlflow; anything else errors.
 	if _, err := Render(Params{Namespace: "ns", Type: "bogus", Name: "x"}); err == nil {
 		t.Fatal("bogus type must error")
 	}

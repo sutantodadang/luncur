@@ -40,6 +40,10 @@ func newAddonCreds(typ string) (addon.Creds, error) {
 // get when no version is requested; bumped deliberately, never floated.
 const minioDefaultVersion = "RELEASE.2025-04-22T22-12-26Z"
 
+// mlflowDefaultVersion is the pinned ghcr.io/mlflow/mlflow image tag new
+// mlflow addons get when no version is requested.
+const mlflowDefaultVersion = "v2.22.0"
+
 // sealCreds/unsealCreds JSON-round-trip addon.Creds through the sealer —
 // same pattern as app env vars (appenv.go).
 func (s *server) sealCreds(c addon.Creds) ([]byte, error) {
@@ -86,6 +90,9 @@ func addonKeyURL(typ, name, namespace string, creds addon.Creds) (key, url strin
 	case "minio":
 		key = "LUNCUR_S3_ENDPOINT"
 		url = fmt.Sprintf("http://%s:%d", host, addon.MinIOPort)
+	case "mlflow":
+		key = "MLFLOW_TRACKING_URI"
+		url = fmt.Sprintf("http://%s:%d", host, addon.MLflowPort)
 	}
 	return key, url
 }
@@ -155,6 +162,39 @@ func (s *server) requireAddon(w http.ResponseWriter, p store.Project, name strin
 	return a, true
 }
 
+// mlflowRenderExtras resolves an mlflow addon's artifact store — the
+// project's first minio addon, else its external S3 config, else nil
+// (artifacts stay on the addon's PVC) — plus the panel path prefix the
+// tracking server serves under. Keyed by namespace, not project name, so
+// the link survives project renames.
+func (s *server) mlflowRenderExtras(p store.Project, name string) (*addon.S3Ref, string) {
+	prefix := "/ui/mlflow/" + p.Namespace + "/" + name
+	addons, err := s.st.ListAddons(p.ID)
+	if err == nil {
+		for _, ad := range addons {
+			if ad.Type != "minio" {
+				continue
+			}
+			creds, err := s.unsealCreds(ad)
+			if err != nil {
+				break
+			}
+			return &addon.S3Ref{
+				Endpoint: fmt.Sprintf("http://%s.%s:%d", addon.ServiceName(ad.Name), p.Namespace, addon.MinIOPort),
+				Key:      creds.User, Secret: creds.Password, Bucket: creds.DB,
+			}, prefix
+		}
+	}
+	if cfg, err := s.st.GetProjectS3(p.ID); err == nil && s.sealer != nil {
+		ak, err1 := s.sealer.Open(cfg.AccessKeyEnc)
+		sk, err2 := s.sealer.Open(cfg.SecretKeyEnc)
+		if err1 == nil && err2 == nil {
+			return &addon.S3Ref{Endpoint: cfg.Endpoint, Key: string(ak), Secret: string(sk), Bucket: cfg.Bucket}, prefix
+		}
+	}
+	return nil, prefix
+}
+
 // createAddon is the shared core of handleCreateAddon: mint credentials,
 // seal them, store the addon row, render and apply its manifests, and
 // optionally attach it to an app (the CLI's `addon add` sugar). name and
@@ -182,6 +222,8 @@ func (s *server) createAddon(ctx context.Context, p store.Project, typ, name, ve
 			version = "7"
 		case "minio":
 			version = minioDefaultVersion
+		case "mlflow":
+			version = mlflowDefaultVersion
 		}
 	}
 
@@ -199,10 +241,14 @@ func (s *server) createAddon(ctx context.Context, p store.Project, typ, name, ve
 		return store.Addon{}, err
 	}
 
-	objs, err := addon.Render(addon.Params{
+	params := addon.Params{
 		Namespace: p.Namespace, Type: a.Type, Name: a.Name, Version: a.Version,
 		SizeGB: a.SizeGB, Creds: creds,
-	})
+	}
+	if a.Type == "mlflow" {
+		params.S3, params.URLPrefix = s.mlflowRenderExtras(p, a.Name)
+	}
+	objs, err := addon.Render(params)
 	if err != nil {
 		return store.Addon{}, err
 	}
@@ -576,10 +622,14 @@ func (s *server) upgradeAddon(ctx context.Context, p store.Project, a store.Addo
 	if err != nil {
 		return store.Addon{}, err
 	}
-	objs, err := addon.Render(addon.Params{
+	params := addon.Params{
 		Namespace: p.Namespace, Type: a.Type, Name: a.Name, Version: a.Version,
 		SizeGB: a.SizeGB, Creds: creds,
-	})
+	}
+	if a.Type == "mlflow" {
+		params.S3, params.URLPrefix = s.mlflowRenderExtras(p, a.Name)
+	}
+	objs, err := addon.Render(params)
 	if err != nil {
 		return store.Addon{}, fmt.Errorf("render: %w", err)
 	}

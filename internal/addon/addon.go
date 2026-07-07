@@ -1,4 +1,4 @@
-// Package addon renders managed Postgres/Redis/MinIO instances:
+// Package addon renders managed Postgres/Redis/MinIO/MLflow instances:
 // StatefulSet + headless Service + credentials Secret, all in the app
 // project's namespace.
 package addon
@@ -6,6 +6,7 @@ package addon
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -21,17 +22,27 @@ import (
 type Creds struct{ User, Password, DB string }
 
 // MinIOPort is the S3 API port a minio addon serves on; MinIOConsolePort is
-// its web console.
+// its web console. MLflowPort is the tracking server's HTTP port.
 const (
 	MinIOPort        int32 = 9000
 	MinIOConsolePort int32 = 9001
+	MLflowPort       int32 = 5000
 )
+
+// S3Ref points an mlflow addon's artifact store at project object storage
+// (a minio addon or external S3). Nil = artifacts on the addon's own PVC.
+type S3Ref struct{ Endpoint, Key, Secret, Bucket string }
 
 // Params configures one addon instance's manifests.
 type Params struct {
 	Namespace, Type, Name, Version string
 	SizeGB                         int
 	Creds                          Creds
+
+	// S3 and URLPrefix apply to mlflow only: the artifact store and the
+	// panel path prefix mlflow serves its UI/API under (--static-prefix).
+	S3        *S3Ref
+	URLPrefix string
 }
 
 func ServiceName(name string) string { return "addon-" + name }
@@ -49,8 +60,8 @@ func labels(name string) map[string]string {
 // Render builds the manifest set for one addon instance: StatefulSet,
 // headless Service, and credentials Secret.
 func Render(p Params) ([]render.Object, error) {
-	if p.Type != "postgres" && p.Type != "redis" && p.Type != "minio" {
-		return nil, fmt.Errorf("unsupported addon type %q (postgres|redis|minio)", p.Type)
+	if p.Type != "postgres" && p.Type != "redis" && p.Type != "minio" && p.Type != "mlflow" {
+		return nil, fmt.Errorf("unsupported addon type %q (postgres|redis|minio|mlflow)", p.Type)
 	}
 
 	var objs []render.Object
@@ -153,6 +164,56 @@ func Render(p Params) ([]render.Object, error) {
 		stringData = map[string]string{
 			"MINIO_ROOT_USER":     p.Creds.User,
 			"MINIO_ROOT_PASSWORD": p.Creds.Password,
+		}
+	case "mlflow":
+		port = MLflowPort
+		args := []string{
+			"mlflow", "server",
+			"--host", "0.0.0.0",
+			"--port", fmt.Sprintf("%d", port),
+			"--backend-store-uri", "sqlite:////data/mlflow.db",
+			"--serve-artifacts",
+		}
+		// mlflow mounts its whole app (UI, API, /health) under the static
+		// prefix, so the panel can reverse-proxy it at the same path.
+		healthPath := "/health"
+		if p.URLPrefix != "" {
+			args = append(args, "--static-prefix", p.URLPrefix)
+			healthPath = p.URLPrefix + "/health"
+		}
+		stringData = map[string]string{}
+		var command []string
+		if p.S3 != nil {
+			args = append(args, "--artifacts-destination", fmt.Sprintf("s3://%s/mlflow", p.S3.Bucket))
+			stringData["MLFLOW_S3_ENDPOINT_URL"] = p.S3.Endpoint
+			stringData["AWS_ACCESS_KEY_ID"] = p.S3.Key
+			stringData["AWS_SECRET_ACCESS_KEY"] = p.S3.Secret
+			// The official image ships without boto3; install it at boot so
+			// artifact uploads to S3/MinIO work.
+			command = []string{"sh", "-c", "pip install --quiet boto3 && exec " + strings.Join(args, " ")}
+			args = nil
+		} else {
+			args = append(args, "--artifacts-destination", "/data/artifacts")
+		}
+		container = corev1.Container{
+			Name:    "mlflow",
+			Image:   fmt.Sprintf("ghcr.io/mlflow/mlflow:%s", p.Version),
+			Command: command,
+			Args:    args,
+			EnvFrom: []corev1.EnvFromSource{{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: SecretName(p.Name)},
+				},
+			}},
+			Ports: []corev1.ContainerPort{{ContainerPort: port}},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "data", MountPath: "/data"},
+			},
+			ReadinessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{Path: healthPath, Port: intstr.FromInt32(port)},
+				},
+			},
 		}
 	}
 

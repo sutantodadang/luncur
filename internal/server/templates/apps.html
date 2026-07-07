@@ -86,7 +86,7 @@ function uiPresetChange(preset) {
   <td>{{.Version}}</td>
   <td>{{.Ready}}</td>
   <td>{{range .AttachedTo}}{{.}} {{end}}</td>
-  <td><button type="button" class="btn-ghost" hx-get="/ui/projects/{{$.Project.Name}}/addons/url?name={{.Name}}" hx-target="#addon-url-{{.Name}}" hx-swap="innerHTML">connection</button>
+  <td>{{if eq .Type "mlflow"}}<a class="btn-ghost" href="/ui/mlflow/{{$.Project.Namespace}}/{{.Name}}/" target="_blank">open</a> {{end}}<button type="button" class="btn-ghost" hx-get="/ui/projects/{{$.Project.Name}}/addons/url?name={{.Name}}" hx-target="#addon-url-{{.Name}}" hx-swap="innerHTML">connection</button>
   <div id="addon-url-{{.Name}}" class="mt-1"></div></td>
   <td><form class="inline-flex items-center gap-2" method="post" action="/ui/projects/{{$.Project.Name}}/addons/upgrade">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
@@ -107,6 +107,8 @@ function uiPresetChange(preset) {
   <select class="input w-auto" name="type">
     <option value="postgres">postgres</option>
     <option value="redis">redis</option>
+    <option value="minio">minio</option>
+    <option value="mlflow">mlflow</option>
   </select>
   <input class="input w-auto flex-1" name="name" placeholder="name (optional)">
   <button type="submit" class="btn">create addon</button>

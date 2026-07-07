@@ -90,6 +90,24 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/adopt", s.uiPage(s.handleUIAdopt))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/edit/{kind}", s.uiPage(s.handleUIEditGet))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/edit/{kind}", s.uiPage(s.handleUIEditPost))
+
+	// mlflow UI proxy: GET serves its static UI assets, POST carries its
+	// REST API calls (mlflow's own API is POST-only for mutations), session
+	// auth only — mlflow requests carry no CSRF token; the SameSite=Strict
+	// cookie covers cross-site POSTs. Registered per-method (rather than a
+	// bare method-less pattern) because net/http's ServeMux rejects a
+	// method-less specific-path pattern that overlaps "GET /ui/"'s
+	// catch-all subtree as a static conflict.
+	mlflowProxy := func(w http.ResponseWriter, r *http.Request) {
+		u, ok := s.uiUser(r)
+		if !ok {
+			http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
+			return
+		}
+		s.handleUIMlflow(w, r, u)
+	}
+	mux.HandleFunc("GET /ui/mlflow/{ns}/{name}/{rest...}", mlflowProxy)
+	mux.HandleFunc("POST /ui/mlflow/{ns}/{name}/{rest...}", mlflowProxy)
 }
 
 // editableKinds are the manifest kinds the YAML editor accepts — the same
