@@ -47,6 +47,11 @@ type Input struct {
 	// renders nothing. Any GPU>0 pod also gets runtimeClassName "nvidia"
 	// and a nodeSelector pinning it to nodes labeled luncur.dev/gpu=true.
 	GPU int64
+	// RunName names the batch/v1 Job rendered for one triggered run of a
+	// kind=job app ("<app>-run-<n>"). Empty (the deploy path) renders the
+	// job app's Secret and PVCs only — the workload exists per run, not
+	// per deploy. Ignored for other kinds.
+	RunName string
 	// Overrides maps Kind -> strategic-merge-patch JSON. Applied by Task 6.
 	Overrides map[string]string
 	// ExtraHosts adds Ingress rules (same backend) for custom domains.
@@ -102,6 +107,8 @@ func dataStructFor(kind string) (any, error) {
 		return netv1.Ingress{}, nil
 	case "CronJob":
 		return batchv1.CronJob{}, nil
+	case "Job":
+		return batchv1.Job{}, nil
 	default:
 		return nil, fmt.Errorf("kind %q cannot be overridden", kind)
 	}
@@ -136,6 +143,8 @@ func roundTrip(kind string, raw []byte) ([]byte, error) {
 		v = &netv1.Ingress{}
 	case "CronJob":
 		v = &batchv1.CronJob{}
+	case "Job":
+		v = &batchv1.Job{}
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -201,7 +210,7 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 	if kind == "web" && (in.Host == "" || in.Port < 1) {
 		return Rendered{}, fmt.Errorf("render: Host and Port are required for web apps")
 	}
-	if kind != "web" && kind != "worker" && kind != "cron" {
+	if kind != "web" && kind != "worker" && kind != "cron" && kind != "job" {
 		return Rendered{}, fmt.Errorf("render: unknown kind %q", kind)
 	}
 
@@ -387,6 +396,34 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 	case "worker":
 		if err := add("Deployment", dep); err != nil {
 			return Rendered{}, err
+		}
+
+	case "job":
+		// Deploy path (no RunName): the workload is rendered per run, so a
+		// deploy only (re)applies the Secret and PVCs added above.
+		if in.RunName != "" {
+			job := &batchv1.Job{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
+				ObjectMeta: meta(in, in.RunName),
+				Spec: batchv1.JobSpec{
+					// One attempt, no retries: a training/batch run that
+					// failed must surface as failed, not silently rerun.
+					BackoffLimit:            int32Ptr(0),
+					TTLSecondsAfterFinished: int32Ptr(86400),
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: labels(in.AppName)},
+						Spec: corev1.PodSpec{
+							RestartPolicy: corev1.RestartPolicyNever,
+							Containers:    []corev1.Container{container},
+							Volumes:       podVolumes,
+						},
+					},
+				},
+			}
+			applyGPU(&job.Spec.Template.Spec, in.GPU)
+			if err := add("Job", job); err != nil {
+				return Rendered{}, err
+			}
 		}
 
 	case "cron":

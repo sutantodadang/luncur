@@ -151,6 +151,19 @@ CREATE TABLE IF NOT EXISTS volumes (
   UNIQUE(app_id, path)
 );
 
+-- One row per triggered run of a kind=job app. exit_code is NULL until the
+-- run finishes (and stays NULL when no pod exit code could be determined).
+CREATE TABLE IF NOT EXISTS job_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  status      TEXT NOT NULL CHECK (status IN ('running','succeeded','failed')),
+  exit_code   INTEGER,
+  started_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_runs_app ON job_runs(app_id);
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),

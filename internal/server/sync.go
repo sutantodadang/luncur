@@ -56,6 +56,16 @@ func (s *server) plainEnv(a store.App) (map[string]string, error) {
 // injects connection env for attached addons, loads its overrides, and
 // renders against imageRef.
 func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOverrides bool) (render.Rendered, error) {
+	return s.renderAppWithRun(p, a, imageRef, withOverrides, "")
+}
+
+// renderRun renders one triggered run of a kind=job app: the per-run
+// batch/v1 Job (named <app>-run-<id>) plus the app's Secret/PVCs.
+func (s *server) renderRun(p store.Project, a store.App, imageRef string, runID int64) (render.Rendered, error) {
+	return s.renderAppWithRun(p, a, imageRef, true, jobRunName(a.Name, runID))
+}
+
+func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string, withOverrides bool, runName string) (render.Rendered, error) {
 	env, err := s.plainEnv(a)
 	if err != nil {
 		return render.Rendered{}, err
@@ -149,6 +159,7 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 		CPUMilli:           a.CPUMilli,
 		MemoryMB:           a.MemoryMB,
 		GPU:                a.GPUCount,
+		RunName:            runName,
 		HealthPath:         a.HealthPath,
 		Internal:           a.Internal,
 		Overrides:          overrides,

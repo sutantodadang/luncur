@@ -730,6 +730,46 @@ func (c *Client) Rollback(project, app string, deployID string) (int64, error) {
 	return out.Seq, err
 }
 
+// RunInfo is one triggered run of a kind=job app.
+type RunInfo struct {
+	ID         int64  `json:"id"`
+	Status     string `json:"status"`
+	Job        string `json:"job"`
+	ExitCode   *int64 `json:"exit_code,omitempty"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at,omitempty"`
+}
+
+// CreateRun triggers one run of a kind=job app.
+func (c *Client) CreateRun(project, app string) (RunInfo, error) {
+	var out RunInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/runs", map[string]string{}, &out)
+	return out, err
+}
+
+// ListRuns fetches a job app's run history (newest first).
+func (c *Client) ListRuns(project, app string) ([]RunInfo, error) {
+	var out []RunInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/runs", nil, &out)
+	return out, err
+}
+
+// GetRun fetches one run's status.
+func (c *Client) GetRun(project, app string, id int64) (RunInfo, error) {
+	var out RunInfo
+	err := c.do("GET", fmt.Sprintf("/v1/projects/%s/apps/%s/runs/%d", url.PathEscape(project), url.PathEscape(app), id), nil, &out)
+	return out, err
+}
+
+// FollowRunLogs streams a run's pod logs (SSE) until the stream ends.
+func (c *Client) FollowRunLogs(project, app string, id int64, follow bool, w io.Writer) error {
+	p := fmt.Sprintf("/v1/projects/%s/apps/%s/runs/%d/logs", url.PathEscape(project), url.PathEscape(app), id)
+	if follow {
+		p += "?follow=1"
+	}
+	return c.stream(p, w)
+}
+
 type TokenInfo struct {
 	ID         int64  `json:"id"`
 	Name       string `json:"name"`

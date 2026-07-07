@@ -55,8 +55,8 @@ func normalizeAppKind(kind string) string {
 }
 
 // validateAppKind enforces the port/schedule matrix per app kind: web needs
-// a port and no schedule; worker needs neither; cron needs a validated
-// schedule and no port.
+// a port and no schedule; worker and job need neither; cron needs a
+// validated schedule and no port.
 func validateAppKind(kind string, port int, schedule string) error {
 	switch kind {
 	case "web":
@@ -73,6 +73,13 @@ func validateAppKind(kind string, port int, schedule string) error {
 		if schedule != "" {
 			return fmt.Errorf("schedule is only valid for cron apps")
 		}
+	case "job":
+		if port != 0 {
+			return fmt.Errorf("job apps do not take a port")
+		}
+		if schedule != "" {
+			return fmt.Errorf("job apps run on demand; use kind cron for a schedule")
+		}
 	case "cron":
 		if port != 0 {
 			return fmt.Errorf("cron apps do not take a port")
@@ -84,7 +91,7 @@ func validateAppKind(kind string, port int, schedule string) error {
 			return fmt.Errorf("invalid schedule: %w", err)
 		}
 	default:
-		return fmt.Errorf("invalid kind %q (want web, worker, or cron)", kind)
+		return fmt.Errorf("invalid kind %q (want web, worker, cron, or job)", kind)
 	}
 	return nil
 }
