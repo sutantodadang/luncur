@@ -20,23 +20,41 @@
     <option value="web">web</option>
     <option value="worker">worker</option>
     <option value="cron">cron</option>
+    <option value="job">job</option>
+    <option value="model">model</option>
   </select>
   <span id="port-field"><input class="input w-auto" type="number" name="port" id="port-input" placeholder="port (web only)"></span>
   <span id="schedule-field"><input class="input w-auto flex-1" name="schedule" placeholder="schedule (cron only), e.g. 0 3 * * *"></span>
+  <span id="model-fields" class="contents">
+    <input class="input w-auto flex-1" name="model_source" placeholder="model source, e.g. hf:org/repo/model.Q4_K_M.gguf or s3:models/x.gguf">
+    <select class="input w-auto" name="runtime">
+      <option value="auto">runtime: auto</option>
+      <option value="llamacpp">llama.cpp (gguf, cpu)</option>
+      <option value="vllm">vLLM (gpu)</option>
+      <option value="custom">custom image</option>
+    </select>
+  </span>
+  <span id="gpu-field"><input class="input w-auto" type="number" name="gpu" min="0" placeholder="gpu"></span>
   <label id="internal-field" class="flex items-center gap-1 text-xs text-mut"><input type="checkbox" name="internal" value="1"> internal — no public URL, cluster-only</label>
-  <input class="input w-auto flex-1" name="git_url" placeholder="git URL (optional)">
-  <input class="input w-auto" name="git_branch" placeholder="branch (optional)">
-  <input class="input w-auto" name="build_path" placeholder="subdir (monorepo, optional) e.g. backend">
-  <input class="input w-auto flex-1" name="image" id="image-field" placeholder="image e.g. nginx:1.27 (optional — deploys immediately)">
+  <span id="git-fields" class="contents">
+    <input class="input w-auto flex-1" name="git_url" placeholder="git URL (optional)">
+    <input class="input w-auto" name="git_branch" placeholder="branch (optional)">
+    <input class="input w-auto" name="build_path" placeholder="subdir (monorepo, optional) e.g. backend">
+    <input class="input w-auto flex-1" name="image" id="image-field" placeholder="image e.g. nginx:1.27 (optional — deploys immediately)">
+  </span>
   <button type="submit" class="btn">create app</button>
 </form>
 <div class="cli-echo">$ <b>luncur app create &lt;name&gt;</b></div>
 <div class="cli-echo">$ <b>luncur deploy &lt;name&gt; --image nginx:1.27</b></div>
+<div class="cli-echo">$ <b>luncur app create gemma --kind model --source hf:org/repo/model.Q4_K_M.gguf</b></div>
 <script>
 function uiKindChange(k) {
   document.getElementById("port-field").style.display = k === "web" ? "" : "none";
   document.getElementById("schedule-field").style.display = k === "cron" ? "" : "none";
   document.getElementById("internal-field").style.display = k === "web" ? "" : "none";
+  document.getElementById("model-fields").style.display = k === "model" ? "" : "none";
+  document.getElementById("git-fields").style.display = k === "model" ? "none" : "";
+  document.getElementById("gpu-field").style.display = (k === "cron") ? "none" : "";
 }
 uiKindChange("web");
 

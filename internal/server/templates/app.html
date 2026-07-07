@@ -60,6 +60,30 @@
 <div class="cli-echo">$ <b>luncur status {{.App.Name}}</b> &middot; $ <b>luncur rollback {{.App.Name}}</b></div>
 </div>
 
+{{if eq .App.Kind "job"}}
+<div class="card mb-6">
+<h2>Runs</h2>
+{{if not .App.Ejected}}
+<form class="mb-2 inline" method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/runs">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn">run now</button>
+</form>
+{{end}}
+{{if .Runs}}
+<table class="tbl"><tr><th>#</th><th>Status</th><th>Exit</th><th>Started</th><th>Finished</th></tr>
+{{range .Runs}}<tr>
+  <td>{{.ID}}</td>
+  <td><span class="status-{{.Status}}">{{.Status}}</span></td>
+  <td class="font-mono text-xs">{{if .ExitCode}}{{.ExitCode}}{{else}}&ndash;{{end}}</td>
+  <td class="text-xs text-mut">{{.StartedAt}}</td>
+  <td class="text-xs text-mut">{{if .FinishedAt}}{{.FinishedAt}}{{else}}&ndash;{{end}}</td>
+</tr>{{end}}
+</table>
+{{else}}<p class="text-sm text-mut">No runs yet. Deploy an image, then trigger the first run.</p>{{end}}
+<div class="cli-echo">$ <b>luncur run {{.App.Name}}</b></div>
+</div>
+{{end}}
+
 <div class="card mb-6">
 <h2>Logs</h2>
 <p class="mb-2 text-xs text-mut">streaming build/runtime logs</p>

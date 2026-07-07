@@ -71,6 +71,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/eject", s.uiPage(s.handleUIEject))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/retry", s.uiPage(s.handleUIDomainRetry))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/scale", s.uiPage(s.handleUIScale))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/runs", s.uiPage(s.handleUIRunCreate))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/health", s.uiPage(s.handleUIHealth))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook", s.uiPage(s.handleUIWebhookEnable))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook/disable", s.uiPage(s.handleUIWebhookDisable))
@@ -656,10 +657,39 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
+	var gpu int64
+	if v := r.PostFormValue("gpu"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			http.Error(w, "invalid gpu count", http.StatusBadRequest)
+			return
+		}
+		gpu = n
+	}
+	modelSource := strings.TrimSpace(r.PostFormValue("model_source"))
+	modelRuntime := r.PostFormValue("runtime")
+	var modelRT render.ModelRuntimeInfo
+	if kind == "model" {
+		if gitURL != "" {
+			http.Error(w, "model apps do not take a git url", http.StatusBadRequest)
+			return
+		}
+		// Resolve now so a bad source/runtime combination fails before the
+		// app row exists — same order as the JSON API's create.
+		modelRT, err = render.ResolveModelRuntime(modelSource, modelRuntime, gpu)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	var a store.App
-	if gitURL != "" {
+	switch {
+	case kind == "model":
+		a, err = s.st.CreateModelApp(p.ID, name, modelSource, modelRuntime)
+	case gitURL != "":
 		a, err = s.st.CreateGitApp(p.ID, name, port, gitURL, r.PostFormValue("git_branch"), kind, schedule)
-	} else {
+	default:
 		a, err = s.st.CreateApp(p.ID, name, port, kind, schedule)
 	}
 	if err != nil {
@@ -681,6 +711,19 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 			return
 		}
 		a.Internal = true
+	}
+	if gpu != 0 {
+		if err := s.st.SetGPU(a.ID, gpu); err != nil {
+			http.Error(w, "gpu: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		a.GPUCount = gpu
+	}
+
+	// Built-in runtime model apps deploy themselves at create: the runtime
+	// image is known, so reuse the one-click image-deploy tail below.
+	if a.Kind == "model" && modelRT.Name != "custom" {
+		image = modelRT.Image
 	}
 
 	if image == "" {
@@ -819,6 +862,38 @@ type uiDeployRow struct {
 // full (unclipped, up to 50-row) history so a rollback's source deploy
 // resolves to its human-facing seq even when it falls outside the limit
 // rows actually rendered.
+// uiRunRow is app.html's Runs-card view model: store.JobRun with its
+// nullable fields flattened to plain strings ("" when unset) for simple
+// template rendering.
+type uiRunRow struct {
+	ID         int64
+	Status     string
+	ExitCode   string
+	StartedAt  string
+	FinishedAt string
+}
+
+// uiRunRows builds the Runs card's view model from ListJobRuns' newest-first
+// history.
+func uiRunRows(runs []store.JobRun) []uiRunRow {
+	rows := make([]uiRunRow, 0, len(runs))
+	for _, run := range runs {
+		exit := ""
+		if run.ExitCode.Valid {
+			exit = strconv.FormatInt(run.ExitCode.Int64, 10)
+		}
+		finished := ""
+		if run.FinishedAt.Valid {
+			finished = run.FinishedAt.String
+		}
+		rows = append(rows, uiRunRow{
+			ID: run.ID, Status: run.Status, ExitCode: exit,
+			StartedAt: run.StartedAt, FinishedAt: finished,
+		})
+	}
+	return rows
+}
+
 func uiDeployRows(history []store.Deployment, limit int) []uiDeployRow {
 	seqByID := make(map[string]int64, len(history))
 	for _, d := range history {
@@ -919,6 +994,19 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		}
 	}
 
+	// Runs card is only meaningful for kind=job apps; nil for every other
+	// kind (app.html gates the whole card on .App.Kind).
+	var runRows []uiRunRow
+	if a.Kind == "job" {
+		runs, err := s.st.ListJobRuns(a.ID)
+		if err != nil {
+			log.Printf("ui app runs: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		runRows = uiRunRows(runs)
+	}
+
 	url := "http://" + hostFor(a.Name, s.externalIP)
 	internalURL := ""
 	if a.Internal {
@@ -936,6 +1024,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"WebhookURL":     "http://" + r.Host + webhookPath(p.Name, a.Name),
 		"Domains": domains, "Volumes": volumes, "Warning": firstNonEmpty(r.URL.Query().Get("warn"), r.URL.Query().Get("err")),
 		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics, "Pods": pods,
+		"Runs": runRows,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	}
 	for k, v := range extra {
@@ -1073,6 +1162,44 @@ func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.U
 			log.Printf("ui scale app: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
+		return
+	}
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIRunCreate is startRun's UI twin: same shared core, redirect
+// instead of a 202 JSON body. A missing live deployment redirects back to
+// the app page with ?err= (matches handleUICreateApp's deploy-failure
+// idiom) instead of erroring the whole request.
+func (s *server) handleUIRunCreate(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if a.Kind != "job" {
+		http.Error(w, "runs are only valid for job apps", http.StatusBadRequest)
+		return
+	}
+	if a.Ejected {
+		http.Error(w, errAppEjected.Error(), http.StatusConflict)
+		return
+	}
+	if s.kube == nil {
+		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	if _, err := s.startRun(r.Context(), p, a); err != nil {
+		if errors.Is(err, errNotDeployed) {
+			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+		log.Printf("ui start run: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	uiRedirect(w, r, p, a)

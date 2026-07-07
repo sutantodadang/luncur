@@ -143,15 +143,18 @@
      templates (ui_test.go asserts on them directly) but restyled here as
      dark-theme chips instead of the old inline <style> colors. */
   .status-live,
-  .status-issued {
+  .status-issued,
+  .status-succeeded {
     @apply inline-flex items-center rounded-[4px] border border-[rgba(61,220,132,.25)] bg-[rgba(61,220,132,.1)] px-2 py-0.5 font-mono text-[11px] font-medium text-phosphor;
   }
   .status-building,
-  .status-deploying {
+  .status-deploying,
+  .status-running {
     @apply inline-flex animate-pulse;
   }
   .status-building,
   .status-deploying,
+  .status-running,
   .status-pending {
     @apply items-center rounded-[4px] border border-[rgba(255,178,36,.25)] bg-[rgba(255,178,36,.1)] px-2 py-0.5 font-mono text-[11px] font-medium text-build;
   }

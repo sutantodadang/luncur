@@ -4,7 +4,7 @@
 <div class="card">
 {{if .Error}}<p class="text-sm text-mut">{{.Error}}</p>
 {{else}}
-<table class="tbl"><tr><th>Name</th><th>Role</th><th>Status</th><th>IP</th><th>Version</th><th>CPU</th><th>Memory</th></tr>
+<table class="tbl"><tr><th>Name</th><th>Role</th><th>Status</th><th>IP</th><th>Version</th><th>CPU</th><th>Memory</th><th>GPU</th></tr>
 {{range .Nodes}}<tr>
   <td>{{.Name}}</td>
   <td>{{.Role}}</td>
@@ -13,12 +13,15 @@
   <td>{{.Version}}</td>
   <td class="font-mono text-xs">{{if .MetricsOK}}{{.CPUMilli}}m / {{.CPUCapMilli}}m{{else}}&ndash; / {{.CPUCapMilli}}m{{end}}</td>
   <td class="font-mono text-xs">{{if .MetricsOK}}{{.MemMiB}}Mi / {{.MemCapMiB}}Mi{{else}}&ndash; / {{.MemCapMiB}}Mi{{end}}</td>
+  <td>{{if .GPU}}<span class="chip chip-muted font-mono">gpu &times;{{.GPUCapacity}}</span>{{else}}&ndash;{{end}}</td>
 </tr>{{end}}
 </table>
 {{end}}
 <div hx-get="/ui/nodes/charts" hx-trigger="load, every 15s" hx-swap="innerHTML"></div>
 <p class="mt-4 text-sm text-mut">add a VPS: run <span class="font-mono">luncur node join-command</span> on the server, then paste its output on the new machine.</p>
 <div class="cli-echo">$ <b>luncur node ls</b></div>
+<p class="mt-1 text-sm text-mut">GPU box: run the join command with <span class="font-mono">--gpu</span> — the device plugin and node label are applied automatically.</p>
+<div class="cli-echo">$ luncur join --gpu &lt;server-url&gt;</div>
 </div>
 {{template "foot" .}}
 {{end}}

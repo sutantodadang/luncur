@@ -60,8 +60,54 @@ func (s *server) requireJobApp(w http.ResponseWriter, p store.Project, name stri
 	return a, true
 }
 
-// handleCreateRun triggers one run of a kind=job app: a batch/v1 Job named
-// <app>-run-<n> rendered against the latest live deployment's image.
+// errNotDeployed is the sentinel returned by startRun when the app has no
+// live deployment to run against — callers map it to their own "not
+// deployed" response (409 JSON for the API, a redirect banner for the UI).
+var errNotDeployed = errors.New("app has no live deployment; deploy an image first")
+
+// errRunStartFailed is the sentinel wrapped by startRun when the run row was
+// created but rendering/applying its Job to the cluster failed — callers map
+// this to a gateway-style error (502 for the JSON API), distinct from an
+// internal error before the run row existed (500).
+var errRunStartFailed = errors.New("could not start run")
+
+// startRun triggers one run of a kind=job app: a batch/v1 Job named
+// <app>-run-<n> rendered against the latest live deployment's image. Shared
+// by the JSON API (handleCreateRun) and the UI run-now button.
+func (s *server) startRun(ctx context.Context, p store.Project, a store.App) (store.JobRun, error) {
+	d, err := s.st.LatestDeployment(a.ID)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && d.Status != "live") {
+		return store.JobRun{}, errNotDeployed
+	}
+	if err != nil {
+		return store.JobRun{}, fmt.Errorf("latest deployment: %w", err)
+	}
+
+	run, err := s.st.CreateJobRun(a.ID)
+	if err != nil {
+		return store.JobRun{}, fmt.Errorf("create job run: %w", err)
+	}
+
+	rendered, err := s.renderRun(p, a, d.ImageRef, run.ID)
+	if err == nil {
+		if err = s.kube.EnsureNamespace(ctx, p.Namespace); err == nil {
+			err = s.kube.Apply(ctx, p.Namespace, rendered.Objects)
+		}
+	}
+	if err != nil {
+		log.Printf("start run %d: %v", run.ID, err)
+		if e := s.st.FinishJobRun(run.ID, "failed", nil); e != nil {
+			log.Printf("mark run %d failed: %v", run.ID, e)
+		}
+		return store.JobRun{}, fmt.Errorf("%w: %v", errRunStartFailed, err)
+	}
+
+	go s.watchRun(p, a, run)
+
+	return run, nil
+}
+
+// handleCreateRun triggers one run of a kind=job app via the JSON API.
 func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.requireProject(w, u, r.PathValue("project"))
 	if !ok {
@@ -78,40 +124,19 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	d, err := s.st.LatestDeployment(a.ID)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && d.Status != "live") {
-		writeError(w, http.StatusConflict, "not_deployed", "app has no live deployment; deploy an image first")
+	run, err := s.startRun(r.Context(), p, a)
+	switch {
+	case errors.Is(err, errNotDeployed):
+		writeError(w, http.StatusConflict, "not_deployed", err.Error())
 		return
-	}
-	if err != nil {
-		log.Printf("latest deployment: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-
-	run, err := s.st.CreateJobRun(a.ID)
-	if err != nil {
-		log.Printf("create job run: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "internal error")
-		return
-	}
-
-	rendered, err := s.renderRun(p, a, d.ImageRef, run.ID)
-	if err == nil {
-		if err = s.kube.EnsureNamespace(r.Context(), p.Namespace); err == nil {
-			err = s.kube.Apply(r.Context(), p.Namespace, rendered.Objects)
-		}
-	}
-	if err != nil {
-		log.Printf("start run %d: %v", run.ID, err)
-		if e := s.st.FinishJobRun(run.ID, "failed", nil); e != nil {
-			log.Printf("mark run %d failed: %v", run.ID, e)
-		}
+	case errors.Is(err, errRunStartFailed):
 		writeError(w, http.StatusBadGateway, "run_failed", "could not start run")
 		return
+	case err != nil:
+		log.Printf("create run: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
 	}
-
-	go s.watchRun(p, a, run)
 
 	writeJSON(w, http.StatusAccepted, runJSON(a, run))
 }
