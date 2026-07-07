@@ -1,0 +1,56 @@
+site_name: luncur
+site_description: "Empty VPS → running PaaS in under 2 minutes. One Go binary, SQLite, real Kubernetes underneath."
+site_url: https://sutantodadang.github.io/luncur/
+repo_url: https://github.com/sutantodadang/luncur
+repo_name: sutantodadang/luncur
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    scheme: slate
+    primary: deep orange
+    accent: deep orange
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+
+exclude_docs: |
+  superpowers/
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Guides:
+      - Deploying: guides/deploying.md
+      - Apps & projects: guides/apps-and-projects.md
+      - Domains & TLS: guides/domains-and-tls.md
+      - Addons: guides/addons.md
+      - Volumes: guides/volumes.md
+      - Backups & restore: guides/backups.md
+  - Machine learning:
+      - GPU cloud: ml/gpu-cloud.md
+      - Training: ml/training.md
+      - Model serving: ml/model-serving.md
+  - Operations:
+      - Audit log: operations/audit.md
+      - Doctor: operations/doctor.md
+      - Registry GC: operations/registry-gc.md
+      - Eject & adopt: operations/eject-adopt.md
+      - Uninstall: operations/uninstall.md
+  - Reference:
+      - Build pipeline: reference/build-pipeline.md
+      - Security: reference/security.md
+      - Design notes: reference/design-notes.md
+      - Settings: reference/settings.md
+      - Nebius smoke test: nebius-smoke-test.md
