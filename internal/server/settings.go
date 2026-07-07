@@ -70,6 +70,13 @@ var settableKeys = map[string]func(string) bool{
 		n, err := strconv.Atoi(v)
 		return err == nil && n >= 0
 	},
+	// train_gang_timeout_minutes: multi-node run gang-startup window (see
+	// gangGuard in runs.go); 0 disables the guard. Same integer >= 0 shape as
+	// audit_retention_days / gpu_idle_minutes.
+	"train_gang_timeout_minutes": func(v string) bool {
+		n, err := strconv.Atoi(v)
+		return err == nil && n >= 0
+	},
 }
 
 // sealedKeys are write-only secrets: sealed at rest with the install

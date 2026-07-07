@@ -80,4 +80,24 @@ func TestSumProjectGPURequests(t *testing.T) {
 	if sum != 5 {
 		t.Fatalf("sum = %d, want 5 (2+2+1)", sum)
 	}
+
+	// job gpu=2 nodes=3 → 6 (job apps budget at gpu × nodes, not replicas).
+	job, err := s.CreateApp(p.ID, "trainer", 0, "job", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetGPU(job.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAppTraining(job.ID, 3, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	sum, err = s.SumProjectGPURequests(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum != 11 {
+		t.Fatalf("sum = %d, want 11 (2+2+1+6)", sum)
+	}
 }

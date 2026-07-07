@@ -60,6 +60,40 @@ func TestSettingsMemberForbidden(t *testing.T) {
 	resp.Body.Close()
 }
 
+// TestSettingsTrainGangTimeout covers train_gang_timeout_minutes' entry in
+// settableKeys: settable via the generic settings API, integer >= 0 only.
+func TestSettingsTrainGangTimeout(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/train_gang_timeout_minutes", admin, `{"value":"15"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("put: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "GET", srv.URL+"/v1/settings/train_gang_timeout_minutes", admin, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("get: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.Value != "15" {
+		t.Fatalf("value = %q, want 15", out.Value)
+	}
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/train_gang_timeout_minutes", admin, `{"value":"-1"}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("put negative: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
 func TestSettingsUnknownKey(t *testing.T) {
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")

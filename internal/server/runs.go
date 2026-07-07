@@ -41,9 +41,9 @@ var runWatchPoll = 5 * time.Second
 var gangTimeoutUnit = time.Minute
 
 // settingTrainGangTimeout is the settings key for the multi-node gang
-// guard's startup window (minutes; 0 disables). Not registered in
-// settableKeys (see settings.go) yet — read directly via s.st.GetSetting,
-// same seam as other not-yet-surfaced GPU settings.
+// guard's startup window (minutes; 0 disables). Registered in settableKeys
+// (see settings.go) so it's settable via the settings API/CLI; gangGuard
+// still reads it directly via s.st.GetSetting.
 const settingTrainGangTimeout = "train_gang_timeout_minutes"
 
 func runJSON(app store.App, r store.JobRun) map[string]any {
