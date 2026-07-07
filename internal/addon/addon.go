@@ -6,7 +6,7 @@ package addon
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
+	"regexp"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -47,6 +47,18 @@ type Params struct {
 
 func ServiceName(name string) string { return "addon-" + name }
 func SecretName(name string) string  { return "addon-" + name + "-creds" }
+
+// bucketRe is the S3/MinIO bucket-name allowlist (DNS-style, per AWS rules).
+// Bucket names flow into the mlflow container args; constrain them even though
+// the argv-passthrough command already prevents shell interpretation.
+var bucketRe = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,62}$`)
+
+func validBucket(b string) error {
+	if !bucketRe.MatchString(b) {
+		return fmt.Errorf("invalid S3 bucket name %q", b)
+	}
+	return nil
+}
 
 func ptr[T any](v T) *T { return &v }
 
@@ -184,13 +196,19 @@ func Render(p Params) ([]render.Object, error) {
 		stringData = map[string]string{}
 		var command []string
 		if p.S3 != nil {
+			if err := validBucket(p.S3.Bucket); err != nil {
+				return nil, err
+			}
 			args = append(args, "--artifacts-destination", fmt.Sprintf("s3://%s/mlflow", p.S3.Bucket))
 			stringData["MLFLOW_S3_ENDPOINT_URL"] = p.S3.Endpoint
 			stringData["AWS_ACCESS_KEY_ID"] = p.S3.Key
 			stringData["AWS_SECRET_ACCESS_KEY"] = p.S3.Secret
 			// The official image ships without boto3; install it at boot so
-			// artifact uploads to S3/MinIO work.
-			command = []string{"sh", "-c", "pip install --quiet boto3 && exec " + strings.Join(args, " ")}
+			// artifact uploads to S3/MinIO work. The mlflow argv is passed as
+			// positional args ("$@"), so no element is ever re-parsed by the
+			// shell — nothing user-derived becomes shell text.
+			command = []string{"sh", "-c", `pip install --quiet boto3 && exec "$@"`, "sh"}
+			command = append(command, args...)
 			args = nil
 		} else {
 			args = append(args, "--artifacts-destination", "/data/artifacts")

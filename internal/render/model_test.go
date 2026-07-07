@@ -92,8 +92,18 @@ func TestRenderModelLlamaCppCPU(t *testing.T) {
 		t.Fatalf("init containers = %+v", spec.InitContainers)
 	}
 	dl := strings.Join(spec.InitContainers[0].Command, " ")
-	if !strings.Contains(dl, "huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf") {
+	if !strings.Contains(dl, `curl -fL --retry 3 -o "/models/gemma-3n-E4B-it-Q4_K_M.gguf" "$MODEL_URL"`) {
 		t.Fatalf("download cmd = %s", dl)
+	}
+	// The HF URL is passed via env, never as shell text.
+	var modelURL string
+	for _, e := range spec.InitContainers[0].Env {
+		if e.Name == "MODEL_URL" {
+			modelURL = e.Value
+		}
+	}
+	if !strings.Contains(modelURL, "huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf") {
+		t.Fatalf("MODEL_URL env = %s", modelURL)
 	}
 	if c.ReadinessProbe == nil || c.ReadinessProbe.HTTPGet.Path != "/health" {
 		t.Fatalf("readiness = %+v", c.ReadinessProbe)
@@ -151,11 +161,42 @@ func TestRenderModelS3Source(t *testing.T) {
 		t.Fatalf("init = %+v", spec.InitContainers)
 	}
 	cmd := strings.Join(spec.InitContainers[0].Command, " ")
-	if !strings.Contains(cmd, `s3://$LUNCUR_S3_BUCKET/models/tiny.gguf`) {
+	// The S3 key is passed via env, never spliced into the shell command.
+	if !strings.Contains(cmd, `s3://$LUNCUR_S3_BUCKET/$MODEL_KEY`) {
 		t.Fatalf("cmd = %s", cmd)
+	}
+	var modelKey string
+	for _, e := range spec.InitContainers[0].Env {
+		if e.Name == "MODEL_KEY" {
+			modelKey = e.Value
+		}
+	}
+	if modelKey != "models/tiny.gguf" {
+		t.Fatalf("MODEL_KEY env = %q, want models/tiny.gguf", modelKey)
 	}
 	if len(spec.InitContainers[0].EnvFrom) != 1 {
 		t.Fatal("s3 init must read the app secret for credentials")
+	}
+}
+
+func TestParseModelSourceRejectsInjection(t *testing.T) {
+	bad := []string{
+		"s3:models/$(whoami).gguf",
+		"s3:a;rm -rf /",
+		"hf:org/name/../../etc/passwd",
+		"s3:models/`id`.gguf",
+		"hf:org/na me/f.gguf",
+		`s3:"; curl evil ;"`,
+	}
+	for _, src := range bad {
+		if _, _, _, err := ParseModelSource(src); err == nil {
+			t.Fatalf("source %q accepted, want rejected", src)
+		}
+	}
+	for _, src := range []string{"hf:org/name/model.Q4_K_M.gguf", "s3:models/sub/tiny.gguf", "hf:org/name"} {
+		if _, _, _, err := ParseModelSource(src); err != nil {
+			t.Fatalf("source %q rejected: %v", src, err)
+		}
 	}
 }
 
