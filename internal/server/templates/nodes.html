@@ -25,9 +25,10 @@
 </div>
 
 <div class="card mt-6">
-<h2>GPU cloud (vast.ai)</h2>
+<h2>GPU cloud (vast.ai, Nebius)</h2>
 {{if .GPUError}}<p class="err mb-2">{{.GPUError}}</p>{{end}}
-{{if not .HasGPUKey}}
+
+{{if not .HasVastKey}}
 <p class="mb-2 text-sm text-mut">Rent GPU VMs that auto-join this cluster. Store your vast.ai API key to begin.</p>
 <form method="post" action="/ui/gpu/key" class="flex flex-wrap items-center gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
@@ -35,13 +36,30 @@
   <button type="submit" class="btn">save key</button>
 </form>
 <div class="cli-echo">$ <b>luncur gpu key &lt;api-key&gt;</b></div>
-{{else}}
+{{end}}
+
+{{if not .HasNebiusKey}}
+<p class="mt-4 mb-2 text-sm text-mut">Or rent Nebius GPU VMs. Store the service-account credentials to begin.</p>
+<form method="post" action="/ui/gpu/key/nebius" class="grid max-w-xl grid-cols-2 gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input" name="sa_id" placeholder="service account id" required>
+  <input class="input" name="pubkey_id" placeholder="public key id" required>
+  <input class="input" name="parent_id" placeholder="parent (project/folder) id" required>
+  <input class="input" name="subnet_id" placeholder="subnet id" required>
+  <textarea class="input col-span-2 font-mono text-xs" name="private_key" rows="4" placeholder="-----BEGIN PRIVATE KEY-----" required></textarea>
+  <button type="submit" class="btn col-span-2 w-max">save nebius credentials</button>
+</form>
+<div class="cli-echo">$ <b>luncur gpu key --provider nebius --sa-id &lt;id&gt; --pubkey-id &lt;id&gt; --private-key-file key.pem --parent-id &lt;id&gt; --subnet-id &lt;id&gt;</b></div>
+{{end}}
+
+{{if or .HasVastKey .HasNebiusKey}}
 {{if .GPUInstances}}
-<table class="tbl mb-4"><tr><th>Label</th><th>GPU</th><th>State</th><th>Provider</th><th>$/hr</th><th></th></tr>
+<table class="tbl mt-4 mb-4"><tr><th>Label</th><th>GPU</th><th>State</th><th>Provider</th><th>Prov. state</th><th>$/hr</th><th></th></tr>
 {{range .GPUInstances}}<tr>
   <td class="font-mono text-xs">{{.label}}</td>
   <td>{{.gpu_name}}{{if .num_gpus}} &times;{{.num_gpus}}{{end}}</td>
   <td><span class="status-{{.status}}">{{.status}}</span></td>
+  <td class="font-mono text-xs">{{.provider}}</td>
   <td class="font-mono text-xs">{{if .provider_status}}{{.provider_status}}{{else}}&ndash;{{end}}</td>
   <td class="font-mono text-xs">{{if .dph_total}}{{printf "%.3f" .dph_total}}{{else}}&ndash;{{end}}</td>
   <td>
@@ -52,34 +70,67 @@
   </td>
 </tr>{{end}}
 </table>
-{{else}}<p class="mb-2 text-sm text-mut">No rented instances.</p>{{end}}
-<form method="get" action="/ui/nodes" class="flex flex-wrap items-center gap-2">
-  <input class="input w-auto" name="gpu" placeholder="GPU model, e.g. RTX 4090" value="{{.GPUQuery}}">
-  <input class="input w-24" type="number" name="count" min="0" placeholder="count" value="{{.GPUCount}}">
-  <button type="submit" class="btn-ghost">search offers</button>
-</form>
-{{if .GPUOffers}}
-<table class="tbl mt-2"><tr><th>Offer</th><th>GPU</th><th>Count</th><th>$/hr</th><th>Disk</th><th>Where</th><th></th></tr>
-{{range .GPUOffers}}<tr>
-  <td class="font-mono text-xs">{{.ID}}</td>
-  <td>{{.GPUName}}</td>
-  <td>{{.NumGPUs}}</td>
-  <td class="font-mono text-xs">{{printf "%.3f" .DPHTotal}}</td>
-  <td class="font-mono text-xs">{{printf "%.0f" .DiskSpace}}G</td>
-  <td class="text-xs text-mut">{{.Geolocation}}</td>
-  <td>
-    <form class="inline" method="post" action="/ui/gpu/rent">
-      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-      <input type="hidden" name="offer_id" value="{{.ID}}">
-      <input type="hidden" name="gpu_name" value="{{.GPUName}}">
-      <input type="hidden" name="num_gpus" value="{{.NumGPUs}}">
-      <button type="submit" class="btn" hx-confirm="Rent offer {{.ID}} ({{.GPUName}} &times;{{.NumGPUs}}, ${{printf "%.3f" .DPHTotal}}/hr)? This starts billing.">rent</button>
+{{else}}<p class="mt-4 mb-2 text-sm text-mut">No rented instances.</p>{{end}}
+
+<div class="mt-2">
+  <label class="seclabel">rent a new GPU</label>
+  <div class="mt-1 mb-2">
+    <select id="gpu-provider-select" class="input w-auto" onchange="luncurToggleGPUProvider(this.value)">
+      <option value="vastai" selected>vast.ai</option>
+      <option value="nebius">nebius</option>
+    </select>
+  </div>
+
+  <div id="gpu-vastai-panel">
+    <form method="get" action="/ui/nodes" class="flex flex-wrap items-center gap-2">
+      <input class="input w-auto" name="gpu" placeholder="GPU model, e.g. RTX 4090" value="{{.GPUQuery}}">
+      <input class="input w-24" type="number" name="count" min="0" placeholder="count" value="{{.GPUCount}}">
+      <button type="submit" class="btn-ghost">search offers</button>
     </form>
-  </td>
-</tr>{{end}}
-</table>
-{{end}}
-<div class="cli-echo">$ <b>luncur gpu offers --gpu "RTX 4090"</b> &middot; $ <b>luncur gpu rent &lt;offer-id&gt;</b></div>
+    {{if .GPUOffers}}
+    <table class="tbl mt-2"><tr><th>Offer</th><th>GPU</th><th>Count</th><th>$/hr</th><th>Disk</th><th>Where</th><th></th></tr>
+    {{range .GPUOffers}}<tr>
+      <td class="font-mono text-xs">{{.ID}}</td>
+      <td>{{.GPUName}}</td>
+      <td>{{.NumGPUs}}</td>
+      <td class="font-mono text-xs">{{printf "%.3f" .DPHTotal}}</td>
+      <td class="font-mono text-xs">{{printf "%.0f" .DiskSpace}}G</td>
+      <td class="text-xs text-mut">{{.Geolocation}}</td>
+      <td>
+        <form class="inline" method="post" action="/ui/gpu/rent">
+          <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="provider" value="vastai">
+          <input type="hidden" name="offer_id" value="{{.ID}}">
+          <input type="hidden" name="gpu_name" value="{{.GPUName}}">
+          <input type="hidden" name="num_gpus" value="{{.NumGPUs}}">
+          <button type="submit" class="btn" hx-confirm="Rent offer {{.ID}} ({{.GPUName}} &times;{{.NumGPUs}}, ${{printf "%.3f" .DPHTotal}}/hr)? This starts billing.">rent</button>
+        </form>
+      </td>
+    </tr>{{end}}
+    </table>
+    {{end}}
+    <div class="cli-echo">$ <b>luncur gpu offers --gpu "RTX 4090"</b> &middot; $ <b>luncur gpu rent &lt;offer-id&gt;</b></div>
+  </div>
+
+  <div id="gpu-nebius-panel" class="hidden">
+    <form method="post" action="/ui/gpu/rent" class="flex flex-wrap items-center gap-2">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <input type="hidden" name="provider" value="nebius">
+      <input class="input w-auto" name="platform" placeholder="platform, e.g. gpu-h100-sxm" required>
+      <input class="input w-auto" name="preset" placeholder="preset, e.g. 1gpu-16vcpu-200gb" required>
+      <input class="input w-24" type="number" name="disk_gb" min="0" placeholder="disk GB">
+      <button type="submit" class="btn" hx-confirm="Rent this Nebius platform/preset? This starts billing.">rent</button>
+    </form>
+    <div class="cli-echo">$ <b>luncur gpu rent --provider nebius --platform gpu-h100-sxm --preset 1gpu-16vcpu-200gb</b></div>
+  </div>
+</div>
+<script>
+function luncurToggleGPUProvider(p) {
+  document.getElementById('gpu-vastai-panel').classList.toggle('hidden', p !== 'vastai');
+  document.getElementById('gpu-nebius-panel').classList.toggle('hidden', p !== 'nebius');
+}
+</script>
+
 <p class="mt-2 text-xs text-mut">idle auto-stop: set <span class="font-mono">gpu_idle_minutes</span> in settings — instances are destroyed after that many minutes without GPU pods.</p>
 {{end}}
 </div>
