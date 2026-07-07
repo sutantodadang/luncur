@@ -39,6 +39,8 @@ type Deps struct {
 	ACMEDirectory   string // override ACME directory URL ("" = setting/Let's Encrypt)
 	SecretKeyPath   string // sealer key file, included in backups when set
 	Version         string // server build version, reported by doctor
+	NodeTokenPath   string // K3s node token ("" = up.NodeTokenPath); tests override
+	VastBaseURL     string // vast.ai API base ("" = production); tests override
 }
 
 type server struct {
@@ -55,6 +57,8 @@ type server struct {
 	dataDir         string
 	secretKeyPath   string
 	version         string
+	nodeTokenPath   string
+	vastBaseURL     string
 
 	// httpClient is used by the deploy/cert notifier (notify.go); tests may
 	// swap it to point at an httptest.Server or a short-timeout client.
@@ -118,6 +122,8 @@ func newServer(d Deps) *server {
 		registryHost:    registryHost,
 		systemNamespace: systemNamespace,
 		dataPVC:         dataPVC,
+		nodeTokenPath:   d.NodeTokenPath,
+		vastBaseURL:     d.VastBaseURL,
 		dataDir:         d.DataDir,
 		secretKeyPath:   d.SecretKeyPath,
 		version:         d.Version,
@@ -188,6 +194,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/deploys", s.authed(s.handleListDeploys))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/deploys/{id}", s.authed(s.handleGetDeploy))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/deploys/{id}/logs", s.authed(s.handleDeployLogs))
+	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/runs", s.authed(s.handleCreateRun))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/runs", s.authed(s.handleListRuns))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/runs/{id}", s.authed(s.handleGetRun))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/runs/{id}/logs", s.authed(s.handleRunLogs))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/scale", s.authed(s.handleScaleApp))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/health", s.authed(s.handleSetHealth))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookEnable))
@@ -212,6 +222,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/domains", s.authed(s.handleListDomains))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/domains/{hostname}", s.authed(s.handleDeleteDomain))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/domains/{hostname}/retry", s.authed(s.handleRetryDomain))
+	mux.HandleFunc("PUT /v1/projects/{project}/s3", s.authed(s.handleSetProjectS3))
+	mux.HandleFunc("GET /v1/projects/{project}/s3", s.authed(s.handleGetProjectS3))
+	mux.HandleFunc("DELETE /v1/projects/{project}/s3", s.authed(s.handleDeleteProjectS3))
+	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/s3", s.authed(s.handleAppS3Env))
 	mux.HandleFunc("POST /v1/projects/{project}/addons", s.authed(s.handleCreateAddon))
 	mux.HandleFunc("GET /v1/projects/{project}/addons", s.authed(s.handleListAddons))
 	mux.HandleFunc("POST /v1/projects/{project}/addons/{name}/attach", s.authed(s.handleAttachAddon))
@@ -231,6 +245,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/audit", s.adminOnly(s.handleListAudit))
 	mux.HandleFunc("GET /v1/doctor", s.adminOnly(s.handleDoctor))
 	mux.HandleFunc("GET /v1/nodes", s.adminOnly(s.handleListNodes))
+	mux.HandleFunc("PUT /v1/gpu/key", s.adminOnly(s.handleSetGPUKey))
+	mux.HandleFunc("GET /v1/gpu/offers", s.adminOnly(s.handleGPUOffers))
+	mux.HandleFunc("POST /v1/gpu/instances", s.adminOnly(s.handleRentGPU))
+	mux.HandleFunc("GET /v1/gpu/instances", s.adminOnly(s.handleListGPUInstances))
+	mux.HandleFunc("DELETE /v1/gpu/instances/{id}", s.adminOnly(s.handleDestroyGPUInstance))
 
 	// ACME HTTP-01 challenge path: served by luncur itself, no auth (the
 	// ACME CA fetches it directly). Nil-guarded: tests may build a server
@@ -278,6 +297,12 @@ func (s *server) requireKube(w http.ResponseWriter) bool {
 
 // StartCerts launches the builtin cert manager loop when the provider is
 // builtin; call in a goroutine-managing context (serve.go).
+// StartGPUIdleLoop launches the idle auto-destroy loop for rented GPU
+// instances; call alongside StartCerts (serve/push).
+func (s *server) StartGPUIdleLoop(ctx context.Context) {
+	go s.runGPUIdleLoop(ctx)
+}
+
 func (s *server) StartCerts(ctx context.Context) {
 	if s.certProviderName() != "builtin" || s.kube == nil {
 		return

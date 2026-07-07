@@ -39,6 +39,20 @@ type App struct {
 	// from other apps in the same cluster. Only meaningful for kind "web";
 	// worker/cron already have no Service to make internal.
 	Internal bool
+	// GPUCount is the number of nvidia.com/gpu devices the app requests
+	// (requests==limits). 0 means none. Every kind may request GPUs —
+	// cron included (scheduled retraining on GPU nodes).
+	GPUCount int64
+	// InjectS3 opts the app into LUNCUR_S3_* env injection from the
+	// project's external S3 settings (an attached MinIO addon injects the
+	// same keys via the addon-attachment mechanism instead).
+	InjectS3 bool
+	// ModelSource locates a kind=model app's weights: hf:<org>/<name>[/<file>]
+	// or s3:<key>. Empty for other kinds.
+	ModelSource string
+	// Runtime is the model serving runtime: ""/auto (resolved at render),
+	// llamacpp, vllm, or custom. Only meaningful for kind "model".
+	Runtime string
 }
 
 // normalizeAppKind defaults an empty kind to "web" for back-compat with
@@ -51,8 +65,8 @@ func normalizeAppKind(kind string) string {
 }
 
 // validateAppKind enforces the port/schedule matrix per app kind: web needs
-// a port and no schedule; worker needs neither; cron needs a validated
-// schedule and no port.
+// a port and no schedule; worker and job need neither; cron needs a
+// validated schedule and no port.
 func validateAppKind(kind string, port int, schedule string) error {
 	switch kind {
 	case "web":
@@ -69,6 +83,20 @@ func validateAppKind(kind string, port int, schedule string) error {
 		if schedule != "" {
 			return fmt.Errorf("schedule is only valid for cron apps")
 		}
+	case "job":
+		if port != 0 {
+			return fmt.Errorf("job apps do not take a port")
+		}
+		if schedule != "" {
+			return fmt.Errorf("job apps run on demand; use kind cron for a schedule")
+		}
+	case "model":
+		if port != 0 {
+			return fmt.Errorf("model apps do not take a port (the runtime picks one)")
+		}
+		if schedule != "" {
+			return fmt.Errorf("schedule is only valid for cron apps")
+		}
 	case "cron":
 		if port != 0 {
 			return fmt.Errorf("cron apps do not take a port")
@@ -80,7 +108,7 @@ func validateAppKind(kind string, port int, schedule string) error {
 			return fmt.Errorf("invalid schedule: %w", err)
 		}
 	default:
-		return fmt.Errorf("invalid kind %q (want web, worker, or cron)", kind)
+		return fmt.Errorf("invalid kind %q (want web, worker, cron, job, or model)", kind)
 	}
 	return nil
 }
@@ -107,6 +135,46 @@ func (s *Store) CreateApp(projectID int64, name string, port int, kind, schedule
 	return App{
 		ID: id, ProjectID: projectID, Name: name, Port: port, Replicas: 1,
 		SourceType: "tarball", Kind: kind, Schedule: schedule,
+	}, nil
+}
+
+// validModelRuntime is the runtime enum a model app may carry; "" and
+// "auto" both mean render-time resolution.
+func validModelRuntime(r string) bool {
+	switch r {
+	case "", "auto", "llamacpp", "vllm", "custom":
+		return true
+	}
+	return false
+}
+
+// CreateModelApp registers a kind=model app. source must be
+// hf:<org>/<name>[/<file>] or s3:<key>; deeper shape validation happens at
+// render time.
+func (s *Store) CreateModelApp(projectID int64, name, source, runtime string) (App, error) {
+	if !validName(name) {
+		return App{}, fmt.Errorf("invalid app name %q (lowercase letters, digits, dashes; max 40 chars)", name)
+	}
+	if !strings.HasPrefix(source, "hf:") && !strings.HasPrefix(source, "s3:") {
+		return App{}, fmt.Errorf("model source must start with hf: or s3:, got %q", source)
+	}
+	if !validModelRuntime(runtime) {
+		return App{}, fmt.Errorf("invalid runtime %q (auto|llamacpp|vllm|custom)", runtime)
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO apps (project_id, name, source_type, port, kind, model_source, runtime) VALUES (?, ?, 'tarball', 0, 'model', ?, ?)`,
+		projectID, name, source, runtime,
+	)
+	if err != nil {
+		return App{}, fmt.Errorf("insert app: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return App{}, err
+	}
+	return App{
+		ID: id, ProjectID: projectID, Name: name, Replicas: 1,
+		SourceType: "tarball", Kind: "model", ModelSource: source, Runtime: runtime,
 	}, nil
 }
 
@@ -148,9 +216,9 @@ func (s *Store) GetApp(projectID int64, name string) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal FROM apps WHERE project_id = ? AND name = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime FROM apps WHERE project_id = ? AND name = ?`,
 		projectID, name,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -169,9 +237,9 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal FROM apps WHERE id = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime FROM apps WHERE id = ?`,
 		id,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -185,7 +253,7 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 
 func (s *Store) ListApps(projectID int64) ([]App, error) {
 	rows, err := s.db.Query(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal FROM apps WHERE project_id = ? ORDER BY name`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime FROM apps WHERE project_id = ? ORDER BY name`,
 		projectID,
 	)
 	if err != nil {
@@ -196,7 +264,7 @@ func (s *Store) ListApps(projectID int64) ([]App, error) {
 	for rows.Next() {
 		var a App
 		var gitURL, gitBranch sql.NullString
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime); err != nil {
 			return nil, err
 		}
 		a.GitURL = gitURL.String
@@ -321,6 +389,36 @@ func (s *Store) SetHealthPath(id int64, path string) error {
 // persists the already-validated value.
 func (s *Store) SetBuildPath(id int64, path string) error {
 	res, err := s.db.Exec(`UPDATE apps SET build_path = ? WHERE id = ?`, path, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetInjectS3 opts an app in or out of LUNCUR_S3_* env injection from the
+// project's external S3 settings.
+func (s *Store) SetInjectS3(id int64, on bool) error {
+	res, err := s.db.Exec(`UPDATE apps SET inject_s3 = ? WHERE id = ?`, on, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetGPU sets the number of nvidia.com/gpu devices the app requests
+// (requests==limits). 0 clears. Allowed for every kind — cron included, so
+// scheduled retraining can use GPU nodes.
+func (s *Store) SetGPU(id int64, n int64) error {
+	if n < 0 || n > 16 {
+		return fmt.Errorf("gpu must be 0-16, got %d", n)
+	}
+	res, err := s.db.Exec(`UPDATE apps SET gpu_count = ? WHERE id = ?`, n, id)
 	if err != nil {
 		return err
 	}

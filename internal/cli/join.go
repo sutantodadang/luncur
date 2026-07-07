@@ -14,6 +14,7 @@ import (
 // the exact invocation (server URL + node token).
 func joinCmd() *cobra.Command {
 	var token string
+	var gpu bool
 	cmd := &cobra.Command{
 		Use:   "join <server-url>",
 		Short: "Join this machine to an existing luncur cluster as a K3s agent",
@@ -24,6 +25,21 @@ func joinCmd() *cobra.Command {
 			}
 			runner := up.ExecRunner{}
 
+			if gpu {
+				cmd.Println("==> checking NVIDIA driver")
+				if err := up.CheckNVIDIADriver(runner); err != nil {
+					return err
+				}
+				cmd.Println("==> ensuring nvidia-container-toolkit")
+				tkInstalled, err := up.EnsureNVIDIAToolkit(runner)
+				if err != nil {
+					return err
+				}
+				if tkInstalled {
+					cmd.Println("    installed nvidia-container-toolkit")
+				}
+			}
+
 			cmd.Println("==> writing registries.yaml")
 			changed, err := up.WriteRegistriesYAML(up.RegistriesPath)
 			if err != nil {
@@ -31,9 +47,13 @@ func joinCmd() *cobra.Command {
 			}
 
 			cmd.Println("==> ensuring K3s agent")
-			installed, err := up.EnsureK3sAgent(runner, args[0], token)
+			installed, err := up.EnsureK3sAgent(runner, args[0], token, gpu)
 			if err != nil {
 				return err
+			}
+			if gpu && !installed {
+				cmd.Println("note: k3s agent was already installed; the GPU label is only set at install time.")
+				cmd.Println("      label the node from the server: kubectl label node <name> " + up.GPUNodeLabel)
 			}
 
 			if changed && !installed {
@@ -50,5 +70,6 @@ func joinCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&token, "token", "", "node token from the server (see: luncur node join-command)")
 	cmd.MarkFlagRequired("token")
+	cmd.Flags().BoolVar(&gpu, "gpu", false, "GPU node: verify the NVIDIA driver, install nvidia-container-toolkit if missing, and label the node luncur.dev/gpu=true")
 	return cmd
 }

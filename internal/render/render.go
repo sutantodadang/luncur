@@ -43,6 +43,21 @@ type Input struct {
 	// URL, no domains. Ignored for non-web kinds (worker/cron already emit
 	// no Service to make internal).
 	Internal bool
+	// GPU is the number of nvidia.com/gpu devices (requests==limits); 0
+	// renders nothing. Any GPU>0 pod also gets runtimeClassName "nvidia"
+	// and a nodeSelector pinning it to nodes labeled luncur.dev/gpu=true.
+	GPU int64
+	// RunName names the batch/v1 Job rendered for one triggered run of a
+	// kind=job app ("<app>-run-<n>"). Empty (the deploy path) renders the
+	// job app's Secret and PVCs only — the workload exists per run, not
+	// per deploy. Ignored for other kinds.
+	RunName string
+	// ModelSource locates a kind=model app's weights: hf:<org>/<name>[/<file>]
+	// or s3:<key-in-project-bucket>. Required for model apps.
+	ModelSource string
+	// Runtime selects the model serving runtime: auto (default), llamacpp,
+	// vllm, or custom (user-supplied image; luncur wires the model volume).
+	Runtime string
 	// Overrides maps Kind -> strategic-merge-patch JSON. Applied by Task 6.
 	Overrides map[string]string
 	// ExtraHosts adds Ingress rules (same backend) for custom domains.
@@ -98,6 +113,8 @@ func dataStructFor(kind string) (any, error) {
 		return netv1.Ingress{}, nil
 	case "CronJob":
 		return batchv1.CronJob{}, nil
+	case "Job":
+		return batchv1.Job{}, nil
 	default:
 		return nil, fmt.Errorf("kind %q cannot be overridden", kind)
 	}
@@ -132,6 +149,8 @@ func roundTrip(kind string, raw []byte) ([]byte, error) {
 		v = &netv1.Ingress{}
 	case "CronJob":
 		v = &batchv1.CronJob{}
+	case "Job":
+		v = &batchv1.Job{}
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -142,6 +161,29 @@ func roundTrip(kind string, raw []byte) ([]byte, error) {
 }
 
 func SecretName(app string) string { return app + "-env" }
+
+// GPU scheduling constants, shared with the gpu package (device plugin
+// manifests) and kube (GPU node reporting).
+const (
+	GPUResource       = "nvidia.com/gpu"
+	GPURuntimeClass   = "nvidia"
+	GPUNodeLabelKey   = "luncur.dev/gpu"
+	GPUNodeLabelValue = "true"
+)
+
+// applyGPU pins a GPU pod to GPU-labeled nodes and selects the nvidia
+// runtime; a no-op for gpu <= 0.
+func applyGPU(spec *corev1.PodSpec, gpu int64) {
+	if gpu <= 0 {
+		return
+	}
+	rc := GPURuntimeClass
+	spec.RuntimeClassName = &rc
+	if spec.NodeSelector == nil {
+		spec.NodeSelector = map[string]string{}
+	}
+	spec.NodeSelector[GPUNodeLabelKey] = GPUNodeLabelValue
+}
 
 func labels(app string) map[string]string {
 	return map[string]string{
@@ -174,7 +216,10 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 	if kind == "web" && (in.Host == "" || in.Port < 1) {
 		return Rendered{}, fmt.Errorf("render: Host and Port are required for web apps")
 	}
-	if kind != "web" && kind != "worker" && kind != "cron" {
+	if kind == "model" && (in.Host == "" || in.ModelSource == "") {
+		return Rendered{}, fmt.Errorf("render: Host and ModelSource are required for model apps")
+	}
+	if kind != "web" && kind != "worker" && kind != "cron" && kind != "job" && kind != "model" {
 		return Rendered{}, fmt.Errorf("render: unknown kind %q", kind)
 	}
 
@@ -214,13 +259,16 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			},
 		}}
 	}
-	if in.CPUMilli > 0 || in.MemoryMB > 0 {
+	if in.CPUMilli > 0 || in.MemoryMB > 0 || in.GPU > 0 {
 		res := corev1.ResourceList{}
 		if in.CPUMilli > 0 {
 			res[corev1.ResourceCPU] = *resource.NewMilliQuantity(in.CPUMilli, resource.DecimalSI)
 		}
 		if in.MemoryMB > 0 {
 			res[corev1.ResourceMemory] = *resource.NewQuantity(in.MemoryMB*1024*1024, resource.BinarySI)
+		}
+		if in.GPU > 0 {
+			res[corev1.ResourceName(GPUResource)] = *resource.NewQuantity(in.GPU, resource.DecimalSI)
 		}
 		container.Resources = corev1.ResourceRequirements{Requests: res, Limits: res}
 	}
@@ -236,6 +284,20 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 		l.InitialDelaySeconds, l.PeriodSeconds, l.FailureThreshold = 15, 20, 3
 		container.ReadinessProbe, container.LivenessProbe = r, l
 	}
+	// Model apps rewire the container for their serving runtime; svcPort is
+	// what the Service targets (the runtime's port for models, in.Port
+	// otherwise).
+	svcPort := in.Port
+	var modelInits []corev1.Container
+	var modelVols []corev1.Volume
+	if kind == "model" {
+		inits, vols, port, err := applyModel(in, &container, len(env) > 0)
+		if err != nil {
+			return Rendered{}, err
+		}
+		modelInits, modelVols, svcPort = inits, vols, port
+	}
+
 	// Volumes: one RWO PVC per volume, mounted into the app container. Cron
 	// jobs ignore them (no PVCs emitted, no mounts).
 	var podVolumes []corev1.Volume
@@ -269,6 +331,8 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 		}
 	}
 
+	podVolumes = append(podVolumes, modelVols...)
+
 	replicas := in.Replicas
 	dep := &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
@@ -282,14 +346,18 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			},
 		},
 	}
-	if len(podVolumes) > 0 {
-		// RWO node-local volumes can't be attached by the old and new pod at
-		// once, so a rolling update would deadlock — Recreate instead.
+	dep.Spec.Template.Spec.InitContainers = modelInits
+	applyGPU(&dep.Spec.Template.Spec, in.GPU)
+	hasPVC := kind != "cron" && len(in.Volumes) > 0
+	if hasPVC || (kind == "model" && in.GPU > 0) {
+		// RWO node-local volumes can't be attached by the old and new pod
+		// at once, and a GPU model's replacement pod can't schedule while
+		// the old pod holds the node's GPU — Recreate instead of rolling.
 		dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 	}
 
 	switch kind {
-	case "web":
+	case "web", "model":
 		if err := add("Deployment", dep); err != nil {
 			return Rendered{}, err
 		}
@@ -301,7 +369,7 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 				Selector: selector(in.AppName),
 				Ports: []corev1.ServicePort{{
 					Port:       80,
-					TargetPort: intstr.FromInt32(in.Port),
+					TargetPort: intstr.FromInt32(svcPort),
 				}},
 			},
 		}
@@ -358,6 +426,34 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			return Rendered{}, err
 		}
 
+	case "job":
+		// Deploy path (no RunName): the workload is rendered per run, so a
+		// deploy only (re)applies the Secret and PVCs added above.
+		if in.RunName != "" {
+			job := &batchv1.Job{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
+				ObjectMeta: meta(in, in.RunName),
+				Spec: batchv1.JobSpec{
+					// One attempt, no retries: a training/batch run that
+					// failed must surface as failed, not silently rerun.
+					BackoffLimit:            int32Ptr(0),
+					TTLSecondsAfterFinished: int32Ptr(86400),
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: labels(in.AppName)},
+						Spec: corev1.PodSpec{
+							RestartPolicy: corev1.RestartPolicyNever,
+							Containers:    []corev1.Container{container},
+							Volumes:       podVolumes,
+						},
+					},
+				},
+			}
+			applyGPU(&job.Spec.Template.Spec, in.GPU)
+			if err := add("Job", job); err != nil {
+				return Rendered{}, err
+			}
+		}
+
 	case "cron":
 		cj := &batchv1.CronJob{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "batch/v1", Kind: "CronJob"},
@@ -381,6 +477,7 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 				},
 			},
 		}
+		applyGPU(&cj.Spec.JobTemplate.Spec.Template.Spec, in.GPU)
 		if err := add("CronJob", cj); err != nil {
 			return Rendered{}, err
 		}

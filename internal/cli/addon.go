@@ -13,14 +13,14 @@ import (
 func addonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "addon",
-		Short: "Manage Postgres/Redis addons for a project",
+		Short: "Manage project addons (postgres|redis|minio|mlflow)",
 	}
 
 	var createProject, createName, createVersion string
 	var createSize int
 	create := &cobra.Command{
 		Use:   "create <type>",
-		Short: "Provision a new addon (postgres|redis)",
+		Short: "Provision a new addon (postgres|redis|minio|mlflow)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := apiClient()
@@ -40,7 +40,7 @@ func addonCmd() *cobra.Command {
 	create.Flags().StringVar(&createProject, "project", "", "project name")
 	create.MarkFlagRequired("project")
 	create.Flags().StringVar(&createName, "name", "", "addon name (default <type><n>)")
-	create.Flags().StringVar(&createVersion, "version", "", "addon version (default postgres:16, redis:7)")
+	create.Flags().StringVar(&createVersion, "version", "", "addon version (default postgres:16, redis:7, pinned minio/mlflow)")
 	create.Flags().IntVar(&createSize, "size", 1, "volume size in GB")
 
 	var addProject, addApp, addName, addVersion string
@@ -69,7 +69,7 @@ func addonCmd() *cobra.Command {
 	add.Flags().StringVar(&addApp, "app", "", "app to attach the addon to")
 	add.MarkFlagRequired("app")
 	add.Flags().StringVar(&addName, "name", "", "addon name (default <type><n>)")
-	add.Flags().StringVar(&addVersion, "version", "", "addon version (default postgres:16, redis:7)")
+	add.Flags().StringVar(&addVersion, "version", "", "addon version (default postgres:16, redis:7, pinned minio/mlflow)")
 	add.Flags().IntVar(&addSize, "size", 1, "volume size in GB")
 
 	var attachProject string

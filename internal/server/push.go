@@ -147,6 +147,8 @@ func NewWithBackend(d Deps) (http.Handler, *PushBackend, func(ctx context.Contex
 		go s.StartRegistryGC(ctx)
 		go s.reconcileUnfinished(ctx)
 		go s.StartMonitor(ctx)
+		go s.StartGPUWatch(ctx)
+		s.StartGPUIdleLoop(ctx)
 		// A previous process may have applied only the base Ingress (e.g.
 		// `luncur up` re-running); re-assert panel_domain here so a custom
 		// domain set before restart isn't silently dropped until the next

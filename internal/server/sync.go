@@ -56,6 +56,16 @@ func (s *server) plainEnv(a store.App) (map[string]string, error) {
 // injects connection env for attached addons, loads its overrides, and
 // renders against imageRef.
 func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOverrides bool) (render.Rendered, error) {
+	return s.renderAppWithRun(p, a, imageRef, withOverrides, "")
+}
+
+// renderRun renders one triggered run of a kind=job app: the per-run
+// batch/v1 Job (named <app>-run-<id>) plus the app's Secret/PVCs.
+func (s *server) renderRun(p store.Project, a store.App, imageRef string, runID int64) (render.Rendered, error) {
+	return s.renderAppWithRun(p, a, imageRef, true, jobRunName(a.Name, runID))
+}
+
+func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string, withOverrides bool, runName string) (render.Rendered, error) {
 	env, err := s.plainEnv(a)
 	if err != nil {
 		return render.Rendered{}, err
@@ -70,6 +80,44 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 	}
 	if len(collisions) > 0 {
 		log.Printf("app %s: addon env collides with user env, user wins: %s", a.Name, strings.Join(collisions, ", "))
+	}
+
+	// Opt-in external S3: LUNCUR_S3_* from the project's stored config.
+	// User env (and an attached minio addon, injected above) wins per key.
+	if a.InjectS3 || (a.Kind == "model" && strings.HasPrefix(a.ModelSource, "s3:")) {
+		cfg, err := s.st.GetProjectS3(p.ID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			// Flag on but nothing configured: nothing to inject.
+		case err != nil:
+			return render.Rendered{}, fmt.Errorf("project s3: %w", err)
+		default:
+			if s.sealer == nil {
+				return render.Rendered{}, fmt.Errorf("cannot unseal project s3 keys: no sealer configured")
+			}
+			ak, err := s.sealer.Open(cfg.AccessKeyEnc)
+			if err != nil {
+				return render.Rendered{}, fmt.Errorf("unseal s3 access key: %w", err)
+			}
+			sk, err := s.sealer.Open(cfg.SecretKeyEnc)
+			if err != nil {
+				return render.Rendered{}, fmt.Errorf("unseal s3 secret key: %w", err)
+			}
+			s3env := map[string]string{
+				"LUNCUR_S3_ENDPOINT": cfg.Endpoint,
+				"LUNCUR_S3_KEY":      string(ak),
+				"LUNCUR_S3_SECRET":   string(sk),
+				"LUNCUR_S3_BUCKET":   cfg.Bucket,
+			}
+			if cfg.Region != "" {
+				s3env["LUNCUR_S3_REGION"] = cfg.Region
+			}
+			for k, v := range s3env {
+				if _, taken := env[k]; !taken {
+					env[k] = v
+				}
+			}
+		}
 	}
 
 	// Buildpack contract: apps built from source (nixpacks, most
@@ -148,6 +196,10 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 		Schedule:           a.Schedule,
 		CPUMilli:           a.CPUMilli,
 		MemoryMB:           a.MemoryMB,
+		GPU:                a.GPUCount,
+		RunName:            runName,
+		ModelSource:        a.ModelSource,
+		Runtime:            a.Runtime,
 		HealthPath:         a.HealthPath,
 		Internal:           a.Internal,
 		Overrides:          overrides,

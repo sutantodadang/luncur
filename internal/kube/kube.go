@@ -38,6 +38,8 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"Namespace":             {Group: "", Version: "v1", Resource: "namespaces"},
 	"Job":                   {Group: "batch", Version: "v1", Resource: "jobs"},
 	"CronJob":               {Group: "batch", Version: "v1", Resource: "cronjobs"},
+	"DaemonSet":             {Group: "apps", Version: "v1", Resource: "daemonsets"},
+	"RuntimeClass":          {Group: "node.k8s.io", Version: "v1", Resource: "runtimeclasses"},
 	"PersistentVolumeClaim": {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
 	"ServiceAccount":        {Group: "", Version: "v1", Resource: "serviceaccounts"},
 	"ClusterRole":           {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"},
@@ -52,6 +54,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 // clusterScoped marks kinds Apply must patch without a namespace.
 var clusterScoped = map[string]bool{
 	"Namespace":          true,
+	"RuntimeClass":       true,
 	"ClusterRole":        true,
 	"ClusterRoleBinding": true,
 	"ClusterIssuer":      true,
@@ -195,7 +198,63 @@ func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) er
 			return fmt.Errorf("delete %s/%s: %w", t.kind, t.name, err)
 		}
 	}
+	// Per-run Jobs (kind=job apps) have per-run names; delete by the app
+	// label instead.
+	if err := c.dyn.Resource(gvrByKind["Job"]).Namespace(namespace).DeleteCollection(
+		ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + app},
+	); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete jobs for %s: %w", app, err)
+	}
 	return nil
+}
+
+// JobPods lists the pods backing a Job, via the job-name label the Job
+// controller stamps on them. No clientset wired -> (nil, nil).
+func (c *Client) JobPods(ctx context.Context, namespace, jobName string) ([]string, error) {
+	if c.cs == nil {
+		return nil, nil
+	}
+	list, err := c.cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "job-name=" + jobName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list pods: %w", err)
+	}
+	names := make([]string, 0, len(list.Items))
+	for _, p := range list.Items {
+		names = append(names, p.Name)
+	}
+	return names, nil
+}
+
+// JobExitCode reports the terminated exit code of the newest pod backing a
+// Job. ok=false when no pod (or no terminated container status) was found —
+// callers record "exit code unknown", never an error.
+func (c *Client) JobExitCode(ctx context.Context, namespace, jobName string) (int64, bool, error) {
+	if c.cs == nil {
+		return 0, false, nil
+	}
+	list, err := c.cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "job-name=" + jobName,
+	})
+	if err != nil {
+		return 0, false, fmt.Errorf("list pods: %w", err)
+	}
+	if len(list.Items) == 0 {
+		return 0, false, nil
+	}
+	newest := list.Items[0]
+	for _, p := range list.Items[1:] {
+		if p.CreationTimestamp.After(newest.CreationTimestamp.Time) {
+			newest = p
+		}
+	}
+	for _, cst := range newest.Status.ContainerStatuses {
+		if cst.State.Terminated != nil {
+			return int64(cst.State.Terminated.ExitCode), true, nil
+		}
+	}
+	return 0, false, nil
 }
 
 // DeleteObject removes a single object by kind/name, honoring the same
@@ -288,6 +347,11 @@ func (c *Client) WaitJob(ctx context.Context, namespace, name string, poll time.
 		u, err := c.dyn.Resource(gvrByKind["Job"]).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return false, fmt.Errorf("get job %s: %w", name, err)
+		}
+		if u == nil {
+			// Fake clients with intercept-everything reactors return a nil
+			// object with a nil error; treat it like a missing Job.
+			return false, fmt.Errorf("get job %s: no object returned", name)
 		}
 		if n, _, _ := unstructured.NestedInt64(u.Object, "status", "succeeded"); n >= 1 {
 			return true, nil
@@ -625,6 +689,8 @@ type NodeInfo struct {
 	CPUMilli    int64  `json:"cpu_used_millicores"`
 	MemCapMiB   int64  `json:"memory_capacity_mib"`
 	MemMiB      int64  `json:"memory_used_mib"`
+	GPU         bool   `json:"gpu"`
+	GPUCapacity int64  `json:"gpu_capacity"`
 	MetricsOK   bool   `json:"metrics_available"`
 }
 
@@ -686,6 +752,12 @@ func (c *Client) ListNodes(ctx context.Context) ([]NodeInfo, error) {
 			Version:     n.Status.NodeInfo.KubeletVersion,
 			CPUCapMilli: n.Status.Allocatable.Cpu().MilliValue(),
 			MemCapMiB:   n.Status.Allocatable.Memory().Value() / (1 << 20),
+		}
+		if n.Labels[render.GPUNodeLabelKey] == render.GPUNodeLabelValue {
+			info.GPU = true
+		}
+		if q, ok := n.Status.Allocatable[corev1.ResourceName(render.GPUResource)]; ok {
+			info.GPUCapacity = q.Value()
 		}
 		if m, ok := usage[n.Name]; ok {
 			info.CPUMilli = m.cpuMilli
@@ -846,4 +918,29 @@ func (c *Client) DeploymentStatus(ctx context.Context, namespace, name string) (
 	ready, _, _ = unstructured.NestedInt64(u.Object, "status", "readyReplicas")
 	desired, _, _ = unstructured.NestedInt64(u.Object, "spec", "replicas")
 	return ready, desired, nil
+}
+
+// GPUPodsRequested reports whether any non-terminal pod in the cluster
+// requests nvidia.com/gpu devices. The gpucloud idle loop uses this: zero
+// GPU pods for long enough means rented instances are burning money for
+// nothing.
+func (c *Client) GPUPodsRequested(ctx context.Context) (bool, error) {
+	if c.cs == nil {
+		return false, fmt.Errorf("kubernetes client not configured")
+	}
+	pods, err := c.cs.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, err
+	}
+	for _, p := range pods.Items {
+		if p.Status.Phase != corev1.PodPending && p.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		for _, ctr := range p.Spec.Containers {
+			if q, ok := ctr.Resources.Limits[corev1.ResourceName(render.GPUResource)]; ok && !q.IsZero() {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }

@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS apps (
   webhook_secret BLOB,
   build_path    TEXT NOT NULL DEFAULT '',
   internal      INTEGER NOT NULL DEFAULT 0,
+  gpu_count     INTEGER NOT NULL DEFAULT 0,
+  inject_s3     INTEGER NOT NULL DEFAULT 0,
+  model_source  TEXT NOT NULL DEFAULT '',
+  runtime       TEXT NOT NULL DEFAULT '',
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, name)
 );
@@ -116,7 +120,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS addons (
   id         INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  type       TEXT NOT NULL CHECK (type IN ('postgres','redis')),
+  type       TEXT NOT NULL CHECK (type IN ('postgres','redis','minio','mlflow')),
   name       TEXT NOT NULL,
   version    TEXT NOT NULL,
   size_gb    INTEGER NOT NULL DEFAULT 1,
@@ -150,6 +154,31 @@ CREATE TABLE IF NOT EXISTS volumes (
   UNIQUE(app_id, path)
 );
 
+-- Per-project external S3 credentials (endpoint + sealed keys). An
+-- in-cluster MinIO addon is the alternative; this table only holds
+-- user-supplied external object storage.
+CREATE TABLE IF NOT EXISTS project_s3 (
+  project_id     INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  endpoint       TEXT NOT NULL,
+  region         TEXT NOT NULL DEFAULT '',
+  bucket         TEXT NOT NULL,
+  access_key_enc BLOB NOT NULL,
+  secret_key_enc BLOB NOT NULL
+);
+
+-- One row per triggered run of a kind=job app. exit_code is NULL until the
+-- run finishes (and stays NULL when no pod exit code could be determined).
+CREATE TABLE IF NOT EXISTS job_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  status      TEXT NOT NULL CHECK (status IN ('running','succeeded','failed')),
+  exit_code   INTEGER,
+  started_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_runs_app ON job_runs(app_id);
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -159,3 +188,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+
+CREATE TABLE IF NOT EXISTS gpu_instances (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider    TEXT NOT NULL,
+  external_id INTEGER NOT NULL,
+  label       TEXT NOT NULL,
+  gpu_name    TEXT NOT NULL DEFAULT '',
+  num_gpus    INTEGER NOT NULL DEFAULT 0,
+  status      TEXT NOT NULL CHECK (status IN ('renting','active','destroyed')),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);

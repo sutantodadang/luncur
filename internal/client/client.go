@@ -208,6 +208,9 @@ type AppInfo struct {
 	Image       string `json:"image,omitempty"`
 	Kind        string `json:"kind,omitempty"`
 	Schedule    string `json:"schedule,omitempty"`
+	GPU         int64  `json:"gpu,omitempty"`
+	ModelSource string `json:"model_source,omitempty"`
+	Runtime     string `json:"runtime,omitempty"`
 	Seq         int64  `json:"seq,omitempty"`
 }
 
@@ -265,10 +268,19 @@ func (c *Client) RemoveMember(project, email string) error {
 	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/members/"+url.PathEscape(email), nil, nil)
 }
 
-func (c *Client) CreateApp(project, name string, port int, kind, schedule, buildPath string, internal bool) (AppInfo, error) {
+func (c *Client) CreateApp(project, name string, port int, kind, schedule, buildPath string, internal bool, gpu int64) (AppInfo, error) {
 	var out AppInfo
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
-		map[string]interface{}{"name": name, "port": port, "kind": kind, "schedule": schedule, "build_path": buildPath, "internal": internal}, &out)
+		map[string]interface{}{"name": name, "port": port, "kind": kind, "schedule": schedule, "build_path": buildPath, "internal": internal, "gpu": gpu}, &out)
+	return out, err
+}
+
+// CreateModelApp registers (and, for built-in runtimes, immediately
+// deploys) a kind=model app serving an OpenAI-compatible endpoint.
+func (c *Client) CreateModelApp(project, name, source, runtime string, gpu int64) (AppInfo, error) {
+	var out AppInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
+		map[string]any{"name": name, "kind": "model", "model_source": source, "runtime": runtime, "gpu": gpu}, &out)
 	return out, err
 }
 
@@ -361,12 +373,13 @@ func (c *Client) ListDeploys(project, app string) ([]DeployInfo, error) {
 }
 
 // CreateGitApp registers an app whose source is a git repo, built at deploy time.
-func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch, kind, schedule, buildPath string, internal bool) (AppInfo, error) {
+func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch, kind, schedule, buildPath string, internal bool, gpu int64) (AppInfo, error) {
 	var out AppInfo
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
 		map[string]any{
 			"name": name, "port": port, "git_url": gitURL, "git_branch": branch,
 			"kind": kind, "schedule": schedule, "build_path": buildPath, "internal": internal,
+			"gpu": gpu,
 		}, &out)
 	return out, err
 }
@@ -374,7 +387,7 @@ func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch, ki
 // Scale posts a partial scale change: nil fields are left unchanged
 // server-side. cpu/memory are quantity strings ("250m", "256Mi"); an empty
 // string clears (back to unset).
-func (c *Client) Scale(project, app string, replicas *int, cpu, memory *string) error {
+func (c *Client) Scale(project, app string, replicas *int, cpu, memory *string, gpu *int64) error {
 	body := map[string]any{}
 	if replicas != nil {
 		body["replicas"] = *replicas
@@ -384,6 +397,9 @@ func (c *Client) Scale(project, app string, replicas *int, cpu, memory *string) 
 	}
 	if memory != nil {
 		body["memory"] = *memory
+	}
+	if gpu != nil {
+		body["gpu"] = *gpu
 	}
 	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/scale",
 		body, nil)
@@ -725,6 +741,79 @@ func (c *Client) Rollback(project, app string, deployID string) (int64, error) {
 	return out.Seq, err
 }
 
+// S3Config is a project's external S3 configuration. SecretKey is only
+// ever sent, never returned.
+type S3Config struct {
+	Endpoint  string `json:"endpoint"`
+	Region    string `json:"region,omitempty"`
+	Bucket    string `json:"bucket"`
+	AccessKey string `json:"access_key,omitempty"`
+	SecretKey string `json:"secret_key,omitempty"`
+}
+
+// SetProjectS3 stores a project's external S3 credentials (sealed at rest).
+func (c *Client) SetProjectS3(project string, cfg S3Config) error {
+	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/s3", cfg, nil)
+}
+
+// GetProjectS3 fetches the stored config (no secret key).
+func (c *Client) GetProjectS3(project string) (S3Config, error) {
+	var out S3Config
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/s3", nil, &out)
+	return out, err
+}
+
+// DeleteProjectS3 clears a project's external S3 configuration.
+func (c *Client) DeleteProjectS3(project string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/s3", nil, nil)
+}
+
+// SetAppS3Env toggles LUNCUR_S3_* env injection for one app.
+func (c *Client) SetAppS3Env(project, app string, enabled bool) error {
+	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/s3",
+		map[string]bool{"enabled": enabled}, nil)
+}
+
+// RunInfo is one triggered run of a kind=job app.
+type RunInfo struct {
+	ID         int64  `json:"id"`
+	Status     string `json:"status"`
+	Job        string `json:"job"`
+	ExitCode   *int64 `json:"exit_code,omitempty"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at,omitempty"`
+}
+
+// CreateRun triggers one run of a kind=job app.
+func (c *Client) CreateRun(project, app string) (RunInfo, error) {
+	var out RunInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/runs", map[string]string{}, &out)
+	return out, err
+}
+
+// ListRuns fetches a job app's run history (newest first).
+func (c *Client) ListRuns(project, app string) ([]RunInfo, error) {
+	var out []RunInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/runs", nil, &out)
+	return out, err
+}
+
+// GetRun fetches one run's status.
+func (c *Client) GetRun(project, app string, id int64) (RunInfo, error) {
+	var out RunInfo
+	err := c.do("GET", fmt.Sprintf("/v1/projects/%s/apps/%s/runs/%d", url.PathEscape(project), url.PathEscape(app), id), nil, &out)
+	return out, err
+}
+
+// FollowRunLogs streams a run's pod logs (SSE) until the stream ends.
+func (c *Client) FollowRunLogs(project, app string, id int64, follow bool, w io.Writer) error {
+	p := fmt.Sprintf("/v1/projects/%s/apps/%s/runs/%d/logs", url.PathEscape(project), url.PathEscape(app), id)
+	if follow {
+		p += "?follow=1"
+	}
+	return c.stream(p, w)
+}
+
 type TokenInfo struct {
 	ID         int64  `json:"id"`
 	Name       string `json:"name"`
@@ -910,6 +999,8 @@ type Node struct {
 	CPUMilli    int64  `json:"cpu_used_millicores"`
 	MemCapMiB   int64  `json:"memory_capacity_mib"`
 	MemMiB      int64  `json:"memory_used_mib"`
+	GPU         bool   `json:"gpu"`
+	GPUCapacity int64  `json:"gpu_capacity"`
 	MetricsOK   bool   `json:"metrics_available"`
 }
 
@@ -994,4 +1085,73 @@ func (c *Client) SystemUpdate(version, image string) (string, error) {
 	}
 	err := c.do("POST", "/v1/system/update", map[string]string{"version": version, "image": image}, &out)
 	return out.Image, err
+}
+
+// GPUOffer is one rentable machine from the GPU marketplace search.
+type GPUOffer struct {
+	ID          int64   `json:"id"`
+	GPUName     string  `json:"gpu_name"`
+	NumGPUs     int     `json:"num_gpus"`
+	DPHTotal    float64 `json:"dph_total"`
+	DiskSpace   float64 `json:"disk_space"`
+	Geolocation string  `json:"geolocation"`
+}
+
+// GPUInstance is one rented GPU VM tracked by the server.
+type GPUInstance struct {
+	ID             int64   `json:"id"`
+	Provider       string  `json:"provider"`
+	ExternalID     int64   `json:"external_id"`
+	Label          string  `json:"label"`
+	GPUName        string  `json:"gpu_name"`
+	NumGPUs        int     `json:"num_gpus"`
+	Status         string  `json:"status"`
+	ProviderStatus string  `json:"provider_status"`
+	DPHTotal       float64 `json:"dph_total"`
+	CreatedAt      string  `json:"created_at"`
+}
+
+// SetGPUKey stores a GPU provider API key (sealed server-side).
+func (c *Client) SetGPUKey(provider, apiKey string) error {
+	return c.do("PUT", "/v1/gpu/key", map[string]string{"provider": provider, "api_key": apiKey}, nil)
+}
+
+// GPUOffers searches rentable VM offers, cheapest first.
+func (c *Client) GPUOffers(gpuName string, numGPUs, limit int) ([]GPUOffer, error) {
+	q := url.Values{}
+	if gpuName != "" {
+		q.Set("gpu_name", gpuName)
+	}
+	if numGPUs > 0 {
+		q.Set("num_gpus", fmt.Sprint(numGPUs))
+	}
+	if limit > 0 {
+		q.Set("limit", fmt.Sprint(limit))
+	}
+	var out struct {
+		Offers []GPUOffer `json:"offers"`
+	}
+	err := c.do("GET", "/v1/gpu/offers?"+q.Encode(), nil, &out)
+	return out.Offers, err
+}
+
+// RentGPU accepts an offer as a cluster-joining VM.
+func (c *Client) RentGPU(offerID int64, diskGB int, gpuName string, numGPUs int) (GPUInstance, error) {
+	var out GPUInstance
+	err := c.do("POST", "/v1/gpu/instances", map[string]any{
+		"offer_id": offerID, "disk_gb": diskGB, "gpu_name": gpuName, "num_gpus": numGPUs,
+	}, &out)
+	return out, err
+}
+
+// ListGPUInstances lists tracked GPU instances.
+func (c *Client) ListGPUInstances() ([]GPUInstance, error) {
+	var out []GPUInstance
+	err := c.do("GET", "/v1/gpu/instances", nil, &out)
+	return out, err
+}
+
+// DestroyGPUInstance deletes a rented VM (billing stops, data gone).
+func (c *Client) DestroyGPUInstance(id int64) error {
+	return c.do("DELETE", fmt.Sprintf("/v1/gpu/instances/%d", id), nil, nil)
 }

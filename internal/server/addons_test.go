@@ -320,3 +320,64 @@ func TestAddonUpgrade(t *testing.T) {
 		t.Fatalf("empty version: want 400, got %d", resp.StatusCode)
 	}
 }
+
+func TestMlflowAddonURL(t *testing.T) {
+	_, srv, st, _ := addonTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/addons", admin, `{"type":"mlflow","name":"track1"}`).Body.Close()
+
+	resp := doAuthed(t, "GET", srv.URL+"/v1/projects/proj/addons/track1/url", admin, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("addon url: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		EnvKey string `json:"env_key"`
+		URL    string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.EnvKey != "MLFLOW_TRACKING_URI" {
+		t.Fatalf("env_key = %q, want MLFLOW_TRACKING_URI", out.EnvKey)
+	}
+	if !strings.Contains(out.URL, ":5000") {
+		t.Fatalf("url = %q, want :5000", out.URL)
+	}
+}
+
+func TestMlflowInjectsTrackingURI(t *testing.T) {
+	s, srv, st, _ := addonTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/proj/addons", admin, `{"type":"mlflow","app":"web"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create addon: want 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	p, err := st.GetProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.GetApp(p.ID, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := s.renderApp(p, a, "nginx:1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sec string
+	for _, o := range rendered.Objects {
+		if o.Kind == "Secret" {
+			sec = string(o.JSON)
+		}
+	}
+	if !strings.Contains(sec, "MLFLOW_TRACKING_URI") {
+		t.Fatalf("secret missing injected MLFLOW_TRACKING_URI: %s", sec)
+	}
+}

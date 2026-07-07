@@ -4,7 +4,7 @@
 <div class="card">
 {{if .Error}}<p class="text-sm text-mut">{{.Error}}</p>
 {{else}}
-<table class="tbl"><tr><th>Name</th><th>Role</th><th>Status</th><th>IP</th><th>Version</th><th>CPU</th><th>Memory</th></tr>
+<table class="tbl"><tr><th>Name</th><th>Role</th><th>Status</th><th>IP</th><th>Version</th><th>CPU</th><th>Memory</th><th>GPU</th></tr>
 {{range .Nodes}}<tr>
   <td>{{.Name}}</td>
   <td>{{.Role}}</td>
@@ -13,12 +13,75 @@
   <td>{{.Version}}</td>
   <td class="font-mono text-xs">{{if .MetricsOK}}{{.CPUMilli}}m / {{.CPUCapMilli}}m{{else}}&ndash; / {{.CPUCapMilli}}m{{end}}</td>
   <td class="font-mono text-xs">{{if .MetricsOK}}{{.MemMiB}}Mi / {{.MemCapMiB}}Mi{{else}}&ndash; / {{.MemCapMiB}}Mi{{end}}</td>
+  <td>{{if .GPU}}<span class="chip chip-muted font-mono">gpu &times;{{.GPUCapacity}}</span>{{else}}&ndash;{{end}}</td>
 </tr>{{end}}
 </table>
 {{end}}
 <div hx-get="/ui/nodes/charts" hx-trigger="load, every 15s" hx-swap="innerHTML"></div>
 <p class="mt-4 text-sm text-mut">add a VPS: run <span class="font-mono">luncur node join-command</span> on the server, then paste its output on the new machine.</p>
 <div class="cli-echo">$ <b>luncur node ls</b></div>
+<p class="mt-1 text-sm text-mut">GPU box: run the join command with <span class="font-mono">--gpu</span> — the device plugin and node label are applied automatically.</p>
+<div class="cli-echo">$ luncur join --gpu &lt;server-url&gt;</div>
+</div>
+
+<div class="card mt-6">
+<h2>GPU cloud (vast.ai)</h2>
+{{if .GPUError}}<p class="err mb-2">{{.GPUError}}</p>{{end}}
+{{if not .HasGPUKey}}
+<p class="mb-2 text-sm text-mut">Rent GPU VMs that auto-join this cluster. Store your vast.ai API key to begin.</p>
+<form method="post" action="/ui/gpu/key" class="flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input w-auto flex-1" type="password" name="api_key" placeholder="vast.ai API key" required>
+  <button type="submit" class="btn">save key</button>
+</form>
+<div class="cli-echo">$ <b>luncur gpu key &lt;api-key&gt;</b></div>
+{{else}}
+{{if .GPUInstances}}
+<table class="tbl mb-4"><tr><th>Label</th><th>GPU</th><th>State</th><th>Provider</th><th>$/hr</th><th></th></tr>
+{{range .GPUInstances}}<tr>
+  <td class="font-mono text-xs">{{.label}}</td>
+  <td>{{.gpu_name}}{{if .num_gpus}} &times;{{.num_gpus}}{{end}}</td>
+  <td><span class="status-{{.status}}">{{.status}}</span></td>
+  <td class="font-mono text-xs">{{if .provider_status}}{{.provider_status}}{{else}}&ndash;{{end}}</td>
+  <td class="font-mono text-xs">{{if .dph_total}}{{printf "%.3f" .dph_total}}{{else}}&ndash;{{end}}</td>
+  <td>
+    <form class="inline" method="post" action="/ui/gpu/{{.id}}/stop">
+      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+      <button type="submit" class="btn-danger" hx-confirm="Destroy {{.label}}? Billing stops; all data on the VM is gone.">stop</button>
+    </form>
+  </td>
+</tr>{{end}}
+</table>
+{{else}}<p class="mb-2 text-sm text-mut">No rented instances.</p>{{end}}
+<form method="get" action="/ui/nodes" class="flex flex-wrap items-center gap-2">
+  <input class="input w-auto" name="gpu" placeholder="GPU model, e.g. RTX 4090" value="{{.GPUQuery}}">
+  <input class="input w-24" type="number" name="count" min="0" placeholder="count" value="{{.GPUCount}}">
+  <button type="submit" class="btn-ghost">search offers</button>
+</form>
+{{if .GPUOffers}}
+<table class="tbl mt-2"><tr><th>Offer</th><th>GPU</th><th>Count</th><th>$/hr</th><th>Disk</th><th>Where</th><th></th></tr>
+{{range .GPUOffers}}<tr>
+  <td class="font-mono text-xs">{{.ID}}</td>
+  <td>{{.GPUName}}</td>
+  <td>{{.NumGPUs}}</td>
+  <td class="font-mono text-xs">{{printf "%.3f" .DPHTotal}}</td>
+  <td class="font-mono text-xs">{{printf "%.0f" .DiskSpace}}G</td>
+  <td class="text-xs text-mut">{{.Geolocation}}</td>
+  <td>
+    <form class="inline" method="post" action="/ui/gpu/rent">
+      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="offer_id" value="{{.ID}}">
+      <input type="hidden" name="gpu_name" value="{{.GPUName}}">
+      <input type="hidden" name="num_gpus" value="{{.NumGPUs}}">
+      <button type="submit" class="btn" hx-confirm="Rent offer {{.ID}} ({{.GPUName}} &times;{{.NumGPUs}}, ${{printf "%.3f" .DPHTotal}}/hr)? This starts billing.">rent</button>
+    </form>
+  </td>
+</tr>{{end}}
+</table>
+{{end}}
+<div class="cli-echo">$ <b>luncur gpu offers --gpu "RTX 4090"</b> &middot; $ <b>luncur gpu rent &lt;offer-id&gt;</b></div>
+<p class="mt-2 text-xs text-mut">idle auto-stop: set <span class="font-mono">gpu_idle_minutes</span> in settings — instances are destroyed after that many minutes without GPU pods.</p>
+{{end}}
 </div>
 {{template "foot" .}}
 {{end}}

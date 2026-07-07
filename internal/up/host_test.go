@@ -45,7 +45,7 @@ func (p *presentRunner) Run(name string, args ...string) ([]byte, error) {
 
 func TestEnsureK3sAgentSkippedWhenPresent(t *testing.T) {
 	p := &presentRunner{}
-	installed, err := EnsureK3sAgent(p, "https://1.2.3.4:6443", "tok")
+	installed, err := EnsureK3sAgent(p, "https://1.2.3.4:6443", "tok", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestEnsureK3sAgentSkippedWhenPresent(t *testing.T) {
 
 func TestEnsureK3sAgentInstallsWhenMissing(t *testing.T) {
 	f := &fakeRunner{}
-	installed, err := EnsureK3sAgent(f, "https://1.2.3.4:6443", "sekret")
+	installed, err := EnsureK3sAgent(f, "https://1.2.3.4:6443", "sekret", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestEnsureK3sAgentInstallsWhenMissing(t *testing.T) {
 
 func TestEnsureK3sAgentInstallErrorPropagates(t *testing.T) {
 	f := &failingRunner{}
-	installed, err := EnsureK3sAgent(f, "https://1.2.3.4:6443", "sekret")
+	installed, err := EnsureK3sAgent(f, "https://1.2.3.4:6443", "sekret", false)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -112,5 +112,68 @@ func TestWriteRegistriesYAML(t *testing.T) {
 	changed, err = WriteRegistriesYAML(p)
 	if err != nil || changed {
 		t.Fatalf("second write: changed=%v err=%v, want false nil", changed, err)
+	}
+}
+
+func TestEnsureK3sAgentGPUAddsNodeLabel(t *testing.T) {
+	f := &fakeRunner{}
+	installed, err := EnsureK3sAgent(f, "https://1.2.3.4:6443", "sekret", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !installed {
+		t.Fatal("expected install")
+	}
+	joined := fmt.Sprint(f.cmds)
+	for _, want := range []string{"INSTALL_K3S_EXEC", "--node-label luncur.dev/gpu=true"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("install command missing %q: %v", want, f.cmds)
+		}
+	}
+}
+
+// toolkitRunner fakes a host where nvidia-ctk is missing but apt-get exists.
+type toolkitRunner struct{ cmds [][]string }
+
+func (r *toolkitRunner) Run(name string, args ...string) ([]byte, error) {
+	r.cmds = append(r.cmds, append([]string{name}, args...))
+	if name == "which" && len(args) == 1 && args[0] == "nvidia-ctk" {
+		return nil, fmt.Errorf("not found")
+	}
+	return nil, nil
+}
+
+func TestEnsureNVIDIAToolkitInstallsViaApt(t *testing.T) {
+	r := &toolkitRunner{}
+	installed, err := EnsureNVIDIAToolkit(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !installed {
+		t.Fatal("expected install")
+	}
+	joined := fmt.Sprint(r.cmds)
+	if !strings.Contains(joined, "nvidia-container-toolkit") {
+		t.Fatalf("install command wrong: %v", r.cmds)
+	}
+}
+
+func TestEnsureNVIDIAToolkitSkippedWhenPresent(t *testing.T) {
+	p := &presentRunner{} // "which" always succeeds
+	installed, err := EnsureNVIDIAToolkit(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installed {
+		t.Fatal("expected no install when nvidia-ctk present")
+	}
+}
+
+func TestCheckNVIDIADriver(t *testing.T) {
+	if err := CheckNVIDIADriver(&presentRunner{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckNVIDIADriver(&failingRunner{}); err == nil {
+		t.Fatal("expected error when nvidia-smi fails")
 	}
 }

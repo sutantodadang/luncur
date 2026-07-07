@@ -10,9 +10,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 
+	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
@@ -65,6 +67,12 @@ func (s *server) appJSON(p store.Project, a store.App) map[string]any {
 		"schedule":        a.Schedule,
 		"webhook_enabled": a.WebhookSecret != nil,
 		"internal":        a.Internal,
+		"gpu":             a.GPUCount,
+		"s3_env":          a.InjectS3,
+	}
+	if a.Kind == "model" {
+		out["model_source"] = a.ModelSource
+		out["runtime"] = a.Runtime
 	}
 	if a.Internal {
 		out["internal_url"] = internalURLFor(a.Name, p.Namespace)
@@ -117,6 +125,10 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		Schedule  string `json:"schedule"`
 		BuildPath string `json:"build_path"`
 		Internal  bool   `json:"internal"`
+		GPU       int64  `json:"gpu"`
+		// Model apps only.
+		ModelSource string `json:"model_source"`
+		Runtime     string `json:"runtime"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -131,10 +143,27 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	var modelRT render.ModelRuntimeInfo
+	if req.Kind == "model" {
+		if req.GitURL != "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "model apps do not take a git url")
+			return
+		}
+		// Resolve now so a bad source/runtime combination fails before the
+		// app row exists.
+		modelRT, err = render.ResolveModelRuntime(req.ModelSource, req.Runtime, req.GPU)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+	}
 	var a store.App
-	if req.GitURL != "" {
+	switch {
+	case req.Kind == "model":
+		a, err = s.st.CreateModelApp(p.ID, req.Name, req.ModelSource, req.Runtime)
+	case req.GitURL != "":
 		a, err = s.st.CreateGitApp(p.ID, req.Name, req.Port, req.GitURL, req.GitBranch, req.Kind, req.Schedule)
-	} else {
+	default:
 		a, err = s.st.CreateApp(p.ID, req.Name, req.Port, req.Kind, req.Schedule)
 	}
 	if err != nil {
@@ -166,7 +195,34 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		}
 		a.Internal = true
 	}
-	writeJSON(w, http.StatusCreated, s.appJSON(p, a))
+	if req.GPU != 0 {
+		if err := s.st.SetGPU(a.ID, req.GPU); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "gpu: "+err.Error())
+			return
+		}
+		a.GPUCount = req.GPU
+	}
+	out := s.appJSON(p, a)
+	// Built-in runtime model apps deploy themselves at create: the runtime
+	// image is known, so within one apply the endpoint is on its way up.
+	if a.Kind == "model" && modelRT.Name != "custom" && s.kube != nil {
+		d, err := s.st.CreateDeployment(a.ID, "deploying", modelRT.Image, u.ID)
+		if err != nil {
+			log.Printf("create model deployment: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			if err := s.applyImageDeploy(ctx, p, a, d, modelRT.Image); err != nil {
+				log.Printf("deploy model %s: %v", a.Name, err)
+			}
+		}()
+		out["status"] = "deploying"
+		out["deployment_id"] = d.ID
+	}
+	writeJSON(w, http.StatusCreated, out)
 }
 
 func (s *server) handleListApps(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -274,6 +330,10 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 	}
 
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		if a.Kind == "model" {
+			writeError(w, http.StatusBadRequest, "kind_mismatch", "model apps do not build from source; runtime custom deploys a prebuilt image")
+			return
+		}
 		if s.src == nil {
 			writeError(w, http.StatusServiceUnavailable, "build_unavailable", "server has no data directory configured")
 			return
@@ -319,6 +379,27 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+
+	if a.Kind == "model" {
+		rt, err := render.ResolveModelRuntime(a.ModelSource, a.Runtime, a.GPUCount)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		image := req.Image
+		switch {
+		case rt.Name == "custom" && image == "":
+			writeError(w, http.StatusBadRequest, "bad_request", "runtime custom deploys with an image; pass one")
+			return
+		case rt.Name != "custom" && image != "":
+			writeError(w, http.StatusBadRequest, "bad_request", "built-in runtime model apps do not take an image (use runtime custom)")
+			return
+		case image == "":
+			image = rt.Image
+		}
+		s.deployImage(w, r, p, a, image)
 		return
 	}
 
@@ -586,6 +667,7 @@ type scaleChange struct {
 	Replicas *int
 	CPUMilli *int64
 	MemoryMB *int64
+	GPU      *int64
 }
 
 // scaleApp is the shared core of handleScaleApp and its UI twin
@@ -599,7 +681,7 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 	if a.Ejected {
 		return store.App{}, errAppEjected
 	}
-	if req.Replicas == nil && req.CPUMilli == nil && req.MemoryMB == nil {
+	if req.Replicas == nil && req.CPUMilli == nil && req.MemoryMB == nil && req.GPU == nil {
 		return store.App{}, &scaleReplicasError{fmt.Errorf("nothing to change")}
 	}
 	if a.Kind == "cron" && req.Replicas != nil {
@@ -642,6 +724,12 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 		}
 		a.CPUMilli, a.MemoryMB = cpu, mem
 	}
+	if req.GPU != nil {
+		if err := s.st.SetGPU(a.ID, *req.GPU); err != nil {
+			return store.App{}, &scaleReplicasError{err}
+		}
+		a.GPUCount = *req.GPU
+	}
 
 	if live {
 		if err := s.syncApp(ctx, p, a); err != nil {
@@ -666,6 +754,7 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		Replicas *int    `json:"replicas"`
 		CPU      *string `json:"cpu"`
 		Memory   *string `json:"memory"`
+		GPU      *int64  `json:"gpu"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -674,6 +763,7 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 
 	var req scaleChange
 	req.Replicas = body.Replicas
+	req.GPU = body.GPU
 	if body.CPU != nil {
 		cpu, err := parseCPUMilli(*body.CPU)
 		if err != nil {
@@ -718,5 +808,6 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		"replicas":  updated.Replicas,
 		"cpu_milli": updated.CPUMilli,
 		"memory_mb": updated.MemoryMB,
+		"gpu":       updated.GPUCount,
 	})
 }

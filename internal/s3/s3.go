@@ -104,3 +104,9 @@ func (c *Client) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 func sign(req *http.Request, accessKey, secretKey, region string, t time.Time) {
 	awssig.Sign(req, accessKey, secretKey, region, "s3", "UNSIGNED-PAYLOAD", t)
 }
+
+// CreateBucket creates the client's bucket (PUT on the bucket root). The
+// caller decides whether an already-exists error is fine.
+func (c *Client) CreateBucket(ctx context.Context) error {
+	return c.send(ctx, http.MethodPut, "", nil, 0)
+}

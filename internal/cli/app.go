@@ -18,6 +18,9 @@ func appCmd() *cobra.Command {
 	var kind, schedule string
 	var buildPath string
 	var internal bool
+	var gpu int64
+	var modelSource, runtime string
+	var cpu, memory string
 
 	create := &cobra.Command{
 		Use:   "create <name>",
@@ -29,13 +32,35 @@ func appCmd() *cobra.Command {
 				return err
 			}
 			var a client.AppInfo
-			if gitURL != "" {
-				a, err = c.CreateGitApp(project, args[0], port, gitURL, branch, kind, schedule, buildPath, internal)
-			} else {
-				a, err = c.CreateApp(project, args[0], port, kind, schedule, buildPath, internal)
+			switch {
+			case kind == "model":
+				a, err = c.CreateModelApp(project, args[0], modelSource, runtime, gpu)
+			case gitURL != "":
+				a, err = c.CreateGitApp(project, args[0], port, gitURL, branch, kind, schedule, buildPath, internal, gpu)
+			default:
+				a, err = c.CreateApp(project, args[0], port, kind, schedule, buildPath, internal, gpu)
 			}
 			if err != nil {
 				return err
+			}
+			if cpu != "" || memory != "" {
+				var cpuArg, memArg *string
+				if cpu != "" {
+					cpuArg = &cpu
+				}
+				if memory != "" {
+					memArg = &memory
+				}
+				if err := c.Scale(project, args[0], nil, cpuArg, memArg, nil); err != nil {
+					return err
+				}
+			}
+			if kind == "model" {
+				cmd.Printf("created %s (kind model, runtime %s)\n", a.Name, a.Runtime)
+				if a.Status != "" {
+					cmd.Printf("deploying — endpoint will serve OpenAI-compatible /v1 at %s\n", a.URL)
+				}
+				return nil
 			}
 			cmd.Printf("created %s (kind %s, port %d)\n", a.Name, a.Kind, a.Port)
 			return nil
@@ -53,6 +78,11 @@ func appCmd() *cobra.Command {
 	create.Flags().StringVar(&schedule, "schedule", "", "cron schedule, 5-field (cron kind only)")
 	create.Flags().StringVar(&buildPath, "path", "", "subdirectory to build (monorepo)")
 	create.Flags().BoolVar(&internal, "internal", false, "cluster-only web app: ClusterIP Service, no Ingress, no public URL (web kind only)")
+	create.Flags().Int64Var(&gpu, "gpu", 0, "number of nvidia.com/gpu devices (schedules on GPU nodes only)")
+	create.Flags().StringVar(&modelSource, "source", "", "model source: hf:<org>/<name>[/<file>] or s3:<key> (model kind only)")
+	create.Flags().StringVar(&runtime, "runtime", "auto", "model runtime: auto, llamacpp, vllm, or custom (model kind only)")
+	create.Flags().StringVar(&cpu, "cpu", "", "CPU request+limit applied after create (e.g. 4000m, 4)")
+	create.Flags().StringVar(&memory, "memory", "", "memory request+limit applied after create (e.g. 8192, 8Gi)")
 
 	var listProject string
 	list := &cobra.Command{
@@ -134,6 +164,6 @@ func appCmd() *cobra.Command {
 	raw.Flags().StringVar(&rawProject, "project", "", "project name")
 	raw.MarkFlagRequired("project")
 
-	cmd.AddCommand(create, list, info, raw, ejectCmd(), adoptCmd())
+	cmd.AddCommand(create, list, info, raw, ejectCmd(), adoptCmd(), appS3EnvCmd())
 	return cmd
 }

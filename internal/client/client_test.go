@@ -78,7 +78,7 @@ func TestClientProjectAppEnvRawFlow(t *testing.T) {
 	if _, err := c.CreateProject("web"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.CreateApp("web", "api", 3000, "web", "", "", false); err != nil {
+	if _, err := c.CreateApp("web", "api", 3000, "web", "", "", false, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.EnvSet("web", "api", "K", "v"); err != nil {
