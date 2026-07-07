@@ -2,18 +2,17 @@
 // wires them into the cluster as K3s agents. vast.ai is the first provider;
 // the exported shapes (Offer, Instance, RentSpec) are provider-neutral so a
 // Nebius client can slot in later without touching callers.
-//
-// ponytail: single concrete VastAI type, no Provider interface yet — add the
-// interface when the second provider actually lands.
 package gpucloud
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -42,26 +41,20 @@ type Offer struct {
 	Reliability float64 `json:"reliability"`
 }
 
-// Instance is one rented contract as vast.ai reports it.
+// Instance is one rented contract as reported by its provider. Ref is the
+// provider-native id as a string (vast.ai decodes its numeric contract id
+// into this field).
 type Instance struct {
-	ID       int64   `json:"id"`
-	Label    string  `json:"label"`
-	Status   string  `json:"actual_status"`
-	GPUName  string  `json:"gpu_name"`
-	NumGPUs  int     `json:"num_gpus"`
-	DPHTotal float64 `json:"dph_total"`
+	Ref      string
+	Label    string
+	Status   string
+	GPUName  string
+	NumGPUs  int
+	DPHTotal float64
 }
 
-// RentSpec configures one instance create (accepting an "ask" contract).
-// Onstart runs at boot inside the VM — the caller injects the K3s agent
-// join script there.
-type RentSpec struct {
-	OfferID int64
-	Image   string
-	DiskGB  int
-	Label   string
-	Onstart string
-}
+// Name identifies this provider in stored records and logs.
+func (v *VastAI) Name() string { return "vastai" }
 
 func (v *VastAI) base() string {
 	if v.BaseURL != "" {
@@ -154,9 +147,12 @@ func (v *VastAI) SearchOffers(ctx context.Context, gpuName string, numGPUs, limi
 	return out.Offers, nil
 }
 
-// Rent accepts offer OfferID as a VM instance and returns the new contract
-// (instance) id.
-func (v *VastAI) Rent(ctx context.Context, spec RentSpec) (int64, error) {
+// Rent accepts spec.VastOfferID as a VM instance and returns the new
+// contract (instance) id as a string.
+func (v *VastAI) Rent(ctx context.Context, spec RentSpec) (string, error) {
+	if spec.VastOfferID == 0 {
+		return "", errors.New("vast.ai rent needs an offer id")
+	}
 	body := map[string]any{
 		"image":   spec.Image,
 		"disk":    spec.DiskGB,
@@ -170,28 +166,51 @@ func (v *VastAI) Rent(ctx context.Context, spec RentSpec) (int64, error) {
 		Error       string `json:"error"`
 		Msg         string `json:"msg"`
 	}
-	if err := v.do(ctx, http.MethodPut, fmt.Sprintf("/asks/%d/", spec.OfferID), body, &out); err != nil {
-		return 0, err
+	if err := v.do(ctx, http.MethodPut, fmt.Sprintf("/asks/%d/", spec.VastOfferID), body, &out); err != nil {
+		return "", err
 	}
 	if !out.Success {
-		return 0, fmt.Errorf("vast.ai rent: %s", firstNonEmpty(out.Msg, out.Error, "unknown error"))
+		return "", fmt.Errorf("vast.ai rent: %s", firstNonEmpty(out.Msg, out.Error, "unknown error"))
 	}
-	return out.NewContract, nil
+	return strconv.FormatInt(out.NewContract, 10), nil
 }
 
 // List returns the account's rented instances.
 func (v *VastAI) List(ctx context.Context) ([]Instance, error) {
 	var out struct {
-		Instances []Instance `json:"instances"`
+		Instances []struct {
+			ID       int64   `json:"id"`
+			Label    string  `json:"label"`
+			Status   string  `json:"actual_status"`
+			GPUName  string  `json:"gpu_name"`
+			NumGPUs  int     `json:"num_gpus"`
+			DPHTotal float64 `json:"dph_total"`
+		} `json:"instances"`
 	}
 	if err := v.do(ctx, http.MethodGet, "/instances/", nil, &out); err != nil {
 		return nil, err
 	}
-	return out.Instances, nil
+	instances := make([]Instance, 0, len(out.Instances))
+	for _, i := range out.Instances {
+		instances = append(instances, Instance{
+			Ref:      strconv.FormatInt(i.ID, 10),
+			Label:    i.Label,
+			Status:   i.Status,
+			GPUName:  i.GPUName,
+			NumGPUs:  i.NumGPUs,
+			DPHTotal: i.DPHTotal,
+		})
+	}
+	return instances, nil
 }
 
-// Destroy permanently deletes an instance (billing stops; data is gone).
-func (v *VastAI) Destroy(ctx context.Context, id int64) error {
+// Destroy permanently deletes an instance (billing stops; data is gone). ref
+// must parse as vast.ai's numeric contract id.
+func (v *VastAI) Destroy(ctx context.Context, ref string) error {
+	id, err := strconv.ParseInt(ref, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid vast.ai ref %q", ref)
+	}
 	var out struct {
 		Success bool   `json:"success"`
 		Error   string `json:"error"`

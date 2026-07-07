@@ -40,7 +40,7 @@ func (s *server) handleUINodes(w http.ResponseWriter, r *http.Request, u store.U
 		live := map[string]gpucloud.Instance{}
 		if ins, err := v.List(r.Context()); err == nil {
 			for _, i := range ins {
-				live[strconv.FormatInt(i.ID, 10)] = i
+				live[i.Ref] = i
 			}
 		}
 		for _, g := range instances {

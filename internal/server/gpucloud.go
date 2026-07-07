@@ -202,20 +202,20 @@ func (s *server) rentGPU(ctx context.Context, offerID int64, diskGB int, gpuName
 		return store.GPUInstance{}, err
 	}
 	label := fmt.Sprintf("luncur-gpu-%d", time.Now().Unix())
-	extID, err := v.Rent(ctx, gpucloud.RentSpec{
-		OfferID: offerID,
-		Image:   image,
-		DiskGB:  diskGB,
-		Label:   label,
-		Onstart: s.joinOnstart(label, token),
+	ref, err := v.Rent(ctx, gpucloud.RentSpec{
+		VastOfferID: offerID,
+		Image:       image,
+		DiskGB:      diskGB,
+		Label:       label,
+		Onstart:     s.joinOnstart(label, token),
 	})
 	if err != nil {
 		return store.GPUInstance{}, err
 	}
-	g, err := s.st.CreateGPUInstance("vastai", strconv.FormatInt(extID, 10), label, gpuName, numGPUs)
+	g, err := s.st.CreateGPUInstance("vastai", ref, label, gpuName, numGPUs)
 	if err != nil {
 		// The rent went through; losing the row must not hide the contract.
-		return store.GPUInstance{}, fmt.Errorf("rented (contract %d) but failed to record it: %w", extID, err)
+		return store.GPUInstance{}, fmt.Errorf("rented (contract %s) but failed to record it: %w", ref, err)
 	}
 	return g, nil
 }
@@ -232,7 +232,7 @@ func (s *server) handleListGPUInstances(w http.ResponseWriter, r *http.Request, 
 	if v, err := s.vast(); err == nil {
 		if ins, err := v.List(r.Context()); err == nil {
 			for _, i := range ins {
-				live[strconv.FormatInt(i.ID, 10)] = i
+				live[i.Ref] = i
 			}
 		} else {
 			log.Printf("vast list: %v", err)
@@ -285,11 +285,7 @@ func (s *server) destroyGPUInstance(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	extID, err := strconv.ParseInt(g.ExternalRef, 10, 64)
-	if err != nil {
-		return fmt.Errorf("invalid vast.ai external ref %q: %w", g.ExternalRef, err)
-	}
-	if err := v.Destroy(ctx, extID); err != nil {
+	if err := v.Destroy(ctx, g.ExternalRef); err != nil {
 		return err
 	}
 	if err := s.st.MarkGPUInstanceDestroyed(g.ID); err != nil {
@@ -354,12 +350,7 @@ func (s *server) runGPUIdleLoop(ctx context.Context) {
 			continue
 		}
 		for _, g := range list {
-			extID, err := strconv.ParseInt(g.ExternalRef, 10, 64)
-			if err != nil {
-				log.Printf("gpu idle destroy %s: invalid external ref %q: %v", g.Label, g.ExternalRef, err)
-				continue
-			}
-			if err := v.Destroy(ctx, extID); err != nil {
+			if err := v.Destroy(ctx, g.ExternalRef); err != nil {
 				log.Printf("gpu idle destroy %s: %v", g.Label, err)
 				continue
 			}

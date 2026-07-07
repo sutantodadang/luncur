@@ -52,29 +52,49 @@ func TestVastAIFlow(t *testing.T) {
 		}
 	}
 
-	id, err := v.Rent(ctx, RentSpec{OfferID: 42, Image: "ubuntu:22.04", DiskGB: 40, Label: "x", Onstart: "#!/bin/sh"})
+	ref, err := v.Rent(ctx, RentSpec{VastOfferID: 42, Image: "ubuntu:22.04", DiskGB: 40, Label: "x", Onstart: "#!/bin/sh"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != 777 || gotRentPath != "/asks/42/" {
-		t.Fatalf("rent id=%d path=%s", id, gotRentPath)
+	if ref != "777" || gotRentPath != "/asks/42/" {
+		t.Fatalf("rent ref=%q path=%s", ref, gotRentPath)
 	}
 
 	list, err := v.List(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].Status != "running" {
+	if len(list) != 1 || list[0].Status != "running" || list[0].Ref != "777" {
 		t.Fatalf("list = %+v", list)
 	}
 
-	if err := v.Destroy(ctx, 777); err != nil {
+	if err := v.Destroy(ctx, "777"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Error body surfaces msg.
-	if err := v.Destroy(ctx, 1); err == nil || !contains(err.Error(), "nope") {
+	if err := v.Destroy(ctx, "1"); err == nil || !contains(err.Error(), "nope") {
 		t.Fatalf("want vast error with msg, got %v", err)
+	}
+
+	// Rent without an offer id fails fast, no HTTP call.
+	if _, err := v.Rent(ctx, RentSpec{}); err == nil {
+		t.Fatal("want error for missing offer id")
+	}
+
+	// A non-numeric ref fails to parse and never hits the network.
+	reqCount := 0
+	countSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqCount++
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer countSrv.Close()
+	vc := &VastAI{APIKey: "k123", BaseURL: countSrv.URL}
+	if err := vc.Destroy(ctx, "notanumber"); err == nil {
+		t.Fatal("want error for non-numeric ref")
+	}
+	if reqCount != 0 {
+		t.Fatalf("want zero requests for invalid ref, got %d", reqCount)
 	}
 }
 
