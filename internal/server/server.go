@@ -184,6 +184,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/projects/{project}", s.adminOnly(s.handleDeleteProject))
 	mux.HandleFunc("POST /v1/projects/{project}/members", s.adminOnly(s.handleAddMember))
 	mux.HandleFunc("DELETE /v1/projects/{project}/members/{email}", s.adminOnly(s.handleRemoveMember))
+	mux.HandleFunc("PUT /v1/projects/{project}/gpu-quota", s.adminOnly(s.handleSetGPUQuota))
 	mux.HandleFunc("POST /v1/projects/{project}/apps", s.authed(s.handleCreateApp))
 	mux.HandleFunc("GET /v1/projects/{project}/apps", s.authed(s.handleListApps))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}", s.authed(s.handleGetApp))

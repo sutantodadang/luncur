@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/cobra"
 )
@@ -132,6 +133,31 @@ func projectCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(create, list, addMember, rename, rm, removeMember, projectS3Cmd())
+	gpuQuota := &cobra.Command{
+		Use:   "gpu-quota <project> <n>",
+		Short: "Cap total GPUs the project's apps may request (0 = unlimited, admin)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			n, err := strconv.ParseInt(args[1], 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid quota %q", args[1])
+			}
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			if err := c.SetProjectGPUQuota(args[0], n); err != nil {
+				return err
+			}
+			if n == 0 {
+				cmd.Printf("gpu quota cleared for %s (unlimited)\n", args[0])
+			} else {
+				cmd.Printf("gpu quota for %s: %d\n", args[0], n)
+			}
+			return nil
+		},
+	}
+
+	cmd.AddCommand(create, list, addMember, rename, rm, removeMember, projectS3Cmd(), gpuQuota)
 	return cmd
 }

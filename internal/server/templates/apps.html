@@ -75,6 +75,19 @@ function uiPresetChange(preset) {
 </script>
 </div>
 
+{{if .IsAdmin}}
+<div class="card mb-6">
+<h2>GPU quota</h2>
+<form method="post" action="/ui/projects/{{.Project.Name}}/gpu-quota" class="flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input w-24" type="number" name="quota" min="0" value="{{.GPUQuota}}">
+  <button type="submit" class="btn-ghost">set quota</button>
+  <span class="text-xs text-mut">total GPUs this project's apps may request; 0 = unlimited</span>
+</form>
+<div class="cli-echo">$ <b>luncur project gpu-quota {{.Project.Name}} &lt;n&gt;</b></div>
+</div>
+{{end}}
+
 {{if not .Apps}}<p class="mb-1 text-sm text-mut">No apps yet. Create one above or with <code>luncur app create</code>.</p><div class="cli-echo mb-6">$ <b>luncur app create &lt;name&gt;</b></div>{{end}}
 <div class="mb-6 grid gap-4 sm:grid-cols-2">
 {{range .Apps}}

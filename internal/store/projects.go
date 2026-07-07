@@ -19,6 +19,9 @@ type Project struct {
 	ID        int64
 	Name      string
 	Namespace string
+	// GPUQuota caps the total nvidia.com/gpu devices the project's apps may
+	// request. 0 means unlimited (today's behavior).
+	GPUQuota int64
 }
 
 func (s *Store) CreateProject(name string) (Project, error) {
@@ -82,8 +85,8 @@ func (s *Store) DeleteProject(id int64) error {
 func (s *Store) GetProject(name string) (Project, error) {
 	var p Project
 	err := s.db.QueryRow(
-		`SELECT id, name, k8s_namespace FROM projects WHERE name = ?`, name,
-	).Scan(&p.ID, &p.Name, &p.Namespace)
+		`SELECT id, name, k8s_namespace, gpu_quota FROM projects WHERE name = ?`, name,
+	).Scan(&p.ID, &p.Name, &p.Namespace, &p.GPUQuota)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -95,8 +98,8 @@ func (s *Store) GetProject(name string) (Project, error) {
 func (s *Store) GetProjectByID(id int64) (Project, error) {
 	var p Project
 	err := s.db.QueryRow(
-		`SELECT id, name, k8s_namespace FROM projects WHERE id = ?`, id,
-	).Scan(&p.ID, &p.Name, &p.Namespace)
+		`SELECT id, name, k8s_namespace, gpu_quota FROM projects WHERE id = ?`, id,
+	).Scan(&p.ID, &p.Name, &p.Namespace, &p.GPUQuota)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -104,7 +107,7 @@ func (s *Store) GetProjectByID(id int64) (Project, error) {
 }
 
 func (s *Store) ListProjects() ([]Project, error) {
-	rows, err := s.db.Query(`SELECT id, name, k8s_namespace FROM projects ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id, name, k8s_namespace, gpu_quota FROM projects ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -112,10 +115,40 @@ func (s *Store) ListProjects() ([]Project, error) {
 	var out []Project
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.Namespace); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Namespace, &p.GPUQuota); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// SetProjectGPUQuota sets the project's GPU budget. 0 means unlimited.
+func (s *Store) SetProjectGPUQuota(projectID, quota int64) error {
+	if quota < 0 {
+		return fmt.Errorf("gpu quota must be >= 0")
+	}
+	res, err := s.db.Exec(`UPDATE projects SET gpu_quota = ? WHERE id = ?`, quota, projectID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SumProjectGPURequests totals the GPUs the project's apps would request if
+// all ran at once: gpu × replicas for web/worker/job, gpu × 1 for cron.
+// UX estimate only — the namespace ResourceQuota is the hard enforcement.
+func (s *Store) SumProjectGPURequests(projectID int64) (int64, error) {
+	var sum int64
+	err := s.db.QueryRow(
+		`SELECT COALESCE(SUM(gpu_count * CASE WHEN kind = 'cron' THEN 1 ELSE MAX(replicas, 1) END), 0)
+		 FROM apps WHERE project_id = ?`, projectID).Scan(&sum)
+	return sum, err
 }
