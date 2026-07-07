@@ -1,7 +1,9 @@
 package server
 
 import (
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -52,5 +54,49 @@ func TestCreateAppOverGPUBudget(t *testing.T) {
 	body = mustReadBody(t, resp)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("within-budget create: %d %s", resp.StatusCode, body)
+	}
+}
+
+// TestUIGPUQuota is handleUIGPUQuota's twin to TestGPUQuotaEndpoint: an admin
+// sets the quota through the project page's form (303 back to that page),
+// and the reloaded page then shows the control pre-filled with the new
+// value (mirrors TestUIScaleResourcesPersistAndPrefill's prefill check).
+func TestUIGPUQuota(t *testing.T) {
+	srv, st := testServer(t) // no kube
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p1"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	form := url.Values{"quota": {"2"}}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/p1/gpu-quota", csrfCk, ck, form)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("ui set quota: want 303, got %d", resp.StatusCode)
+	}
+
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/p1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	page, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer page.Body.Close()
+	body, err := io.ReadAll(page.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := string(body)
+	if !strings.Contains(b, "gpu-quota") || !strings.Contains(b, `value="2"`) {
+		t.Fatalf("quota control missing: %s", b)
 	}
 }

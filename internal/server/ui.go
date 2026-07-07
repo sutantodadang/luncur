@@ -64,6 +64,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/delete", s.uiPage(s.handleUIProjectDelete))
 	mux.HandleFunc("GET /ui/projects/{project}", s.uiPage(s.handleUIApps))
 	mux.HandleFunc("POST /ui/projects/{project}/apps", s.uiPage(s.handleUICreateApp))
+	mux.HandleFunc("POST /ui/projects/{project}/gpu-quota", s.uiPage(s.handleUIGPUQuota))
 	mux.HandleFunc("POST /ui/projects/{project}/addons/upgrade", s.uiPage(s.handleUIAddonUpgrade))
 	mux.HandleFunc("GET /ui/projects/{project}/addons/url", s.uiPage(s.handleUIAddonURL))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}", s.uiPage(s.handleUIApp))
@@ -619,7 +620,35 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	s.renderPage(w, "apps.html", map[string]any{
 		"User": u, "Project": p, "Apps": rows, "Addons": addons, "Members": members, "Banner": banner,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin", "PErrNote": perrNote,
+		"GPUQuota": p.GPUQuota,
 	})
+}
+
+// handleUIGPUQuota is setGPUQuota's UI twin: same shared store+kube core as
+// handleSetGPUQuota, form-POST instead of JSON, redirect back to the
+// project page with ?err= on failure (mirrors handleUIProjectRename).
+func (s *server) handleUIGPUQuota(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !s.uiAdmin(w, u) {
+		return
+	}
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	n, err := strconv.ParseInt(r.PostFormValue("quota"), 10, 64)
+	if err != nil {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"?err="+url.QueryEscape("invalid gpu quota"), http.StatusSeeOther)
+		return
+	}
+	if err := s.setGPUQuota(r.Context(), p, n); err != nil {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
 // handleUICreateApp is handleCreateApp's UI twin: same store CreateApp/
