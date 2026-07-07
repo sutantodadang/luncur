@@ -632,6 +632,23 @@ Honest constraints, stated up front:
 The app page in the web UI has a matching Volumes section (add form,
 per-row remove with a "purge data" checkbox), hidden for cron apps.
 
+### Per-project GPU quota
+
+```sh
+luncur project gpu-quota myproj 4     # cap the project's apps at 4 GPUs total
+luncur project gpu-quota myproj 0     # clear the cap (unlimited)
+```
+
+Caps the total `nvidia.com/gpu` devices a project's apps may request.
+Enforcement is a Kubernetes `ResourceQuota` in the project namespace, so it
+is exact at scheduling time; luncur additionally rejects obvious over-budget
+creates and scale-ups with a friendly error before they reach the cluster.
+The budget counts `gpu × replicas` for `web`/`worker`/`job` apps and `gpu × 1`
+for `cron`. `0` means unlimited (the default). Lowering the quota below
+current usage does not evict running pods — new pods are rejected until usage
+drops, which is standard Kubernetes `ResourceQuota` behavior. The project page
+in the web UI has a matching GPU quota control (admin only).
+
 ### Backups
 
 `luncur backup create` (admin) snapshots luncur's whole state into a
