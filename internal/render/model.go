@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -34,9 +35,29 @@ type ModelRuntimeInfo struct {
 	Port  int32
 }
 
+// modelPartRe constrains model source components to a conservative allowlist.
+// The parts flow into container commands and URLs; anything outside this set
+// (shell metacharacters, whitespace, quotes) is rejected before an app row is
+// ever persisted. No leading '/', and ".." is blocked separately to stop path
+// traversal within the bucket/repo.
+var modelPartRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
+func validModelPart(what, s string) error {
+	if !modelPartRe.MatchString(s) {
+		return fmt.Errorf("%s %q has invalid characters (allowed: letters, digits, . _ - /)", what, s)
+	}
+	if strings.HasPrefix(s, "/") || strings.Contains(s, "..") {
+		return fmt.Errorf("%s %q must not start with '/' or contain '..'", what, s)
+	}
+	return nil
+}
+
 // ParseModelSource splits a model source into its scheme and parts.
 // "hf:org/name[/path/to/file]" -> ("hf", "org/name", "path/to/file").
 // "s3:key/in/bucket"           -> ("s3", "", "key/in/bucket").
+// Every returned part is validated against a strict allowlist so callers can
+// safely interpolate them into URLs; untrusted values still reach containers
+// via env vars, never as shell text (see modelDownloadInit).
 func ParseModelSource(source string) (scheme, repo, file string, err error) {
 	switch {
 	case strings.HasPrefix(source, "hf:"):
@@ -49,11 +70,22 @@ func ParseModelSource(source string) (scheme, repo, file string, err error) {
 		if len(parts) == 3 {
 			file = parts[2]
 		}
+		if err := validModelPart("hf repo", repo); err != nil {
+			return "", "", "", err
+		}
+		if file != "" {
+			if err := validModelPart("hf file", file); err != nil {
+				return "", "", "", err
+			}
+		}
 		return "hf", repo, file, nil
 	case strings.HasPrefix(source, "s3:"):
 		key := strings.TrimPrefix(source, "s3:")
 		if key == "" {
 			return "", "", "", fmt.Errorf("s3 source must be s3:<key>, got %q", source)
+		}
+		if err := validModelPart("s3 key", key); err != nil {
+			return "", "", "", err
 		}
 		return "s3", "", key, nil
 	default:
@@ -109,22 +141,28 @@ func modelDownloadInit(in Input, scheme, repo, file, rtName string, hasEnv bool)
 			return nil
 		}
 		base := path.Base(file)
+		// The URL is built from allowlisted parts (ParseModelSource) but still
+		// passed via env, never as shell text, so nothing user-derived is ever
+		// parsed by sh. dest uses the const ModelDir + path.Base of a validated
+		// file, so it is safe to interpolate.
 		url := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", repo, file)
+		dest := ModelDir + "/" + base
 		c = &corev1.Container{
-			Name:  "model-download",
-			Image: curlImage,
-			Command: []string{"sh", "-c", fmt.Sprintf(
-				"test -f %s/%s || curl -fL --retry 3 -o %s/%s %q",
-				ModelDir, base, ModelDir, base, url)},
+			Name:    "model-download",
+			Image:   curlImage,
+			Command: []string{"sh", "-c", `test -f "` + dest + `" || curl -fL --retry 3 -o "` + dest + `" "$MODEL_URL"`},
+			Env:     []corev1.EnvVar{{Name: "MODEL_URL", Value: url}},
 		}
 	case "s3":
 		base := path.Base(file)
+		dest := ModelDir + "/" + base
+		// The S3 key reaches the container as an env var referenced with quotes;
+		// it is never spliced into the shell command string.
 		c = &corev1.Container{
 			Name:  "model-download",
 			Image: awsCLIImage,
-			Command: []string{"sh", "-c", fmt.Sprintf(
-				`test -f %s/%s || { export AWS_ACCESS_KEY_ID="$LUNCUR_S3_KEY" AWS_SECRET_ACCESS_KEY="$LUNCUR_S3_SECRET"; aws s3 cp "s3://$LUNCUR_S3_BUCKET/%s" %s/%s --endpoint-url "$LUNCUR_S3_ENDPOINT"; }`,
-				ModelDir, base, file, ModelDir, base)},
+			Command: []string{"sh", "-c", `test -f "` + dest + `" || { export AWS_ACCESS_KEY_ID="$LUNCUR_S3_KEY" AWS_SECRET_ACCESS_KEY="$LUNCUR_S3_SECRET"; aws s3 cp "s3://$LUNCUR_S3_BUCKET/$MODEL_KEY" "` + dest + `" --endpoint-url "$LUNCUR_S3_ENDPOINT"; }`},
+			Env:     []corev1.EnvVar{{Name: "MODEL_KEY", Value: file}},
 		}
 	}
 	if c == nil {

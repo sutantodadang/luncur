@@ -10,6 +10,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/sutantodadang/luncur/internal/render"
@@ -94,4 +95,28 @@ func Objects(namespace string) ([]render.Object, error) {
 		objs = append(objs, render.Object{Kind: o.kind, JSON: b})
 	}
 	return objs, nil
+}
+
+// QuotaObjectName is the ResourceQuota luncur manages in each project
+// namespace when a GPU quota is set.
+const QuotaObjectName = "luncur-gpu"
+
+// QuotaObject renders the project-namespace ResourceQuota that caps total
+// requested nvidia.com/gpu devices at n. K8s enforces it at pod admission;
+// luncur's static validation only exists for friendlier errors.
+func QuotaObject(namespace string, n int64) (render.Object, error) {
+	rq := corev1.ResourceQuota{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ResourceQuota"},
+		ObjectMeta: metav1.ObjectMeta{Name: QuotaObjectName, Namespace: namespace},
+		Spec: corev1.ResourceQuotaSpec{
+			Hard: corev1.ResourceList{
+				corev1.ResourceName("requests." + render.GPUResource): *resource.NewQuantity(n, resource.DecimalSI),
+			},
+		},
+	}
+	b, err := json.Marshal(rq)
+	if err != nil {
+		return render.Object{}, err
+	}
+	return render.Object{Kind: "ResourceQuota", JSON: b}, nil
 }

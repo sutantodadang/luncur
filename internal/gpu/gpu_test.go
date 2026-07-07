@@ -35,3 +35,19 @@ func TestObjects(t *testing.T) {
 		}
 	}
 }
+
+func TestQuotaObject(t *testing.T) {
+	obj, err := QuotaObject("proj-x", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obj.Kind != "ResourceQuota" {
+		t.Fatalf("kind = %s", obj.Kind)
+	}
+	s := string(obj.JSON)
+	for _, want := range []string{`"name":"luncur-gpu"`, `"namespace":"proj-x"`, `"requests.nvidia.com/gpu":"3"`} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %s in %s", want, s)
+		}
+	}
+}

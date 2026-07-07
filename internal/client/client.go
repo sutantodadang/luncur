@@ -1186,3 +1186,8 @@ func (c *Client) ListGPUInstances() ([]GPUInstance, error) {
 func (c *Client) DestroyGPUInstance(id int64) error {
 	return c.do("DELETE", fmt.Sprintf("/v1/gpu/instances/%d", id), nil, nil)
 }
+
+// SetProjectGPUQuota sets a project's GPU budget; 0 = unlimited.
+func (c *Client) SetProjectGPUQuota(project string, quota int64) error {
+	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/gpu-quota", map[string]int64{"quota": quota}, nil)
+}

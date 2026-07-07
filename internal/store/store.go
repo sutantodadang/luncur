@@ -79,6 +79,7 @@ func migrate(db *sql.DB) error {
 		{"apps", "model_source", `ALTER TABLE apps ADD COLUMN model_source TEXT NOT NULL DEFAULT ''`},
 		{"apps", "runtime", `ALTER TABLE apps ADD COLUMN runtime TEXT NOT NULL DEFAULT ''`},
 		{"gpu_instances", "external_ref", `ALTER TABLE gpu_instances ADD COLUMN external_ref TEXT NOT NULL DEFAULT ''`},
+		{"projects", "gpu_quota", `ALTER TABLE projects ADD COLUMN gpu_quota INTEGER NOT NULL DEFAULT 0`},
 	} {
 		var n int
 		if err := db.QueryRow(
