@@ -83,7 +83,7 @@ func (s *server) startRun(ctx context.Context, p store.Project, a store.App) (st
 		return store.JobRun{}, fmt.Errorf("latest deployment: %w", err)
 	}
 
-	run, err := s.st.CreateJobRun(a.ID)
+	run, err := s.st.CreateJobRun(a.ID, 1, "")
 	if err != nil {
 		return store.JobRun{}, fmt.Errorf("create job run: %w", err)
 	}

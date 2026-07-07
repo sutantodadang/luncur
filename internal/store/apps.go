@@ -53,6 +53,50 @@ type App struct {
 	// Runtime is the model serving runtime: ""/auto (resolved at render),
 	// llamacpp, vllm, or custom. Only meaningful for kind "model".
 	Runtime string
+	// Nodes is the default number of pods a kind=job run spans. 1 (the
+	// default) renders the classic single-pod Job; a run may override it.
+	Nodes int
+	// Framework optionally names a rendezvous env preset applied on top of
+	// the LUNCUR_* contract for multi-node runs: "torchrun" or "torch".
+	// "" means the raw contract only. Keep in sync with
+	// render.TrainFrameworks / render's framework validation.
+	Framework string
+}
+
+// TrainFrameworks are the valid values for apps.framework / job_runs.framework.
+// "" = raw LUNCUR_* env contract only. Order matters for the error message.
+// Keep in sync with render.TrainFrameworks.
+var TrainFrameworks = []string{"torchrun", "torch"}
+
+func validFramework(f string) bool {
+	if f == "" {
+		return true
+	}
+	for _, v := range TrainFrameworks {
+		if f == v {
+			return true
+		}
+	}
+	return false
+}
+
+// SetAppTraining sets a job app's default multi-node run shape. The server
+// layer enforces kind=job; the store only validates values.
+func (s *Store) SetAppTraining(appID int64, nodes int, framework string) error {
+	if nodes < 1 {
+		return errors.New("nodes must be >= 1")
+	}
+	if !validFramework(framework) {
+		return fmt.Errorf("unknown framework %q (valid: %s)", framework, strings.Join(TrainFrameworks, ", "))
+	}
+	res, err := s.db.Exec(`UPDATE apps SET nodes = ?, framework = ? WHERE id = ?`, nodes, framework, appID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // normalizeAppKind defaults an empty kind to "web" for back-compat with
@@ -134,7 +178,7 @@ func (s *Store) CreateApp(projectID int64, name string, port int, kind, schedule
 	}
 	return App{
 		ID: id, ProjectID: projectID, Name: name, Port: port, Replicas: 1,
-		SourceType: "tarball", Kind: kind, Schedule: schedule,
+		SourceType: "tarball", Kind: kind, Schedule: schedule, Nodes: 1,
 	}, nil
 }
 
@@ -174,7 +218,7 @@ func (s *Store) CreateModelApp(projectID int64, name, source, runtime string) (A
 	}
 	return App{
 		ID: id, ProjectID: projectID, Name: name, Replicas: 1,
-		SourceType: "tarball", Kind: "model", ModelSource: source, Runtime: runtime,
+		SourceType: "tarball", Kind: "model", ModelSource: source, Runtime: runtime, Nodes: 1,
 	}, nil
 }
 
@@ -208,7 +252,7 @@ func (s *Store) CreateGitApp(projectID int64, name string, port int, gitURL, git
 	}
 	return App{
 		ID: id, ProjectID: projectID, Name: name, Port: port, Replicas: 1,
-		SourceType: "git", GitURL: gitURL, GitBranch: gitBranch, Kind: kind, Schedule: schedule,
+		SourceType: "git", GitURL: gitURL, GitBranch: gitBranch, Kind: kind, Schedule: schedule, Nodes: 1,
 	}, nil
 }
 
@@ -216,9 +260,9 @@ func (s *Store) GetApp(projectID int64, name string) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime FROM apps WHERE project_id = ? AND name = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework FROM apps WHERE project_id = ? AND name = ?`,
 		projectID, name,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -237,9 +281,9 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime FROM apps WHERE id = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework FROM apps WHERE id = ?`,
 		id,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -253,7 +297,7 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 
 func (s *Store) ListApps(projectID int64) ([]App, error) {
 	rows, err := s.db.Query(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime FROM apps WHERE project_id = ? ORDER BY name`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework FROM apps WHERE project_id = ? ORDER BY name`,
 		projectID,
 	)
 	if err != nil {
@@ -264,7 +308,7 @@ func (s *Store) ListApps(projectID int64) ([]App, error) {
 	for rows.Next() {
 		var a App
 		var gitURL, gitBranch sql.NullString
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework); err != nil {
 			return nil, err
 		}
 		a.GitURL = gitURL.String

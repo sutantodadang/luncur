@@ -12,14 +12,22 @@ type JobRun struct {
 	ID         int64
 	AppID      int64
 	Status     string // running|succeeded|failed
+	Nodes      int
+	Framework  string
 	ExitCode   sql.NullInt64
 	StartedAt  string
 	FinishedAt sql.NullString
 }
 
-// CreateJobRun records the start of a run (status "running").
-func (s *Store) CreateJobRun(appID int64) (JobRun, error) {
-	res, err := s.db.Exec(`INSERT INTO job_runs (app_id, status) VALUES (?, 'running')`, appID)
+// CreateJobRun records the start of a run (status "running") with the node
+// count and framework preset the run actually uses.
+func (s *Store) CreateJobRun(appID int64, nodes int, framework string) (JobRun, error) {
+	if nodes < 1 {
+		nodes = 1
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO job_runs (app_id, status, nodes, framework) VALUES (?, 'running', ?, ?)`,
+		appID, nodes, framework)
 	if err != nil {
 		return JobRun{}, err
 	}
@@ -30,11 +38,11 @@ func (s *Store) CreateJobRun(appID int64) (JobRun, error) {
 	return s.GetJobRun(id)
 }
 
-const jobRunCols = `id, app_id, status, exit_code, started_at, finished_at`
+const jobRunCols = `id, app_id, status, nodes, framework, exit_code, started_at, finished_at`
 
 func scanJobRun(row *sql.Row) (JobRun, error) {
 	var r JobRun
-	err := row.Scan(&r.ID, &r.AppID, &r.Status, &r.ExitCode, &r.StartedAt, &r.FinishedAt)
+	err := row.Scan(&r.ID, &r.AppID, &r.Status, &r.Nodes, &r.Framework, &r.ExitCode, &r.StartedAt, &r.FinishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return JobRun{}, ErrNotFound
 	}
@@ -77,7 +85,7 @@ func (s *Store) ListJobRuns(appID int64) ([]JobRun, error) {
 	var out []JobRun
 	for rows.Next() {
 		var r JobRun
-		if err := rows.Scan(&r.ID, &r.AppID, &r.Status, &r.ExitCode, &r.StartedAt, &r.FinishedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.AppID, &r.Status, &r.Nodes, &r.Framework, &r.ExitCode, &r.StartedAt, &r.FinishedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

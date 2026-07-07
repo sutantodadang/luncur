@@ -36,7 +36,7 @@ func TestJobKindValidation(t *testing.T) {
 
 func TestJobRunLifecycle(t *testing.T) {
 	st, a := jobRunStore(t)
-	run, err := st.CreateJobRun(a.ID)
+	run, err := st.CreateJobRun(a.ID, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestJobRunLifecycle(t *testing.T) {
 	}
 
 	// Second run with unknown exit code.
-	run2, _ := st.CreateJobRun(a.ID)
+	run2, _ := st.CreateJobRun(a.ID, 1, "")
 	if err := st.FinishJobRun(run2.ID, "succeeded", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -80,11 +80,37 @@ func TestJobRunLifecycle(t *testing.T) {
 
 func TestFinishJobRunValidation(t *testing.T) {
 	st, a := jobRunStore(t)
-	run, _ := st.CreateJobRun(a.ID)
+	run, _ := st.CreateJobRun(a.ID, 1, "")
 	if err := st.FinishJobRun(run.ID, "running", nil); err == nil {
 		t.Fatal("finish with status running must be rejected")
 	}
 	if err := st.FinishJobRun(99999, "failed", nil); err != ErrNotFound {
 		t.Fatalf("missing run: %v, want ErrNotFound", err)
+	}
+}
+
+func TestJobRunNodesFramework(t *testing.T) {
+	s := openTest(t)
+	p, err := s.CreateProject("trainp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.CreateApp(p.ID, "train", 0, "job", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.CreateJobRun(a.ID, 4, "torch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Nodes != 4 || r.Framework != "torch" {
+		t.Fatalf("got nodes=%d framework=%q, want 4 torch", r.Nodes, r.Framework)
+	}
+	got, err := s.GetJobRun(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Nodes != 4 || got.Framework != "torch" {
+		t.Fatalf("read back: nodes=%d framework=%q", got.Nodes, got.Framework)
 	}
 }
