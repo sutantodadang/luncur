@@ -59,13 +59,6 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 	return s.renderAppWithRun(p, a, imageRef, withOverrides, "", a.Nodes, a.Framework, nil)
 }
 
-// renderRun renders one triggered run of a kind=job app against the app's
-// stored training defaults: the per-run batch/v1 Job (named <app>-run-<id>)
-// plus the app's Secret/PVCs.
-func (s *server) renderRun(p store.Project, a store.App, imageRef string, runID int64) (render.Rendered, error) {
-	return s.renderRunWith(p, a, imageRef, runID, a.Nodes, a.Framework, nil)
-}
-
 // renderRunWith renders one triggered run of a kind=job app with per-run
 // overrides of nodes/framework/env — startRun's core, shared by the JSON
 // API and the UI run-now button.
