@@ -632,6 +632,40 @@ Honest constraints, stated up front:
 The app page in the web UI has a matching Volumes section (add form,
 per-row remove with a "purge data" checkbox), hidden for cron apps.
 
+### GPU cloud rental
+
+```sh
+# vast.ai — marketplace: browse offers, rent by offer id
+luncur gpu key <vastai-api-key>
+luncur gpu offers --gpu "RTX 4090" --count 1 --limit 10       # OFFER, GPU, COUNT, $/HR, DISK, WHERE
+luncur gpu rent 123456 --disk 40                                # rent offer 123456
+
+# Nebius — managed: rent by platform + preset, prices checked in the console
+luncur gpu key --provider nebius --sa-id $SA_ID --pubkey-id $PUBKEY_ID \
+  --private-key-file sa-key.pem --parent-id $PROJECT_ID --subnet-id $SUBNET_ID
+luncur gpu rent --provider nebius --platform gpu-h100-sxm --preset 1gpu-16vcpu-200gb --disk 100
+
+luncur gpu ls                                                   # both providers, one table
+luncur gpu stop <id>                                            # destroy; billing stops, data gone
+```
+
+Both providers rent a VM that boots a K3s agent and auto-joins the cluster —
+`luncur node ls` shows it once it's up. vast.ai is a marketplace: search
+offers (GPU model, count, price/hr) and rent by offer id. Nebius is a managed
+cloud: pick a platform (hardware generation) and preset (GPU/vCPU/RAM
+bundle) directly — there's no in-luncur offer catalog, so check current
+pricing in the Nebius console before renting.
+
+Idle scale-to-zero is **per-instance**: each rented GPU node is destroyed
+independently after `gpu_idle_minutes` (a setting; `0`/unset disables it) of
+no GPU pod scheduled on it, so an always-on inference node survives while a
+burst training node on the same account gets reaped on its own schedule.
+
+Nebius support is docs-derived (API shapes read from docs.nebius.com, not yet
+confirmed against a live account) — see
+[`docs/nebius-smoke-test.md`](docs/nebius-smoke-test.md) for the pending
+verification checklist.
+
 ### Per-project GPU quota
 
 ```sh

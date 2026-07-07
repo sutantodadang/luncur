@@ -1097,11 +1097,13 @@ type GPUOffer struct {
 	Geolocation string  `json:"geolocation"`
 }
 
-// GPUInstance is one rented GPU VM tracked by the server.
+// GPUInstance is one rented GPU VM tracked by the server. ExternalID is the
+// provider's contract/instance ref, a string since Nebius refs
+// ("computeinstance-…") aren't numeric like vast.ai's.
 type GPUInstance struct {
 	ID             int64   `json:"id"`
 	Provider       string  `json:"provider"`
-	ExternalID     int64   `json:"external_id"`
+	ExternalID     string  `json:"external_id"`
 	Label          string  `json:"label"`
 	GPUName        string  `json:"gpu_name"`
 	NumGPUs        int     `json:"num_gpus"`
@@ -1111,9 +1113,23 @@ type GPUInstance struct {
 	CreatedAt      string  `json:"created_at"`
 }
 
-// SetGPUKey stores a GPU provider API key (sealed server-side).
+// SetGPUKey stores the vast.ai API key (sealed server-side). provider
+// defaults to "vastai" server-side when passed empty.
 func (c *Client) SetGPUKey(provider, apiKey string) error {
 	return c.do("PUT", "/v1/gpu/key", map[string]string{"provider": provider, "api_key": apiKey}, nil)
+}
+
+// SetNebiusCreds stores the Nebius service-account credentials (sealed
+// server-side). privateKey is the raw PEM bytes; the caller never logs them.
+func (c *Client) SetNebiusCreds(saID, pubkeyID string, privateKey []byte, parentID, subnetID string) error {
+	return c.do("PUT", "/v1/gpu/key", map[string]string{
+		"provider":    "nebius",
+		"sa_id":       saID,
+		"pubkey_id":   pubkeyID,
+		"private_key": string(privateKey),
+		"parent_id":   parentID,
+		"subnet_id":   subnetID,
+	}, nil)
 }
 
 // GPUOffers searches rentable VM offers, cheapest first.
@@ -1135,11 +1151,26 @@ func (c *Client) GPUOffers(gpuName string, numGPUs, limit int) ([]GPUOffer, erro
 	return out.Offers, err
 }
 
-// RentGPU accepts an offer as a cluster-joining VM.
-func (c *Client) RentGPU(offerID int64, diskGB int, gpuName string, numGPUs int) (GPUInstance, error) {
+// GPURentReq is RentGPU's request: Provider selects vast.ai (OfferID) or
+// Nebius (Platform + Preset); GPUName/NumGPUs are recorded for the panel on
+// either provider.
+type GPURentReq struct {
+	Provider string
+	OfferID  int64
+	Platform string
+	Preset   string
+	DiskGB   int
+	GPUName  string
+	NumGPUs  int
+}
+
+// RentGPU accepts an offer (vast.ai) or platform/preset (Nebius) as a
+// cluster-joining VM.
+func (c *Client) RentGPU(req GPURentReq) (GPUInstance, error) {
 	var out GPUInstance
 	err := c.do("POST", "/v1/gpu/instances", map[string]any{
-		"offer_id": offerID, "disk_gb": diskGB, "gpu_name": gpuName, "num_gpus": numGPUs,
+		"provider": req.Provider, "offer_id": req.OfferID, "platform": req.Platform,
+		"preset": req.Preset, "disk_gb": req.DiskGB, "gpu_name": req.GPUName, "num_gpus": req.NumGPUs,
 	}, &out)
 	return out, err
 }

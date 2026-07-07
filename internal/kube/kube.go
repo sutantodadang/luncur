@@ -920,6 +920,21 @@ func (c *Client) DeploymentStatus(ctx context.Context, namespace, name string) (
 	return ready, desired, nil
 }
 
+// podRequestsGPU reports whether any container in pod requests or limits
+// nvidia.com/gpu devices.
+func podRequestsGPU(p *corev1.Pod) bool {
+	gpu := corev1.ResourceName(render.GPUResource)
+	for _, ctr := range p.Spec.Containers {
+		if q, ok := ctr.Resources.Requests[gpu]; ok && !q.IsZero() {
+			return true
+		}
+		if q, ok := ctr.Resources.Limits[gpu]; ok && !q.IsZero() {
+			return true
+		}
+	}
+	return false
+}
+
 // GPUPodsRequested reports whether any non-terminal pod in the cluster
 // requests nvidia.com/gpu devices. The gpucloud idle loop uses this: zero
 // GPU pods for long enough means rented instances are burning money for
@@ -936,11 +951,37 @@ func (c *Client) GPUPodsRequested(ctx context.Context) (bool, error) {
 		if p.Status.Phase != corev1.PodPending && p.Status.Phase != corev1.PodRunning {
 			continue
 		}
-		for _, ctr := range p.Spec.Containers {
-			if q, ok := ctr.Resources.Limits[corev1.ResourceName(render.GPUResource)]; ok && !q.IsZero() {
-				return true, nil
-			}
+		if podRequestsGPU(&p) {
+			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// GPUBusyNodes reports which nodes currently have a GPU-requesting pod
+// scheduled on them, for the per-instance idle loop: an instance whose node
+// label isn't in this set has nothing running on it and is a destroy
+// candidate. Pending pods with no NodeName yet (unscheduled) can't be
+// attributed to a node, so they're recorded under the "" key instead —
+// callers treat that as "freeze all destroys," since the scheduler may still
+// place the pod on any node this tick.
+func (c *Client) GPUBusyNodes(ctx context.Context) (map[string]bool, error) {
+	if c.cs == nil {
+		return nil, fmt.Errorf("kubernetes client not configured")
+	}
+	pods, err := c.cs.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	busy := map[string]bool{}
+	for _, p := range pods.Items {
+		if p.Status.Phase != corev1.PodPending && p.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		if !podRequestsGPU(&p) {
+			continue
+		}
+		busy[p.Spec.NodeName] = true
+	}
+	return busy, nil
 }

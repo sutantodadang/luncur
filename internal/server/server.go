@@ -81,6 +81,11 @@ type server struct {
 	// in memory only — StartRegistryGC uses it to decide when to run again.
 	lastRegistryGC time.Time
 
+	// gpuIdleSince tracks, per GPU instance label, when its node was last
+	// seen idle (no GPU pod scheduled on it). In-memory, loop-local state
+	// for runGPUIdleLoop — written only by that single goroutine.
+	gpuIdleSince map[string]time.Time
+
 	tmpl *template.Template
 
 	// mon collects live app/node CPU/memory samples in memory; see monitor.go.

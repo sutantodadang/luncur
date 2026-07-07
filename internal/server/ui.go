@@ -54,6 +54,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/doctor", s.uiPage(s.handleUIDoctor))
 	mux.HandleFunc("GET /ui/nodes", s.uiPage(s.handleUINodes))
 	mux.HandleFunc("POST /ui/gpu/key", s.uiPage(s.handleUIGPUKey))
+	mux.HandleFunc("POST /ui/gpu/key/nebius", s.uiPage(s.handleUIGPUKeyNebius))
 	mux.HandleFunc("POST /ui/gpu/rent", s.uiPage(s.handleUIGPURent))
 	mux.HandleFunc("POST /ui/gpu/{id}/stop", s.uiPage(s.handleUIGPUStop))
 	mux.HandleFunc("GET /ui/", s.uiPage(s.handleUIProjects))
