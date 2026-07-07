@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS apps (
   internal      INTEGER NOT NULL DEFAULT 0,
   gpu_count     INTEGER NOT NULL DEFAULT 0,
   inject_s3     INTEGER NOT NULL DEFAULT 0,
+  model_source  TEXT NOT NULL DEFAULT '',
+  runtime       TEXT NOT NULL DEFAULT '',
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, name)
 );

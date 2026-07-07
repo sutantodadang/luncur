@@ -84,7 +84,7 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 
 	// Opt-in external S3: LUNCUR_S3_* from the project's stored config.
 	// User env (and an attached minio addon, injected above) wins per key.
-	if a.InjectS3 {
+	if a.InjectS3 || (a.Kind == "model" && strings.HasPrefix(a.ModelSource, "s3:")) {
 		cfg, err := s.st.GetProjectS3(p.ID)
 		switch {
 		case errors.Is(err, store.ErrNotFound):
@@ -198,6 +198,8 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 		MemoryMB:           a.MemoryMB,
 		GPU:                a.GPUCount,
 		RunName:            runName,
+		ModelSource:        a.ModelSource,
+		Runtime:            a.Runtime,
 		HealthPath:         a.HealthPath,
 		Internal:           a.Internal,
 		Overrides:          overrides,

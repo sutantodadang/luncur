@@ -209,6 +209,8 @@ type AppInfo struct {
 	Kind        string `json:"kind,omitempty"`
 	Schedule    string `json:"schedule,omitempty"`
 	GPU         int64  `json:"gpu,omitempty"`
+	ModelSource string `json:"model_source,omitempty"`
+	Runtime     string `json:"runtime,omitempty"`
 	Seq         int64  `json:"seq,omitempty"`
 }
 
@@ -270,6 +272,15 @@ func (c *Client) CreateApp(project, name string, port int, kind, schedule, build
 	var out AppInfo
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
 		map[string]interface{}{"name": name, "port": port, "kind": kind, "schedule": schedule, "build_path": buildPath, "internal": internal, "gpu": gpu}, &out)
+	return out, err
+}
+
+// CreateModelApp registers (and, for built-in runtimes, immediately
+// deploys) a kind=model app serving an OpenAI-compatible endpoint.
+func (c *Client) CreateModelApp(project, name, source, runtime string, gpu int64) (AppInfo, error) {
+	var out AppInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
+		map[string]any{"name": name, "kind": "model", "model_source": source, "runtime": runtime, "gpu": gpu}, &out)
 	return out, err
 }
 
