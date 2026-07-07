@@ -12,6 +12,8 @@ import (
 func runCmd() *cobra.Command {
 	var project string
 	var detach bool
+	var nodes int
+	var framework string
 	cmd := &cobra.Command{
 		Use:   "run <app>",
 		Short: "Trigger one run of a job app (kind=job)",
@@ -21,7 +23,7 @@ func runCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			run, err := c.CreateRun(project, args[0])
+			run, err := c.CreateRun(project, args[0], nodes, framework)
 			if err != nil {
 				return err
 			}
@@ -70,6 +72,8 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&project, "project", "", "project name")
 	cmd.MarkFlagRequired("project")
 	cmd.Flags().BoolVar(&detach, "detach", false, "start the run and return immediately")
+	cmd.Flags().IntVar(&nodes, "nodes", 0, "run across N nodes (0 = app default)")
+	cmd.Flags().StringVar(&framework, "framework", "", "rendezvous env preset: torchrun|torch (empty = app default)")
 	cmd.AddCommand(runListCmd(), runLogsCmd())
 	return cmd
 }
@@ -89,12 +93,26 @@ func runListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Only multi-node runs earn the extra column — nodes=1 (or
+			// unset, on runs from before this feature) is the common case
+			// and stays byte-identical to the old output.
+			multiNode := false
+			for _, r := range runs {
+				if r.Nodes > 1 {
+					multiNode = true
+					break
+				}
+			}
 			for _, r := range runs {
 				exit := "-"
 				if r.ExitCode != nil {
 					exit = fmt.Sprintf("%d", *r.ExitCode)
 				}
-				cmd.Printf("%d\t%s\texit=%s\t%s\n", r.ID, r.Status, exit, r.StartedAt)
+				if multiNode {
+					cmd.Printf("%d\t%s\texit=%s\tnodes=%d\t%s\n", r.ID, r.Status, exit, r.Nodes, r.StartedAt)
+				} else {
+					cmd.Printf("%d\t%s\texit=%s\t%s\n", r.ID, r.Status, exit, r.StartedAt)
+				}
 			}
 			return nil
 		},
