@@ -143,6 +143,14 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	// New apps start at 1 replica, so the delta is just req.GPU; scale-ups
+	// are validated separately in scaleApp.
+	if req.GPU > 0 {
+		if err := s.validateGPUBudget(p, req.GPU); err != nil {
+			writeError(w, http.StatusBadRequest, "gpu_budget", err.Error())
+			return
+		}
+	}
 	var modelRT render.ModelRuntimeInfo
 	if req.Kind == "model" {
 		if req.GitURL != "" {
@@ -694,6 +702,26 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 		}
 		if len(vols) > 0 {
 			return store.App{}, &volumeReplicaConflictError{fmt.Errorf("app has a volume (RWO node-local storage); max 1 replica")}
+		}
+	}
+	// GPU budget: a scale request may change GPU count, replicas, or both
+	// in one call, so validate the net delta between the app's current
+	// planned GPU usage and what it would be after this change.
+	if req.GPU != nil || req.Replicas != nil {
+		newGPU := a.GPUCount
+		if req.GPU != nil {
+			newGPU = *req.GPU
+		}
+		newReplicas := a.Replicas
+		if req.Replicas != nil {
+			newReplicas = *req.Replicas
+		}
+		before := a.GPUCount * gpuEffReplicas(a.Kind, a.Replicas)
+		after := newGPU * gpuEffReplicas(a.Kind, newReplicas)
+		if delta := after - before; delta > 0 {
+			if err := s.validateGPUBudget(p, delta); err != nil {
+				return store.App{}, &scaleReplicasError{err}
+			}
 		}
 	}
 	d, err := s.st.LatestDeployment(a.ID)
