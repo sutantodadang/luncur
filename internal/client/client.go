@@ -208,6 +208,7 @@ type AppInfo struct {
 	Image       string `json:"image,omitempty"`
 	Kind        string `json:"kind,omitempty"`
 	Schedule    string `json:"schedule,omitempty"`
+	GPU         int64  `json:"gpu,omitempty"`
 	Seq         int64  `json:"seq,omitempty"`
 }
 
@@ -265,10 +266,10 @@ func (c *Client) RemoveMember(project, email string) error {
 	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/members/"+url.PathEscape(email), nil, nil)
 }
 
-func (c *Client) CreateApp(project, name string, port int, kind, schedule, buildPath string, internal bool) (AppInfo, error) {
+func (c *Client) CreateApp(project, name string, port int, kind, schedule, buildPath string, internal bool, gpu int64) (AppInfo, error) {
 	var out AppInfo
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
-		map[string]interface{}{"name": name, "port": port, "kind": kind, "schedule": schedule, "build_path": buildPath, "internal": internal}, &out)
+		map[string]interface{}{"name": name, "port": port, "kind": kind, "schedule": schedule, "build_path": buildPath, "internal": internal, "gpu": gpu}, &out)
 	return out, err
 }
 
@@ -361,12 +362,13 @@ func (c *Client) ListDeploys(project, app string) ([]DeployInfo, error) {
 }
 
 // CreateGitApp registers an app whose source is a git repo, built at deploy time.
-func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch, kind, schedule, buildPath string, internal bool) (AppInfo, error) {
+func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch, kind, schedule, buildPath string, internal bool, gpu int64) (AppInfo, error) {
 	var out AppInfo
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
 		map[string]any{
 			"name": name, "port": port, "git_url": gitURL, "git_branch": branch,
 			"kind": kind, "schedule": schedule, "build_path": buildPath, "internal": internal,
+			"gpu": gpu,
 		}, &out)
 	return out, err
 }
@@ -374,7 +376,7 @@ func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch, ki
 // Scale posts a partial scale change: nil fields are left unchanged
 // server-side. cpu/memory are quantity strings ("250m", "256Mi"); an empty
 // string clears (back to unset).
-func (c *Client) Scale(project, app string, replicas *int, cpu, memory *string) error {
+func (c *Client) Scale(project, app string, replicas *int, cpu, memory *string, gpu *int64) error {
 	body := map[string]any{}
 	if replicas != nil {
 		body["replicas"] = *replicas
@@ -384,6 +386,9 @@ func (c *Client) Scale(project, app string, replicas *int, cpu, memory *string) 
 	}
 	if memory != nil {
 		body["memory"] = *memory
+	}
+	if gpu != nil {
+		body["gpu"] = *gpu
 	}
 	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/scale",
 		body, nil)
@@ -910,6 +915,8 @@ type Node struct {
 	CPUMilli    int64  `json:"cpu_used_millicores"`
 	MemCapMiB   int64  `json:"memory_capacity_mib"`
 	MemMiB      int64  `json:"memory_used_mib"`
+	GPU         bool   `json:"gpu"`
+	GPUCapacity int64  `json:"gpu_capacity"`
 	MetricsOK   bool   `json:"metrics_available"`
 }
 

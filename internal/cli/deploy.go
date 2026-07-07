@@ -104,6 +104,7 @@ func scaleCmd() *cobra.Command {
 	var project string
 	var replicas int
 	var cpu, memory string
+	var gpu int64
 	cmd := &cobra.Command{
 		Use:   "scale <app>",
 		Short: "Scale an app, or set/clear its per-app CPU and memory limits",
@@ -112,8 +113,9 @@ func scaleCmd() *cobra.Command {
 			replicasSet := cmd.Flags().Changed("replicas")
 			cpuSet := cmd.Flags().Changed("cpu")
 			memorySet := cmd.Flags().Changed("memory")
-			if !replicasSet && !cpuSet && !memorySet {
-				return fmt.Errorf("specify at least one of --replicas, --cpu, --memory")
+			gpuSet := cmd.Flags().Changed("gpu")
+			if !replicasSet && !cpuSet && !memorySet && !gpuSet {
+				return fmt.Errorf("specify at least one of --replicas, --cpu, --memory, --gpu")
 			}
 
 			c, err := apiClient()
@@ -122,6 +124,10 @@ func scaleCmd() *cobra.Command {
 			}
 			var replicasArg *int
 			var cpuArg, memoryArg *string
+			var gpuArg *int64
+			if gpuSet {
+				gpuArg = &gpu
+			}
 			if replicasSet {
 				replicasArg = &replicas
 			}
@@ -131,7 +137,7 @@ func scaleCmd() *cobra.Command {
 			if memorySet {
 				memoryArg = &memory
 			}
-			if err := c.Scale(project, args[0], replicasArg, cpuArg, memoryArg); err != nil {
+			if err := c.Scale(project, args[0], replicasArg, cpuArg, memoryArg, gpuArg); err != nil {
 				return err
 			}
 
@@ -145,6 +151,9 @@ func scaleCmd() *cobra.Command {
 			if memorySet {
 				parts = append(parts, "memory="+memory)
 			}
+			if gpuSet {
+				parts = append(parts, fmt.Sprintf("gpu=%d", gpu))
+			}
 			cmd.Printf("scaled %s: %s\n", args[0], strings.Join(parts, " "))
 			return nil
 		},
@@ -154,6 +163,7 @@ func scaleCmd() *cobra.Command {
 	cmd.Flags().IntVar(&replicas, "replicas", 0, "number of replicas")
 	cmd.Flags().StringVar(&cpu, "cpu", "", "CPU request+limit (e.g. 250m, 1); empty string clears")
 	cmd.Flags().StringVar(&memory, "memory", "", "memory request+limit (e.g. 256Mi, 1Gi); empty string clears")
+	cmd.Flags().Int64Var(&gpu, "gpu", 0, "number of nvidia.com/gpu devices; 0 clears")
 	return cmd
 }
 

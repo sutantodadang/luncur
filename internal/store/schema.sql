@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS apps (
   webhook_secret BLOB,
   build_path    TEXT NOT NULL DEFAULT '',
   internal      INTEGER NOT NULL DEFAULT 0,
+  gpu_count     INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, name)
 );

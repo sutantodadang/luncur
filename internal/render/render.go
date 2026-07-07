@@ -43,6 +43,10 @@ type Input struct {
 	// URL, no domains. Ignored for non-web kinds (worker/cron already emit
 	// no Service to make internal).
 	Internal bool
+	// GPU is the number of nvidia.com/gpu devices (requests==limits); 0
+	// renders nothing. Any GPU>0 pod also gets runtimeClassName "nvidia"
+	// and a nodeSelector pinning it to nodes labeled luncur.dev/gpu=true.
+	GPU int64
 	// Overrides maps Kind -> strategic-merge-patch JSON. Applied by Task 6.
 	Overrides map[string]string
 	// ExtraHosts adds Ingress rules (same backend) for custom domains.
@@ -143,6 +147,29 @@ func roundTrip(kind string, raw []byte) ([]byte, error) {
 
 func SecretName(app string) string { return app + "-env" }
 
+// GPU scheduling constants, shared with the gpu package (device plugin
+// manifests) and kube (GPU node reporting).
+const (
+	GPUResource       = "nvidia.com/gpu"
+	GPURuntimeClass   = "nvidia"
+	GPUNodeLabelKey   = "luncur.dev/gpu"
+	GPUNodeLabelValue = "true"
+)
+
+// applyGPU pins a GPU pod to GPU-labeled nodes and selects the nvidia
+// runtime; a no-op for gpu <= 0.
+func applyGPU(spec *corev1.PodSpec, gpu int64) {
+	if gpu <= 0 {
+		return
+	}
+	rc := GPURuntimeClass
+	spec.RuntimeClassName = &rc
+	if spec.NodeSelector == nil {
+		spec.NodeSelector = map[string]string{}
+	}
+	spec.NodeSelector[GPUNodeLabelKey] = GPUNodeLabelValue
+}
+
 func labels(app string) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":       app,
@@ -214,13 +241,16 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			},
 		}}
 	}
-	if in.CPUMilli > 0 || in.MemoryMB > 0 {
+	if in.CPUMilli > 0 || in.MemoryMB > 0 || in.GPU > 0 {
 		res := corev1.ResourceList{}
 		if in.CPUMilli > 0 {
 			res[corev1.ResourceCPU] = *resource.NewMilliQuantity(in.CPUMilli, resource.DecimalSI)
 		}
 		if in.MemoryMB > 0 {
 			res[corev1.ResourceMemory] = *resource.NewQuantity(in.MemoryMB*1024*1024, resource.BinarySI)
+		}
+		if in.GPU > 0 {
+			res[corev1.ResourceName(GPUResource)] = *resource.NewQuantity(in.GPU, resource.DecimalSI)
 		}
 		container.Resources = corev1.ResourceRequirements{Requests: res, Limits: res}
 	}
@@ -282,6 +312,7 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			},
 		},
 	}
+	applyGPU(&dep.Spec.Template.Spec, in.GPU)
 	if len(podVolumes) > 0 {
 		// RWO node-local volumes can't be attached by the old and new pod at
 		// once, so a rolling update would deadlock — Recreate instead.
@@ -381,6 +412,7 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 				},
 			},
 		}
+		applyGPU(&cj.Spec.JobTemplate.Spec.Template.Spec, in.GPU)
 		if err := add("CronJob", cj); err != nil {
 			return Rendered{}, err
 		}

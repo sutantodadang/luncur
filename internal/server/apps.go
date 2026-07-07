@@ -65,6 +65,7 @@ func (s *server) appJSON(p store.Project, a store.App) map[string]any {
 		"schedule":        a.Schedule,
 		"webhook_enabled": a.WebhookSecret != nil,
 		"internal":        a.Internal,
+		"gpu":             a.GPUCount,
 	}
 	if a.Internal {
 		out["internal_url"] = internalURLFor(a.Name, p.Namespace)
@@ -117,6 +118,7 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		Schedule  string `json:"schedule"`
 		BuildPath string `json:"build_path"`
 		Internal  bool   `json:"internal"`
+		GPU       int64  `json:"gpu"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -165,6 +167,13 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 			return
 		}
 		a.Internal = true
+	}
+	if req.GPU != 0 {
+		if err := s.st.SetGPU(a.ID, req.GPU); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "gpu: "+err.Error())
+			return
+		}
+		a.GPUCount = req.GPU
 	}
 	writeJSON(w, http.StatusCreated, s.appJSON(p, a))
 }
@@ -586,6 +595,7 @@ type scaleChange struct {
 	Replicas *int
 	CPUMilli *int64
 	MemoryMB *int64
+	GPU      *int64
 }
 
 // scaleApp is the shared core of handleScaleApp and its UI twin
@@ -599,7 +609,7 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 	if a.Ejected {
 		return store.App{}, errAppEjected
 	}
-	if req.Replicas == nil && req.CPUMilli == nil && req.MemoryMB == nil {
+	if req.Replicas == nil && req.CPUMilli == nil && req.MemoryMB == nil && req.GPU == nil {
 		return store.App{}, &scaleReplicasError{fmt.Errorf("nothing to change")}
 	}
 	if a.Kind == "cron" && req.Replicas != nil {
@@ -642,6 +652,12 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 		}
 		a.CPUMilli, a.MemoryMB = cpu, mem
 	}
+	if req.GPU != nil {
+		if err := s.st.SetGPU(a.ID, *req.GPU); err != nil {
+			return store.App{}, &scaleReplicasError{err}
+		}
+		a.GPUCount = *req.GPU
+	}
 
 	if live {
 		if err := s.syncApp(ctx, p, a); err != nil {
@@ -666,6 +682,7 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		Replicas *int    `json:"replicas"`
 		CPU      *string `json:"cpu"`
 		Memory   *string `json:"memory"`
+		GPU      *int64  `json:"gpu"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -674,6 +691,7 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 
 	var req scaleChange
 	req.Replicas = body.Replicas
+	req.GPU = body.GPU
 	if body.CPU != nil {
 		cpu, err := parseCPUMilli(*body.CPU)
 		if err != nil {
@@ -718,5 +736,6 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		"replicas":  updated.Replicas,
 		"cpu_milli": updated.CPUMilli,
 		"memory_mb": updated.MemoryMB,
+		"gpu":       updated.GPUCount,
 	})
 }

@@ -38,6 +38,8 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"Namespace":             {Group: "", Version: "v1", Resource: "namespaces"},
 	"Job":                   {Group: "batch", Version: "v1", Resource: "jobs"},
 	"CronJob":               {Group: "batch", Version: "v1", Resource: "cronjobs"},
+	"DaemonSet":             {Group: "apps", Version: "v1", Resource: "daemonsets"},
+	"RuntimeClass":          {Group: "node.k8s.io", Version: "v1", Resource: "runtimeclasses"},
 	"PersistentVolumeClaim": {Group: "", Version: "v1", Resource: "persistentvolumeclaims"},
 	"ServiceAccount":        {Group: "", Version: "v1", Resource: "serviceaccounts"},
 	"ClusterRole":           {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"},
@@ -52,6 +54,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 // clusterScoped marks kinds Apply must patch without a namespace.
 var clusterScoped = map[string]bool{
 	"Namespace":          true,
+	"RuntimeClass":       true,
 	"ClusterRole":        true,
 	"ClusterRoleBinding": true,
 	"ClusterIssuer":      true,
@@ -625,6 +628,8 @@ type NodeInfo struct {
 	CPUMilli    int64  `json:"cpu_used_millicores"`
 	MemCapMiB   int64  `json:"memory_capacity_mib"`
 	MemMiB      int64  `json:"memory_used_mib"`
+	GPU         bool   `json:"gpu"`
+	GPUCapacity int64  `json:"gpu_capacity"`
 	MetricsOK   bool   `json:"metrics_available"`
 }
 
@@ -686,6 +691,12 @@ func (c *Client) ListNodes(ctx context.Context) ([]NodeInfo, error) {
 			Version:     n.Status.NodeInfo.KubeletVersion,
 			CPUCapMilli: n.Status.Allocatable.Cpu().MilliValue(),
 			MemCapMiB:   n.Status.Allocatable.Memory().Value() / (1 << 20),
+		}
+		if n.Labels[render.GPUNodeLabelKey] == render.GPUNodeLabelValue {
+			info.GPU = true
+		}
+		if q, ok := n.Status.Allocatable[corev1.ResourceName(render.GPUResource)]; ok {
+			info.GPUCapacity = q.Value()
 		}
 		if m, ok := usage[n.Name]; ok {
 			info.CPUMilli = m.cpuMilli

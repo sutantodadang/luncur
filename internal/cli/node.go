@@ -39,13 +39,17 @@ func nodeLsCmd() *cobra.Command {
 				return err
 			}
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tROLE\tSTATUS\tIP\tVERSION")
+			fmt.Fprintln(tw, "NAME\tROLE\tSTATUS\tIP\tGPU\tVERSION")
 			for _, n := range nodes {
 				status := "NotReady"
 				if n.Ready {
 					status = "Ready"
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", n.Name, n.Role, status, n.IP, n.Version)
+				gpuCol := "-"
+				if n.GPU {
+					gpuCol = fmt.Sprintf("%d", n.GPUCapacity)
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", n.Name, n.Role, status, n.IP, gpuCol, n.Version)
 			}
 			return tw.Flush()
 		},

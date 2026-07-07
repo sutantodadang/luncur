@@ -18,6 +18,7 @@ func appCmd() *cobra.Command {
 	var kind, schedule string
 	var buildPath string
 	var internal bool
+	var gpu int64
 
 	create := &cobra.Command{
 		Use:   "create <name>",
@@ -30,9 +31,9 @@ func appCmd() *cobra.Command {
 			}
 			var a client.AppInfo
 			if gitURL != "" {
-				a, err = c.CreateGitApp(project, args[0], port, gitURL, branch, kind, schedule, buildPath, internal)
+				a, err = c.CreateGitApp(project, args[0], port, gitURL, branch, kind, schedule, buildPath, internal, gpu)
 			} else {
-				a, err = c.CreateApp(project, args[0], port, kind, schedule, buildPath, internal)
+				a, err = c.CreateApp(project, args[0], port, kind, schedule, buildPath, internal, gpu)
 			}
 			if err != nil {
 				return err
@@ -53,6 +54,7 @@ func appCmd() *cobra.Command {
 	create.Flags().StringVar(&schedule, "schedule", "", "cron schedule, 5-field (cron kind only)")
 	create.Flags().StringVar(&buildPath, "path", "", "subdirectory to build (monorepo)")
 	create.Flags().BoolVar(&internal, "internal", false, "cluster-only web app: ClusterIP Service, no Ingress, no public URL (web kind only)")
+	create.Flags().Int64Var(&gpu, "gpu", 0, "number of nvidia.com/gpu devices (schedules on GPU nodes only)")
 
 	var listProject string
 	list := &cobra.Command{

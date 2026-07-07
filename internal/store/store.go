@@ -74,6 +74,7 @@ func migrate(db *sql.DB) error {
 		{"apps", "webhook_secret", `ALTER TABLE apps ADD COLUMN webhook_secret BLOB`},
 		{"apps", "build_path", `ALTER TABLE apps ADD COLUMN build_path TEXT NOT NULL DEFAULT ''`},
 		{"apps", "internal", `ALTER TABLE apps ADD COLUMN internal INTEGER NOT NULL DEFAULT 0`},
+		{"apps", "gpu_count", `ALTER TABLE apps ADD COLUMN gpu_count INTEGER NOT NULL DEFAULT 0`},
 	} {
 		var n int
 		if err := db.QueryRow(

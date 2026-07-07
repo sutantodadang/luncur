@@ -148,6 +148,7 @@ func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOv
 		Schedule:           a.Schedule,
 		CPUMilli:           a.CPUMilli,
 		MemoryMB:           a.MemoryMB,
+		GPU:                a.GPUCount,
 		HealthPath:         a.HealthPath,
 		Internal:           a.Internal,
 		Overrides:          overrides,
