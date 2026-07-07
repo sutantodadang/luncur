@@ -52,6 +52,18 @@ type Input struct {
 	// job app's Secret and PVCs only — the workload exists per run, not
 	// per deploy. Ignored for other kinds.
 	RunName string
+	// Nodes is how many pods a kind=job run spans. 0 or 1 renders the
+	// classic single-pod Job. >1 renders an Indexed Job (completions ==
+	// parallelism == Nodes) plus a headless Service for pod-to-pod DNS, and
+	// injects the LUNCUR_* rendezvous env contract. Ignored without RunName.
+	Nodes int32
+	// Framework optionally layers a framework's native rendezvous env vars
+	// on top of the LUNCUR_* contract: "torchrun" (PET_*) or "torch"
+	// (MASTER_ADDR/RANK/WORLD_SIZE). "" = contract only.
+	Framework string
+	// RunEnv are per-run plain env vars set directly on the job container
+	// (not via the app Secret) — sweep params, trial ids. Job runs only.
+	RunEnv map[string]string
 	// ModelSource locates a kind=model app's weights: hf:<org>/<name>[/<file>]
 	// or s3:<key-in-project-bucket>. Required for model apps.
 	ModelSource string
@@ -430,6 +442,22 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 		// Deploy path (no RunName): the workload is rendered per run, so a
 		// deploy only (re)applies the Secret and PVCs added above.
 		if in.RunName != "" {
+			jobContainer := container
+			jobContainer.Env = append(jobContainer.Env, runEnvVars(in.RunEnv)...)
+			multiNode := in.Nodes > 1
+			if multiNode {
+				tenv, err := trainEnv(in.RunName, in.Namespace, in.Nodes, in.Framework)
+				if err != nil {
+					return Rendered{}, err
+				}
+				jobContainer.Env = append(jobContainer.Env, tenv...)
+			} else if in.Framework != "" {
+				// Validate even when single-node so a bad value fails loudly.
+				if _, err := trainEnv(in.RunName, in.Namespace, 2, in.Framework); err != nil {
+					return Rendered{}, err
+				}
+			}
+
 			job := &batchv1.Job{
 				TypeMeta:   metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
 				ObjectMeta: meta(in, in.RunName),
@@ -442,15 +470,37 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 						ObjectMeta: metav1.ObjectMeta{Labels: labels(in.AppName)},
 						Spec: corev1.PodSpec{
 							RestartPolicy: corev1.RestartPolicyNever,
-							Containers:    []corev1.Container{container},
+							Containers:    []corev1.Container{jobContainer},
 							Volumes:       podVolumes,
 						},
 					},
 				},
 			}
+			if multiNode {
+				mode := batchv1.IndexedCompletion
+				job.Spec.CompletionMode = &mode
+				job.Spec.Completions = int32Ptr(in.Nodes)
+				job.Spec.Parallelism = int32Ptr(in.Nodes)
+				job.Spec.Template.Spec.Subdomain = in.RunName
+			}
 			applyGPU(&job.Spec.Template.Spec, in.GPU)
 			if err := add("Job", job); err != nil {
 				return Rendered{}, err
+			}
+			if multiNode {
+				svc := &corev1.Service{
+					TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
+					ObjectMeta: meta(in, in.RunName),
+					Spec: corev1.ServiceSpec{
+						ClusterIP:                corev1.ClusterIPNone,
+						PublishNotReadyAddresses: true,
+						Selector:                 map[string]string{"batch.kubernetes.io/job-name": in.RunName},
+						Ports:                    []corev1.ServicePort{{Port: 29500, TargetPort: intstr.FromInt32(29500)}},
+					},
+				}
+				if err := add("Service", svc); err != nil {
+					return Rendered{}, err
+				}
 			}
 		}
 
