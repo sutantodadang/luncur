@@ -1226,7 +1226,7 @@ func (s *server) handleUIRunCreate(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
-	if _, err := s.startRun(r.Context(), p, a); err != nil {
+	if _, err := s.startRun(r.Context(), p, a, runOpts{}); err != nil {
 		if errors.Is(err, errNotDeployed) {
 			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 			return

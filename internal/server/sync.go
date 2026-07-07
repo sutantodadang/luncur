@@ -56,16 +56,24 @@ func (s *server) plainEnv(a store.App) (map[string]string, error) {
 // injects connection env for attached addons, loads its overrides, and
 // renders against imageRef.
 func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOverrides bool) (render.Rendered, error) {
-	return s.renderAppWithRun(p, a, imageRef, withOverrides, "")
+	return s.renderAppWithRun(p, a, imageRef, withOverrides, "", a.Nodes, a.Framework, nil)
 }
 
-// renderRun renders one triggered run of a kind=job app: the per-run
-// batch/v1 Job (named <app>-run-<id>) plus the app's Secret/PVCs.
+// renderRun renders one triggered run of a kind=job app against the app's
+// stored training defaults: the per-run batch/v1 Job (named <app>-run-<id>)
+// plus the app's Secret/PVCs.
 func (s *server) renderRun(p store.Project, a store.App, imageRef string, runID int64) (render.Rendered, error) {
-	return s.renderAppWithRun(p, a, imageRef, true, jobRunName(a.Name, runID))
+	return s.renderRunWith(p, a, imageRef, runID, a.Nodes, a.Framework, nil)
 }
 
-func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string, withOverrides bool, runName string) (render.Rendered, error) {
+// renderRunWith renders one triggered run of a kind=job app with per-run
+// overrides of nodes/framework/env — startRun's core, shared by the JSON
+// API and the UI run-now button.
+func (s *server) renderRunWith(p store.Project, a store.App, imageRef string, runID int64, nodes int, framework string, runEnv map[string]string) (render.Rendered, error) {
+	return s.renderAppWithRun(p, a, imageRef, true, jobRunName(a.Name, runID), nodes, framework, runEnv)
+}
+
+func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string, withOverrides bool, runName string, nodes int, framework string, runEnv map[string]string) (render.Rendered, error) {
 	env, err := s.plainEnv(a)
 	if err != nil {
 		return render.Rendered{}, err
@@ -207,6 +215,9 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 		IngressAnnotations: annotations,
 		TLS:                tls,
 		Volumes:            renderVols,
+		Nodes:              int32(nodes),
+		Framework:          framework,
+		RunEnv:             runEnv,
 	}
 	return render.Render(in, env)
 }
