@@ -779,16 +779,36 @@ type RunInfo struct {
 	ID         int64  `json:"id"`
 	Status     string `json:"status"`
 	Job        string `json:"job"`
+	Nodes      int    `json:"nodes,omitempty"`
+	Framework  string `json:"framework,omitempty"`
 	ExitCode   *int64 `json:"exit_code,omitempty"`
 	StartedAt  string `json:"started_at"`
 	FinishedAt string `json:"finished_at,omitempty"`
 }
 
-// CreateRun triggers one run of a kind=job app.
-func (c *Client) CreateRun(project, app string) (RunInfo, error) {
+// CreateRun triggers one run of a kind=job app, optionally overriding its
+// stored nodes/framework training defaults for this run only (nodes==0 and
+// framework=="" both mean "use the app's default").
+func (c *Client) CreateRun(project, app string, nodes int, framework string) (RunInfo, error) {
 	var out RunInfo
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/runs", map[string]string{}, &out)
+	body := map[string]any{}
+	if nodes != 0 {
+		body["nodes"] = nodes
+	}
+	if framework != "" {
+		body["framework"] = framework
+	}
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/runs", body, &out)
 	return out, err
+}
+
+// SetTraining sets a kind=job app's default multi-node run shape: nodes
+// (>=1) and an optional framework env preset ("torchrun", "torch", or "" for
+// the raw LUNCUR_* contract only). This is the fallback startRun uses when a
+// run request doesn't override nodes/framework itself.
+func (c *Client) SetTraining(project, app string, nodes int, framework string) error {
+	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/training",
+		map[string]any{"nodes": nodes, "framework": framework}, nil)
 }
 
 // ListRuns fetches a job app's run history (newest first).

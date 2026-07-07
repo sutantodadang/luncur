@@ -839,3 +839,55 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		"gpu":       updated.GPUCount,
 	})
 }
+
+// errTrainingOverBudget wraps a validateGPUBudget failure from setAppTraining
+// so handleSetTraining can tell it apart from a plain store validation error
+// (bad nodes/framework) and answer with the same over_budget code startRun
+// uses for the run-level version of this check.
+var errTrainingOverBudget = errors.New("over gpu budget")
+
+// setAppTraining is handleSetTraining's shared core: raising a job app's
+// nodes raises its planned GPU footprint (SumProjectGPURequests counts job
+// apps at gpu × nodes), so the delta is budget-checked before persisting.
+func (s *server) setAppTraining(p store.Project, a store.App, nodes int, framework string) error {
+	if extra := a.GPUCount * int64(nodes-a.Nodes); extra > 0 {
+		if err := s.validateGPUBudget(p, extra); err != nil {
+			return fmt.Errorf("%w: %v", errTrainingOverBudget, err)
+		}
+	}
+	return s.st.SetAppTraining(a.ID, nodes, framework)
+}
+
+// handleSetTraining sets a kind=job app's default multi-node run shape
+// (nodes/framework) — the values startRun falls back to when a run request
+// doesn't override them.
+func (s *server) handleSetTraining(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Nodes     int    `json:"nodes"`
+		Framework string `json:"framework"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+
+	if err := s.setAppTraining(p, a, req.Nodes, req.Framework); err != nil {
+		if errors.Is(err, errTrainingOverBudget) {
+			writeError(w, http.StatusBadRequest, "over_budget", err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"app": a.Name, "nodes": req.Nodes, "framework": req.Framework})
+}

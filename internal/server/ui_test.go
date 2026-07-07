@@ -596,6 +596,185 @@ func TestUIHealthPersistsAndPrefill(t *testing.T) {
 	}
 }
 
+// TestUIRunCreateNodesFramework is handleUIRunCreate's twin to
+// TestRunsAPI's nodes/framework override: the run-now form's nodes/framework
+// fields flow through startRun into the created run row.
+func TestUIRunCreateNodesFramework(t *testing.T) {
+	srv, st, _ := kubeServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/deploy", admin, `{"image":"trainer:1"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	form := url.Values{"nodes": {"3"}, "framework": {"torch"}}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/ml/apps/train/runs", csrfCk, ck, form)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("ui run-now: want 303, got %d", resp.StatusCode)
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "ml"), "train")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := st.ListJobRuns(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs: %+v", runs)
+	}
+	if runs[0].Nodes != 3 || runs[0].Framework != "torch" {
+		t.Fatalf("run nodes/framework: got %d/%q, want 3/torch", runs[0].Nodes, runs[0].Framework)
+	}
+}
+
+// TestUIRunCreateBadFramework: an unknown framework value on the run-now
+// form redirects back to the app page with ?err= (error banner), same idiom
+// as handleUIGPUQuota's invalid-quota redirect — no run row is created.
+func TestUIRunCreateBadFramework(t *testing.T) {
+	srv, st, _ := kubeServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/deploy", admin, `{"image":"trainer:1"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	form := url.Values{"framework": {"mpi"}}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/ml/apps/train/runs", csrfCk, ck, form)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("ui run-now bad framework: want 303, got %d", resp.StatusCode)
+	}
+	// The redirect target's ?err= query param is app.html's error-banner
+	// slot (see firstNonEmpty/.Warning) — its presence with the validation
+	// message is the banner, so this doesn't need to follow the redirect
+	// and render the page.
+	loc := resp.Header.Get("Location")
+	if !strings.Contains(loc, "err=") || !strings.Contains(loc, "unknown+framework") {
+		t.Fatalf("want ?err= redirect mentioning unknown framework, got Location %q", loc)
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "ml"), "train")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := st.ListJobRuns(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("bad framework must not create a run: %+v", runs)
+	}
+}
+
+// TestUITrainingDefaultsPersist is handleUITraining's twin to
+// TestUIGPUQuota: an admin sets a job app's nodes/framework defaults through
+// the Runs card's training-defaults form (303 back to the app page), and the
+// reloaded page shows the controls pre-filled with the new values.
+func TestUITrainingDefaultsPersist(t *testing.T) {
+	srv, st := testServer(t) // no kube: SetAppTraining is store-only
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	form := url.Values{"nodes": {"4"}, "framework": {"torchrun"}}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/ml/apps/train/training", csrfCk, ck, form)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("ui set training: want 303, got %d", resp.StatusCode)
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "ml"), "train")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Nodes != 4 || a.Framework != "torchrun" {
+		t.Fatalf("training defaults not persisted: %+v", a)
+	}
+
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/ml/apps/train", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(ck)
+	page, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer page.Body.Close()
+	body, err := io.ReadAll(page.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := string(body)
+	if !strings.Contains(b, `value="4"`) {
+		t.Fatalf("nodes not pre-filled: %s", b)
+	}
+	if !strings.Contains(b, `value="torchrun" selected`) {
+		t.Fatalf("framework not pre-selected: %s", b)
+	}
+}
+
+// TestUITrainingDefaultsBadFramework mirrors TestUIRunCreateBadFramework for
+// the training-defaults form: an unknown framework redirects with ?err= and
+// leaves the app's stored defaults untouched.
+func TestUITrainingDefaultsBadFramework(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	form := url.Values{"nodes": {"2"}, "framework": {"mpi"}}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/ml/apps/train/training", csrfCk, ck, form)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("ui set training bad framework: want 303, got %d", resp.StatusCode)
+	}
+	if !strings.Contains(resp.Header.Get("Location"), "err=") {
+		t.Fatalf("want ?err= redirect, got Location %q", resp.Header.Get("Location"))
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "ml"), "train")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Framework != "" {
+		t.Fatalf("bad framework must not persist: %+v", a)
+	}
+}
+
 // TestUIDeployGitAppWithoutKube503 guards the UI git-deploy path when the
 // server has no kube client: it must answer 503 (mirroring the API's
 // kubernetes_unavailable), NOT silently redirect, and must not create a

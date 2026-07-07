@@ -3,14 +3,18 @@ package server
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
@@ -30,12 +34,28 @@ var runTimeout = 24 * time.Hour
 // so tests can lower it.
 var runWatchPoll = 5 * time.Second
 
+// gangTimeoutUnit is the unit train_gang_timeout_minutes multiplies:
+// production wants real minutes, but tests need the gang guard's deadline
+// to close in milliseconds, not wall-clock minutes. A package-level var so
+// tests can shrink it.
+var gangTimeoutUnit = time.Minute
+
+// settingTrainGangTimeout is the settings key for the multi-node gang
+// guard's startup window (minutes; 0 disables). Registered in settableKeys
+// (see settings.go) so it's settable via the settings API/CLI; gangGuard
+// still reads it directly via s.st.GetSetting.
+const settingTrainGangTimeout = "train_gang_timeout_minutes"
+
 func runJSON(app store.App, r store.JobRun) map[string]any {
 	out := map[string]any{
 		"id":         r.ID,
 		"status":     r.Status,
 		"job":        jobRunName(app.Name, r.ID),
 		"started_at": r.StartedAt,
+		"nodes":      r.Nodes,
+	}
+	if r.Framework != "" {
+		out["framework"] = r.Framework
 	}
 	if r.ExitCode.Valid {
 		out["exit_code"] = r.ExitCode.Int64
@@ -71,10 +91,45 @@ var errNotDeployed = errors.New("app has no live deployment; deploy an image fir
 // internal error before the run row existed (500).
 var errRunStartFailed = errors.New("could not start run")
 
+// errRunOverBudget is the sentinel wrapped by startRun when a run's node
+// count would push the project's GPU budget over quota. Callers map this to
+// a 400 response.
+var errRunOverBudget = errors.New("over gpu budget")
+
+// runOpts are per-run overrides of a kind=job app's stored training
+// defaults. Zero value = use app defaults. Env carries sweep-injected trial
+// vars (rendered directly on the job container, not through the app Secret).
+type runOpts struct {
+	Nodes     int
+	Framework string
+	Env       map[string]string
+}
+
 // startRun triggers one run of a kind=job app: a batch/v1 Job named
-// <app>-run-<n> rendered against the latest live deployment's image. Shared
-// by the JSON API (handleCreateRun) and the UI run-now button.
-func (s *server) startRun(ctx context.Context, p store.Project, a store.App) (store.JobRun, error) {
+// <app>-run-<n> rendered against the latest live deployment's image, using
+// opts to override the app's stored nodes/framework/env for this run only.
+// Shared by the JSON API (handleCreateRun) and the UI run-now button.
+func (s *server) startRun(ctx context.Context, p store.Project, a store.App, opts runOpts) (store.JobRun, error) {
+	nodes := a.Nodes
+	if opts.Nodes > 0 {
+		nodes = opts.Nodes
+	}
+	if nodes < 1 {
+		nodes = 1
+	}
+	framework := a.Framework
+	if opts.Framework != "" {
+		framework = opts.Framework
+	}
+
+	// A run above the app's planned shape needs headroom NOW; the app's own
+	// gpu×nodes is already counted in SumProjectGPURequests.
+	if extra := a.GPUCount * int64(nodes-a.Nodes); extra > 0 {
+		if err := s.validateGPUBudget(p, extra); err != nil {
+			return store.JobRun{}, fmt.Errorf("%w: %v", errRunOverBudget, err)
+		}
+	}
+
 	d, err := s.st.LatestDeployment(a.ID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && d.Status != "live") {
 		return store.JobRun{}, errNotDeployed
@@ -83,12 +138,12 @@ func (s *server) startRun(ctx context.Context, p store.Project, a store.App) (st
 		return store.JobRun{}, fmt.Errorf("latest deployment: %w", err)
 	}
 
-	run, err := s.st.CreateJobRun(a.ID)
+	run, err := s.st.CreateJobRun(a.ID, nodes, framework)
 	if err != nil {
 		return store.JobRun{}, fmt.Errorf("create job run: %w", err)
 	}
 
-	rendered, err := s.renderRun(p, a, d.ImageRef, run.ID)
+	rendered, err := s.renderRunWith(p, a, d.ImageRef, run.ID, nodes, framework, opts.Env)
 	if err == nil {
 		if err = s.kube.EnsureNamespace(ctx, p.Namespace); err == nil {
 			err = s.kube.Apply(ctx, p.Namespace, rendered.Objects)
@@ -124,10 +179,30 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	run, err := s.startRun(r.Context(), p, a)
+	var req struct {
+		Nodes     int    `json:"nodes"`
+		Framework string `json:"framework"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req) // empty body -> zero values (app defaults)
+	}
+	if req.Framework != "" && !slices.Contains(render.TrainFrameworks, req.Framework) {
+		writeError(w, http.StatusBadRequest, "bad_request",
+			fmt.Sprintf("unknown framework %q (valid: %s)", req.Framework, strings.Join(render.TrainFrameworks, ", ")))
+		return
+	}
+	if req.Nodes < 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "nodes must be >= 1")
+		return
+	}
+
+	run, err := s.startRun(r.Context(), p, a, runOpts{Nodes: req.Nodes, Framework: req.Framework})
 	switch {
 	case errors.Is(err, errNotDeployed):
 		writeError(w, http.StatusConflict, "not_deployed", err.Error())
+		return
+	case errors.Is(err, errRunOverBudget):
+		writeError(w, http.StatusBadRequest, "over_budget", err.Error())
 		return
 	case errors.Is(err, errRunStartFailed):
 		writeError(w, http.StatusBadGateway, "run_failed", "could not start run")
@@ -142,11 +217,20 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request, u store
 }
 
 // watchRun waits for a run's Job to finish and records the outcome plus the
-// pod's exit code.
+// pod's exit code. Multi-node runs pass through gangGuard first: a run
+// whose pods can't all reach Running within the gang timeout window is
+// failed and torn down instead of squatting GPUs half-scheduled.
 func (s *server) watchRun(p store.Project, a store.App, run store.JobRun) {
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 	name := jobRunName(a.Name, run.ID)
+
+	if run.Nodes > 1 {
+		if !s.gangGuard(ctx, p, name, run) {
+			return // run already marked failed (and the Job torn down) by gangGuard
+		}
+	}
+
 	ok, err := s.kube.WaitJob(ctx, p.Namespace, name, runWatchPoll)
 	status := "succeeded"
 	if err != nil || !ok {
@@ -159,6 +243,46 @@ func (s *server) watchRun(p store.Project, a store.App, run store.JobRun) {
 	if err := s.st.FinishJobRun(run.ID, status, exitCode); err != nil {
 		log.Printf("finish run %d: %v", run.ID, err)
 	}
+}
+
+// gangGuard waits for all of a multi-node run's pods to reach Running. If
+// the window (train_gang_timeout_minutes; 0 or unset disables the guard,
+// default 10) closes first, the Job is torn down and the run marked failed
+// so it doesn't sit half-scheduled, burning GPU budget on nodes that will
+// never rendezvous. Returns false when the run was killed by the guard —
+// callers must not fall through to the normal WaitJob completion path.
+func (s *server) gangGuard(ctx context.Context, p store.Project, name string, run store.JobRun) bool {
+	mins := 10
+	if v, err := s.st.GetSetting(settingTrainGangTimeout); err == nil {
+		if n, err := strconv.Atoi(v); err == nil {
+			mins = n
+		}
+	}
+	if mins <= 0 {
+		return true
+	}
+	deadline := time.Now().Add(time.Duration(mins) * gangTimeoutUnit)
+	for time.Now().Before(deadline) {
+		running, _, err := s.kube.RunningJobPods(ctx, p.Namespace, name)
+		if err == nil && running >= run.Nodes {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return true // overall watcher timeout handles it
+		case <-time.After(runWatchPoll):
+		}
+	}
+	running, total, _ := s.kube.RunningJobPods(ctx, p.Namespace, name)
+	log.Printf("run %d gang timeout: %d/%d pods running (of %d wanted) — destroying job %s",
+		run.ID, running, total, run.Nodes, name)
+	if err := s.kube.DeleteJob(ctx, p.Namespace, name); err != nil {
+		log.Printf("gang teardown %s: %v", name, err)
+	}
+	if err := s.st.FinishJobRun(run.ID, "failed", nil); err != nil {
+		log.Printf("finish run %d: %v", run.ID, err)
+	}
+	return false
 }
 
 func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request, u store.User) {

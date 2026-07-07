@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS apps (
   inject_s3     INTEGER NOT NULL DEFAULT 0,
   model_source  TEXT NOT NULL DEFAULT '',
   runtime       TEXT NOT NULL DEFAULT '',
+  nodes         INTEGER NOT NULL DEFAULT 1,
+  framework     TEXT NOT NULL DEFAULT '',
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, name)
 );
@@ -173,6 +175,8 @@ CREATE TABLE IF NOT EXISTS job_runs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
   status      TEXT NOT NULL CHECK (status IN ('running','succeeded','failed')),
+  nodes       INTEGER NOT NULL DEFAULT 1,
+  framework   TEXT NOT NULL DEFAULT '',
   exit_code   INTEGER,
   started_at  TEXT NOT NULL DEFAULT (datetime('now')),
   finished_at TEXT

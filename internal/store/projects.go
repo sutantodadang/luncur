@@ -143,12 +143,18 @@ func (s *Store) SetProjectGPUQuota(projectID, quota int64) error {
 }
 
 // SumProjectGPURequests totals the GPUs the project's apps would request if
-// all ran at once: gpu × replicas for web/worker/job, gpu × 1 for cron.
+// all ran at once: gpu × replicas for web/worker, gpu × 1 for cron, gpu ×
+// nodes for job (a job app's planned footprint is its multi-node run shape
+// — see App.Nodes — not its largely-unused replicas column).
 // UX estimate only — the namespace ResourceQuota is the hard enforcement.
 func (s *Store) SumProjectGPURequests(projectID int64) (int64, error) {
 	var sum int64
 	err := s.db.QueryRow(
-		`SELECT COALESCE(SUM(gpu_count * CASE WHEN kind = 'cron' THEN 1 ELSE MAX(replicas, 1) END), 0)
+		`SELECT COALESCE(SUM(gpu_count * CASE
+			WHEN kind = 'cron' THEN 1
+			WHEN kind = 'job' THEN MAX(nodes, 1)
+			ELSE MAX(replicas, 1)
+		END), 0)
 		 FROM apps WHERE project_id = ?`, projectID).Scan(&sum)
 	return sum, err
 }

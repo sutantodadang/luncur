@@ -78,6 +78,10 @@ func migrate(db *sql.DB) error {
 		{"apps", "inject_s3", `ALTER TABLE apps ADD COLUMN inject_s3 INTEGER NOT NULL DEFAULT 0`},
 		{"apps", "model_source", `ALTER TABLE apps ADD COLUMN model_source TEXT NOT NULL DEFAULT ''`},
 		{"apps", "runtime", `ALTER TABLE apps ADD COLUMN runtime TEXT NOT NULL DEFAULT ''`},
+		{"apps", "nodes", `ALTER TABLE apps ADD COLUMN nodes INTEGER NOT NULL DEFAULT 1`},
+		{"apps", "framework", `ALTER TABLE apps ADD COLUMN framework TEXT NOT NULL DEFAULT ''`},
+		{"job_runs", "nodes", `ALTER TABLE job_runs ADD COLUMN nodes INTEGER NOT NULL DEFAULT 1`},
+		{"job_runs", "framework", `ALTER TABLE job_runs ADD COLUMN framework TEXT NOT NULL DEFAULT ''`},
 		{"gpu_instances", "external_ref", `ALTER TABLE gpu_instances ADD COLUMN external_ref TEXT NOT NULL DEFAULT ''`},
 		{"projects", "gpu_quota", `ALTER TABLE projects ADD COLUMN gpu_quota INTEGER NOT NULL DEFAULT 0`},
 	} {

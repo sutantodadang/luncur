@@ -958,6 +958,41 @@ func (c *Client) GPUPodsRequested(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
+// RunningJobPods counts a Job's pods in phase Running vs all its pods, via
+// the batch.kubernetes.io/job-name label the Job controller stamps on every
+// pod it creates. Used by the multi-node gang guard: a run whose pods can't
+// all reach Running within the window is failed instead of squatting GPUs
+// half-scheduled. No clientset wired -> (0, 0, nil).
+func (c *Client) RunningJobPods(ctx context.Context, ns, jobName string) (running, total int, err error) {
+	if c.cs == nil {
+		return 0, 0, nil
+	}
+	pods, err := c.cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "batch.kubernetes.io/job-name=" + jobName,
+	})
+	if err != nil {
+		return 0, 0, fmt.Errorf("list pods: %w", err)
+	}
+	for _, p := range pods.Items {
+		if p.Status.Phase == corev1.PodRunning {
+			running++
+		}
+	}
+	return running, len(pods.Items), nil
+}
+
+// DeleteJob removes a Job with foreground propagation, so its pods are torn
+// down with it instead of orphaned. Missing job is success — callers use
+// this to tear down, not to assert existence.
+func (c *Client) DeleteJob(ctx context.Context, ns, name string) error {
+	fg := metav1.DeletePropagationForeground
+	err := c.cs.BatchV1().Jobs(ns).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &fg})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete job %s: %w", name, err)
+	}
+	return nil
+}
+
 // GPUBusyNodes reports which nodes currently have a GPU-requesting pod
 // scheduled on them, for the per-instance idle loop: an instance whose node
 // label isn't in this set has nothing running on it and is a destroy

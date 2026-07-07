@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,6 +78,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/retry", s.uiPage(s.handleUIDomainRetry))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/scale", s.uiPage(s.handleUIScale))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/runs", s.uiPage(s.handleUIRunCreate))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/training", s.uiPage(s.handleUITraining))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/health", s.uiPage(s.handleUIHealth))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook", s.uiPage(s.handleUIWebhookEnable))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook/disable", s.uiPage(s.handleUIWebhookDisable))
@@ -901,6 +903,7 @@ type uiDeployRow struct {
 type uiRunRow struct {
 	ID         int64
 	Status     string
+	Nodes      int
 	ExitCode   string
 	StartedAt  string
 	FinishedAt string
@@ -920,7 +923,7 @@ func uiRunRows(runs []store.JobRun) []uiRunRow {
 			finished = run.FinishedAt.String
 		}
 		rows = append(rows, uiRunRow{
-			ID: run.ID, Status: run.Status, ExitCode: exit,
+			ID: run.ID, Status: run.Status, Nodes: run.Nodes, ExitCode: exit,
 			StartedAt: run.StartedAt, FinishedAt: finished,
 		})
 	}
@@ -1057,7 +1060,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"WebhookURL":     "http://" + r.Host + webhookPath(p.Name, a.Name),
 		"Domains": domains, "Volumes": volumes, "Warning": firstNonEmpty(r.URL.Query().Get("warn"), r.URL.Query().Get("err")),
 		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics, "Pods": pods,
-		"Runs": runRows,
+		"Runs": runRows, "TrainFrameworks": render.TrainFrameworks,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	}
 	for k, v := range extra {
@@ -1201,9 +1204,10 @@ func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.U
 }
 
 // handleUIRunCreate is startRun's UI twin: same shared core, redirect
-// instead of a 202 JSON body. A missing live deployment redirects back to
-// the app page with ?err= (matches handleUICreateApp's deploy-failure
-// idiom) instead of erroring the whole request.
+// instead of a 202 JSON body. A missing live deployment, a bad nodes/
+// framework override, or an over-budget nodes bump redirects back to the
+// app page with ?err= (matches handleUICreateApp's deploy-failure idiom)
+// instead of erroring the whole request.
 func (s *server) handleUIRunCreate(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.uiProject(w, r, u)
 	if !ok {
@@ -1225,14 +1229,78 @@ func (s *server) handleUIRunCreate(w http.ResponseWriter, r *http.Request, u sto
 		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
 		return
 	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	opts, err := parseUIRunOpts(r)
+	if err != nil {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
 
-	if _, err := s.startRun(r.Context(), p, a); err != nil {
-		if errors.Is(err, errNotDeployed) {
+	if _, err := s.startRun(r.Context(), p, a, opts); err != nil {
+		if errors.Is(err, errNotDeployed) || errors.Is(err, errRunOverBudget) {
 			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 			return
 		}
 		log.Printf("ui start run: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	uiRedirect(w, r, p, a)
+}
+
+// parseUIRunOpts reads the run-now form's optional nodes/framework
+// overrides — both left blank means the zero-value runOpts (app defaults).
+// framework is validated against render.TrainFrameworks here so a bad value
+// fails before startRun's gpu-budget check runs, same as handleCreateRun's
+// JSON-body validation.
+func parseUIRunOpts(r *http.Request) (runOpts, error) {
+	var opts runOpts
+	if v := r.PostFormValue("nodes"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return runOpts{}, errors.New("invalid nodes")
+		}
+		opts.Nodes = n
+	}
+	framework := r.PostFormValue("framework")
+	if framework != "" && !slices.Contains(render.TrainFrameworks, framework) {
+		return runOpts{}, fmt.Errorf("unknown framework %q (valid: %s)", framework, strings.Join(render.TrainFrameworks, ", "))
+	}
+	opts.Framework = framework
+	return opts, nil
+}
+
+// handleUITraining is setAppTraining's UI twin: same shared store+budget
+// core as handleSetTraining, form-POST instead of JSON, redirect back to
+// the app page with ?err= on failure (mirrors handleUIGPUQuota).
+func (s *server) handleUITraining(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if a.Kind != "job" {
+		http.Error(w, "training defaults are only valid for job apps", http.StatusBadRequest)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	nodes, err := strconv.Atoi(r.PostFormValue("nodes"))
+	if err != nil {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("invalid nodes"), http.StatusSeeOther)
+		return
+	}
+	framework := r.PostFormValue("framework")
+	if err := s.setAppTraining(p, a, nodes, framework); err != nil {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}
 	uiRedirect(w, r, p, a)

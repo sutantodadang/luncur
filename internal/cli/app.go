@@ -164,6 +164,32 @@ func appCmd() *cobra.Command {
 	raw.Flags().StringVar(&rawProject, "project", "", "project name")
 	raw.MarkFlagRequired("project")
 
-	cmd.AddCommand(create, list, info, raw, ejectCmd(), adoptCmd(), appS3EnvCmd())
+	var trainProject string
+	var trainNodes int
+	var trainFramework string
+	training := &cobra.Command{
+		Use:   "training <app>",
+		Short: "Set a job app's default multi-node run shape (nodes/framework)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			if err := c.SetTraining(trainProject, args[0], trainNodes, trainFramework); err != nil {
+				return err
+			}
+			cmd.Printf("training defaults for %s: nodes=%d framework=%q\n", args[0], trainNodes, trainFramework)
+			cmd.Printf("$ luncur app training %s --project %s --nodes %d --framework %s\n", args[0], trainProject, trainNodes, trainFramework)
+			return nil
+		},
+	}
+	training.Flags().StringVar(&trainProject, "project", "", "project name")
+	training.MarkFlagRequired("project")
+	training.Flags().IntVar(&trainNodes, "nodes", 1, "default number of nodes a run spans")
+	training.MarkFlagRequired("nodes")
+	training.Flags().StringVar(&trainFramework, "framework", "", "rendezvous env preset: torchrun|torch (empty = LUNCUR_* contract only)")
+
+	cmd.AddCommand(create, list, info, raw, training, ejectCmd(), adoptCmd(), appS3EnvCmd())
 	return cmd
 }

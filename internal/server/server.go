@@ -200,6 +200,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/deploys", s.authed(s.handleListDeploys))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/deploys/{id}", s.authed(s.handleGetDeploy))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/deploys/{id}/logs", s.authed(s.handleDeployLogs))
+	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/training", s.authed(s.handleSetTraining))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/runs", s.authed(s.handleCreateRun))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/runs", s.authed(s.handleListRuns))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/runs/{id}", s.authed(s.handleGetRun))

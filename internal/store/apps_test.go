@@ -467,3 +467,28 @@ func TestSetWebhookSecret(t *testing.T) {
 		t.Fatalf("unknown id: %v, want ErrNotFound", err)
 	}
 }
+
+func TestSetAppTraining(t *testing.T) {
+	s := openTest(t)
+	a := seedApp(t, s)
+
+	if a.Nodes != 1 || a.Framework != "" {
+		t.Fatalf("defaults: got nodes=%d framework=%q, want 1 and empty", a.Nodes, a.Framework)
+	}
+	if err := s.SetAppTraining(a.ID, 4, "torchrun"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetApp(a.ProjectID, a.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Nodes != 4 || got.Framework != "torchrun" {
+		t.Fatalf("got nodes=%d framework=%q, want 4 torchrun", got.Nodes, got.Framework)
+	}
+	if err := s.SetAppTraining(a.ID, 0, ""); err == nil {
+		t.Fatal("nodes=0 accepted, want error")
+	}
+	if err := s.SetAppTraining(a.ID, 2, "mpi"); err == nil {
+		t.Fatal("unknown framework accepted, want error")
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -719,5 +720,53 @@ func TestGPUBusyNodes(t *testing.T) {
 		if busy[k] != v {
 			t.Fatalf("GPUBusyNodes = %+v, want %+v", busy, want)
 		}
+	}
+}
+
+// TestRunningJobPods covers the multi-node gang guard's core query: two of
+// three pods labeled for the same Job are Running, one is still Pending.
+func TestRunningJobPods(t *testing.T) {
+	mkPod := func(name string, phase corev1.PodPhase) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name, Namespace: "ns-train",
+				Labels: map[string]string{"batch.kubernetes.io/job-name": "train-run-1"},
+			},
+			Status: corev1.PodStatus{Phase: phase},
+		}
+	}
+	cs := k8sfake.NewSimpleClientset(
+		mkPod("train-run-1-0", corev1.PodRunning),
+		mkPod("train-run-1-1", corev1.PodRunning),
+		mkPod("train-run-1-2", corev1.PodPending),
+	)
+	c := NewForTest(nil, cs)
+
+	running, total, err := c.RunningJobPods(context.Background(), "ns-train", "train-run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running != 2 || total != 3 {
+		t.Fatalf("RunningJobPods = (%d, %d), want (2, 3)", running, total)
+	}
+}
+
+// TestDeleteJob covers both the happy path (Job is removed) and idempotency
+// (deleting an already-gone Job is not an error).
+func TestDeleteJob(t *testing.T) {
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "train-run-1", Namespace: "ns-train"}}
+	cs := k8sfake.NewSimpleClientset(job)
+	c := NewForTest(nil, cs)
+
+	if err := c.DeleteJob(context.Background(), "ns-train", "train-run-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.BatchV1().Jobs("ns-train").Get(context.Background(), "train-run-1", metav1.GetOptions{}); err == nil {
+		t.Fatal("job still present after DeleteJob")
+	}
+
+	// Idempotent: deleting a missing job is success, not an error.
+	if err := c.DeleteJob(context.Background(), "ns-train", "does-not-exist"); err != nil {
+		t.Fatalf("delete missing job: %v", err)
 	}
 }
