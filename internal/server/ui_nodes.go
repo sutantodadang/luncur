@@ -37,15 +37,15 @@ func (s *server) handleUINodes(w http.ResponseWriter, r *http.Request, u store.U
 	rows := make([]map[string]any, 0, len(instances))
 	if v, err := s.vast(); err == nil {
 		hasKey = true
-		live := map[int64]gpucloud.Instance{}
+		live := map[string]gpucloud.Instance{}
 		if ins, err := v.List(r.Context()); err == nil {
 			for _, i := range ins {
-				live[i.ID] = i
+				live[strconv.FormatInt(i.ID, 10)] = i
 			}
 		}
 		for _, g := range instances {
 			m := gpuInstanceJSON(g)
-			if li, ok := live[g.ExternalID]; ok {
+			if li, ok := live[g.ExternalRef]; ok {
 				m["provider_status"] = li.Status
 				m["dph_total"] = li.DPHTotal
 			}

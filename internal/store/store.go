@@ -78,6 +78,7 @@ func migrate(db *sql.DB) error {
 		{"apps", "inject_s3", `ALTER TABLE apps ADD COLUMN inject_s3 INTEGER NOT NULL DEFAULT 0`},
 		{"apps", "model_source", `ALTER TABLE apps ADD COLUMN model_source TEXT NOT NULL DEFAULT ''`},
 		{"apps", "runtime", `ALTER TABLE apps ADD COLUMN runtime TEXT NOT NULL DEFAULT ''`},
+		{"gpu_instances", "external_ref", `ALTER TABLE gpu_instances ADD COLUMN external_ref TEXT NOT NULL DEFAULT ''`},
 	} {
 		var n int
 		if err := db.QueryRow(
@@ -90,6 +91,10 @@ func migrate(db *sql.DB) error {
 				return err
 			}
 		}
+	}
+
+	if err := backfillGPUExternalRef(db); err != nil {
+		return fmt.Errorf("backfill gpu_instances.external_ref: %w", err)
 	}
 
 	// Backfill per-app seq for rows written before the column existed:
@@ -127,6 +132,13 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("create deployments seq index: %w", err)
 	}
 	return nil
+}
+
+// backfillGPUExternalRef copies pre-A2 integer contract ids into the string
+// external_ref column. Idempotent: only touches rows where external_ref = ''.
+func backfillGPUExternalRef(db *sql.DB) error {
+	_, err := db.Exec(`UPDATE gpu_instances SET external_ref = CAST(external_id AS TEXT) WHERE external_ref = '' AND external_id != 0`)
+	return err
 }
 
 // deploymentsTextSchema is the current deployments table shape (kept in sync

@@ -212,7 +212,7 @@ func (s *server) rentGPU(ctx context.Context, offerID int64, diskGB int, gpuName
 	if err != nil {
 		return store.GPUInstance{}, err
 	}
-	g, err := s.st.CreateGPUInstance("vastai", extID, label, gpuName, numGPUs)
+	g, err := s.st.CreateGPUInstance("vastai", strconv.FormatInt(extID, 10), label, gpuName, numGPUs)
 	if err != nil {
 		// The rent went through; losing the row must not hide the contract.
 		return store.GPUInstance{}, fmt.Errorf("rented (contract %d) but failed to record it: %w", extID, err)
@@ -228,11 +228,11 @@ func (s *server) handleListGPUInstances(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	live := map[int64]gpucloud.Instance{}
+	live := map[string]gpucloud.Instance{}
 	if v, err := s.vast(); err == nil {
 		if ins, err := v.List(r.Context()); err == nil {
 			for _, i := range ins {
-				live[i.ID] = i
+				live[strconv.FormatInt(i.ID, 10)] = i
 			}
 		} else {
 			log.Printf("vast list: %v", err)
@@ -241,7 +241,7 @@ func (s *server) handleListGPUInstances(w http.ResponseWriter, r *http.Request, 
 	out := make([]map[string]any, 0, len(list))
 	for _, g := range list {
 		m := gpuInstanceJSON(g)
-		if li, ok := live[g.ExternalID]; ok {
+		if li, ok := live[g.ExternalRef]; ok {
 			m["provider_status"] = li.Status
 			m["dph_total"] = li.DPHTotal
 		}
@@ -285,7 +285,11 @@ func (s *server) destroyGPUInstance(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	if err := v.Destroy(ctx, g.ExternalID); err != nil {
+	extID, err := strconv.ParseInt(g.ExternalRef, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid vast.ai external ref %q: %w", g.ExternalRef, err)
+	}
+	if err := v.Destroy(ctx, extID); err != nil {
 		return err
 	}
 	if err := s.st.MarkGPUInstanceDestroyed(g.ID); err != nil {
@@ -296,7 +300,7 @@ func (s *server) destroyGPUInstance(ctx context.Context, id int64) error {
 
 func gpuInstanceJSON(g store.GPUInstance) map[string]any {
 	return map[string]any{
-		"id": g.ID, "provider": g.Provider, "external_id": g.ExternalID,
+		"id": g.ID, "provider": g.Provider, "external_id": g.ExternalRef,
 		"label": g.Label, "gpu_name": g.GPUName, "num_gpus": g.NumGPUs,
 		"status": g.Status, "created_at": g.CreatedAt,
 	}
@@ -350,7 +354,12 @@ func (s *server) runGPUIdleLoop(ctx context.Context) {
 			continue
 		}
 		for _, g := range list {
-			if err := v.Destroy(ctx, g.ExternalID); err != nil {
+			extID, err := strconv.ParseInt(g.ExternalRef, 10, 64)
+			if err != nil {
+				log.Printf("gpu idle destroy %s: invalid external ref %q: %v", g.Label, g.ExternalRef, err)
+				continue
+			}
+			if err := v.Destroy(ctx, extID); err != nil {
 				log.Printf("gpu idle destroy %s: %v", g.Label, err)
 				continue
 			}

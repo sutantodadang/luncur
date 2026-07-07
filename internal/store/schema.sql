@@ -192,7 +192,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 CREATE TABLE IF NOT EXISTS gpu_instances (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   provider    TEXT NOT NULL,
-  external_id INTEGER NOT NULL,
+  external_id INTEGER NOT NULL DEFAULT 0,
+  external_ref TEXT NOT NULL DEFAULT '',
   label       TEXT NOT NULL,
   gpu_name    TEXT NOT NULL DEFAULT '',
   num_gpus    INTEGER NOT NULL DEFAULT 0,
