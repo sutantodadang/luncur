@@ -14,9 +14,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sutantodadang/luncur/internal/gpucloud"
 	"github.com/sutantodadang/luncur/internal/secret"
+	"github.com/sutantodadang/luncur/internal/store"
 )
 
 // gpuTestServer builds a *server with a sealer, a node-token file (so
@@ -346,5 +348,111 @@ func TestListGPUInstancesMergesProviders(t *testing.T) {
 	}
 	if !seen["vastai"] || !seen["nebius"] {
 		t.Fatalf("seen = %+v, want both vastai and nebius", seen)
+	}
+}
+
+// TestDecideIdleDestroysBusyNeverDestroyed covers a busy instance: it's
+// never a destroy candidate and carries no idle clock into next.
+func TestDecideIdleDestroysBusyNeverDestroyed(t *testing.T) {
+	now := time.Now()
+	instances := []store.GPUInstance{{Label: "gpu-1", Status: "active"}}
+	busy := map[string]bool{"gpu-1": true}
+	destroy, next := decideIdleDestroys(instances, busy, map[string]time.Time{"gpu-1": now.Add(-time.Hour)}, now, 5*time.Minute)
+	if len(destroy) != 0 {
+		t.Fatalf("destroy = %v, want none", destroy)
+	}
+	if _, ok := next["gpu-1"]; ok {
+		t.Fatalf("next = %+v, want gpu-1 cleared (busy)", next)
+	}
+}
+
+// TestDecideIdleDestroysIdleTicksThenDestroys covers the two-tick idle path:
+// the first idle tick sets the clock without destroying, and a later tick
+// once the window has elapsed destroys it.
+func TestDecideIdleDestroysIdleTicksThenDestroys(t *testing.T) {
+	instances := []store.GPUInstance{{Label: "gpu-1", Status: "active"}}
+	busy := map[string]bool{}
+	window := 5 * time.Minute
+
+	t0 := time.Now()
+	destroy, next := decideIdleDestroys(instances, busy, map[string]time.Time{}, t0, window)
+	if len(destroy) != 0 {
+		t.Fatalf("first tick: destroy = %v, want none", destroy)
+	}
+	since, ok := next["gpu-1"]
+	if !ok || !since.Equal(t0) {
+		t.Fatalf("first tick: next = %+v, want gpu-1 = %v", next, t0)
+	}
+
+	t1 := t0.Add(window)
+	destroy, next = decideIdleDestroys(instances, busy, next, t1, window)
+	if len(destroy) != 1 || destroy[0] != "gpu-1" {
+		t.Fatalf("second tick: destroy = %v, want [gpu-1]", destroy)
+	}
+	if _, ok := next["gpu-1"]; !ok {
+		t.Fatalf("second tick: next = %+v, want gpu-1 still tracked", next)
+	}
+}
+
+// TestDecideIdleDestroysPendingUnscheduledFreezes covers busy[""]==true (an
+// unscheduled Pending GPU pod): destroys freeze entirely this tick, and
+// idleSince is returned unchanged even though an instance is long idle.
+func TestDecideIdleDestroysPendingUnscheduledFreezes(t *testing.T) {
+	now := time.Now()
+	instances := []store.GPUInstance{{Label: "gpu-1", Status: "active"}}
+	busy := map[string]bool{"": true}
+	idleSince := map[string]time.Time{"gpu-1": now.Add(-time.Hour)}
+	destroy, next := decideIdleDestroys(instances, busy, idleSince, now, 5*time.Minute)
+	if len(destroy) != 0 {
+		t.Fatalf("destroy = %v, want none (frozen)", destroy)
+	}
+	if len(next) != len(idleSince) || !next["gpu-1"].Equal(idleSince["gpu-1"]) {
+		t.Fatalf("next = %+v, want idleSince unchanged %+v", next, idleSince)
+	}
+}
+
+// TestDecideIdleDestroysMixedFleet covers a fleet with a long-idle instance
+// past the window, a busy instance, and a short-idle instance still under
+// the window: only the long-idle one is destroyed, the busy one is cleared
+// from next, and the short-idle one carries its clock forward.
+func TestDecideIdleDestroysMixedFleet(t *testing.T) {
+	now := time.Now()
+	window := 5 * time.Minute
+	instances := []store.GPUInstance{
+		{Label: "idle-long", Status: "active"},
+		{Label: "busy", Status: "active"},
+		{Label: "idle-short", Status: "active"},
+	}
+	busy := map[string]bool{"busy": true}
+	idleSince := map[string]time.Time{
+		"idle-long":  now.Add(-2 * window),
+		"busy":       now.Add(-2 * window),
+		"idle-short": now.Add(-1 * time.Minute),
+	}
+	destroy, next := decideIdleDestroys(instances, busy, idleSince, now, window)
+	if len(destroy) != 1 || destroy[0] != "idle-long" {
+		t.Fatalf("destroy = %v, want [idle-long]", destroy)
+	}
+	if _, ok := next["busy"]; ok {
+		t.Fatalf("next = %+v, want busy cleared", next)
+	}
+	if since, ok := next["idle-short"]; !ok || !since.Equal(idleSince["idle-short"]) {
+		t.Fatalf("next[idle-short] = %v, ok=%v, want %v carried forward", since, ok, idleSince["idle-short"])
+	}
+	if _, ok := next["idle-long"]; !ok {
+		t.Fatalf("next = %+v, want idle-long still tracked (retries next tick if destroy fails)", next)
+	}
+}
+
+// TestDecideIdleDestroysWindowBoundary confirms now.Sub(since) == window
+// counts as destroy (>=, not >).
+func TestDecideIdleDestroysWindowBoundary(t *testing.T) {
+	window := 5 * time.Minute
+	now := time.Now()
+	instances := []store.GPUInstance{{Label: "gpu-1", Status: "active"}}
+	idleSince := map[string]time.Time{"gpu-1": now.Add(-window)}
+	destroy, _ := decideIdleDestroys(instances, map[string]bool{}, idleSince, now, window)
+	if len(destroy) != 1 || destroy[0] != "gpu-1" {
+		t.Fatalf("destroy = %v, want [gpu-1] at exact window boundary", destroy)
 	}
 }

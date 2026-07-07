@@ -10,6 +10,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -658,5 +659,65 @@ func TestAppMetricsUnavailable(t *testing.T) {
 	c := NewForTest(dyn, nil)
 	if _, ok := c.AppMetrics(context.Background(), "proj", "web"); ok {
 		t.Fatal("want unavailable when metrics API missing")
+	}
+}
+
+// gpuResourceList builds a corev1.ResourceList requesting n GPUs, for
+// TestGPUBusyNodes' pod fixtures.
+func gpuResourceList(n int64) corev1.ResourceList {
+	return corev1.ResourceList{
+		corev1.ResourceName(render.GPUResource): *resource.NewQuantity(n, resource.DecimalSI),
+	}
+}
+
+// TestGPUBusyNodes covers the three cases the per-instance idle loop cares
+// about: a GPU pod running on a node marks that node busy; a non-GPU pod on
+// another node is irrelevant; and a Pending GPU pod with no NodeName yet
+// (unscheduled) is recorded under the "" key so callers can freeze destroys.
+func TestGPUBusyNodes(t *testing.T) {
+	gpuRunning := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "gpu-running", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			NodeName: "node-a",
+			Containers: []corev1.Container{{
+				Name:      "main",
+				Resources: corev1.ResourceRequirements{Limits: gpuResourceList(1)},
+			}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	nonGPURunning := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			NodeName:   "node-b",
+			Containers: []corev1.Container{{Name: "main"}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	gpuPendingUnscheduled := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "gpu-pending", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:      "main",
+				Resources: corev1.ResourceRequirements{Requests: gpuResourceList(1)},
+			}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodPending},
+	}
+	cs := k8sfake.NewSimpleClientset(gpuRunning, nonGPURunning, gpuPendingUnscheduled)
+	c := NewForTest(nil, cs)
+
+	busy, err := c.GPUBusyNodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"node-a": true, "": true}
+	if len(busy) != len(want) {
+		t.Fatalf("GPUBusyNodes = %+v, want %+v", busy, want)
+	}
+	for k, v := range want {
+		if busy[k] != v {
+			t.Fatalf("GPUBusyNodes = %+v, want %+v", busy, want)
+		}
 	}
 }

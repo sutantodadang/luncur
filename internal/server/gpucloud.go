@@ -504,12 +504,45 @@ func gpuInstanceJSON(g store.GPUInstance) map[string]any {
 	}
 }
 
-// runGPUIdleLoop destroys rented instances after gpu_idle_minutes of no pod
-// requesting GPUs. Disabled unless the setting is a positive integer.
-// ponytail: one global idle window across all instances — per-instance
-// tracking when someone actually runs mixed always-on + burst fleets.
+// decideIdleDestroys is the pure core of the idle loop, extracted for tests:
+// given tracked (non-destroyed) instances, the busy-node set, per-label
+// idle-since state, now, and the window, it returns labels to destroy and the
+// updated idle-since state.
+//
+// ponytail: a Pending GPU pod with no NodeName yet freezes ALL destroys this
+// tick (busy[""]) rather than tracking per-label state through scheduler
+// churn — simplest safe behavior while the scheduler could still place that
+// pod on any node.
+func decideIdleDestroys(instances []store.GPUInstance, busy map[string]bool, idleSince map[string]time.Time, now time.Time, window time.Duration) (destroy []string, next map[string]time.Time) {
+	if busy[""] {
+		return nil, idleSince
+	}
+	next = map[string]time.Time{}
+	for _, g := range instances {
+		if g.Status == "destroyed" {
+			continue
+		}
+		label := g.Label
+		if busy[label] {
+			// Busy: don't carry an idle clock — resets on next idle tick.
+			continue
+		}
+		since, ok := idleSince[label]
+		if !ok {
+			since = now
+		}
+		next[label] = since
+		if now.Sub(since) >= window {
+			destroy = append(destroy, label)
+		}
+	}
+	return destroy, next
+}
+
+// runGPUIdleLoop destroys rented instances, per instance, after
+// gpu_idle_minutes of no GPU pod scheduled on that instance's node.
+// Disabled unless the setting is a positive integer.
 func (s *server) runGPUIdleLoop(ctx context.Context) {
-	var idleSince time.Time
 	tick := time.NewTicker(time.Minute)
 	defer tick.Stop()
 	for {
@@ -523,36 +556,42 @@ func (s *server) runGPUIdleLoop(ctx context.Context) {
 			mins, _ = strconv.Atoi(v)
 		}
 		if mins <= 0 || s.kube == nil {
-			idleSince = time.Time{}
+			s.gpuIdleSince = nil
 			continue
 		}
 		list, err := s.st.ListGPUInstances()
-		if err != nil || len(list) == 0 {
-			idleSince = time.Time{}
+		if err != nil {
 			continue
 		}
-		busy, err := s.kube.GPUPodsRequested(ctx)
+		if len(list) == 0 {
+			s.gpuIdleSince = nil
+			continue
+		}
+		busy, err := s.kube.GPUBusyNodes(ctx)
 		if err != nil {
 			log.Printf("gpu idle check: %v", err)
 			continue
 		}
-		if busy {
-			idleSince = time.Time{}
+		destroy, next := decideIdleDestroys(list, busy, s.gpuIdleSince, time.Now(), time.Duration(mins)*time.Minute)
+		s.gpuIdleSince = next
+		if len(destroy) == 0 {
 			continue
 		}
-		if idleSince.IsZero() {
-			idleSince = time.Now()
-			continue
-		}
-		if time.Since(idleSince) < time.Duration(mins)*time.Minute {
-			continue
-		}
-		v, err := s.vast()
-		if err != nil {
-			continue
-		}
+		byLabel := make(map[string]store.GPUInstance, len(list))
 		for _, g := range list {
-			if err := v.Destroy(ctx, g.ExternalRef); err != nil {
+			byLabel[g.Label] = g
+		}
+		for _, label := range destroy {
+			g, ok := byLabel[label]
+			if !ok {
+				continue
+			}
+			prov, err := s.gpuProvider(g.Provider)
+			if err != nil {
+				log.Printf("gpu idle destroy %s: %v", g.Label, err)
+				continue
+			}
+			if err := prov.Destroy(ctx, g.ExternalRef); err != nil {
 				log.Printf("gpu idle destroy %s: %v", g.Label, err)
 				continue
 			}
@@ -561,6 +600,5 @@ func (s *server) runGPUIdleLoop(ctx context.Context) {
 			}
 			log.Printf("gpu idle: destroyed %s after %dm without GPU pods", g.Label, mins)
 		}
-		idleSince = time.Time{}
 	}
 }
