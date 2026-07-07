@@ -66,6 +66,7 @@ func (s *server) appJSON(p store.Project, a store.App) map[string]any {
 		"webhook_enabled": a.WebhookSecret != nil,
 		"internal":        a.Internal,
 		"gpu":             a.GPUCount,
+		"s3_env":          a.InjectS3,
 	}
 	if a.Internal {
 		out["internal_url"] = internalURLFor(a.Name, p.Namespace)

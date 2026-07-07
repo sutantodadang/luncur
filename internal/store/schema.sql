@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS apps (
   build_path    TEXT NOT NULL DEFAULT '',
   internal      INTEGER NOT NULL DEFAULT 0,
   gpu_count     INTEGER NOT NULL DEFAULT 0,
+  inject_s3     INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, name)
 );
@@ -117,7 +118,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS addons (
   id         INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  type       TEXT NOT NULL CHECK (type IN ('postgres','redis')),
+  type       TEXT NOT NULL CHECK (type IN ('postgres','redis','minio','mlflow')),
   name       TEXT NOT NULL,
   version    TEXT NOT NULL,
   size_gb    INTEGER NOT NULL DEFAULT 1,
@@ -149,6 +150,18 @@ CREATE TABLE IF NOT EXISTS volumes (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(app_id, name),
   UNIQUE(app_id, path)
+);
+
+-- Per-project external S3 credentials (endpoint + sealed keys). An
+-- in-cluster MinIO addon is the alternative; this table only holds
+-- user-supplied external object storage.
+CREATE TABLE IF NOT EXISTS project_s3 (
+  project_id     INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  endpoint       TEXT NOT NULL,
+  region         TEXT NOT NULL DEFAULT '',
+  bucket         TEXT NOT NULL,
+  access_key_enc BLOB NOT NULL,
+  secret_key_enc BLOB NOT NULL
 );
 
 -- One row per triggered run of a kind=job app. exit_code is NULL until the

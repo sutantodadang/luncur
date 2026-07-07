@@ -1,6 +1,6 @@
-// Package addon renders managed Postgres/Redis instances: StatefulSet +
-// headless Service + credentials Secret, all in the app project's
-// namespace.
+// Package addon renders managed Postgres/Redis/MinIO instances:
+// StatefulSet + headless Service + credentials Secret, all in the app
+// project's namespace.
 package addon
 
 import (
@@ -16,8 +16,16 @@ import (
 	"github.com/sutantodadang/luncur/internal/render"
 )
 
-// Creds holds addon credentials; Redis only uses Password.
+// Creds holds addon credentials; Redis only uses Password. For MinIO,
+// User/Password are the root credentials and DB is the default bucket.
 type Creds struct{ User, Password, DB string }
+
+// MinIOPort is the S3 API port a minio addon serves on; MinIOConsolePort is
+// its web console.
+const (
+	MinIOPort        int32 = 9000
+	MinIOConsolePort int32 = 9001
+)
 
 // Params configures one addon instance's manifests.
 type Params struct {
@@ -41,8 +49,8 @@ func labels(name string) map[string]string {
 // Render builds the manifest set for one addon instance: StatefulSet,
 // headless Service, and credentials Secret.
 func Render(p Params) ([]render.Object, error) {
-	if p.Type != "postgres" && p.Type != "redis" {
-		return nil, fmt.Errorf("unsupported addon type %q (postgres|redis)", p.Type)
+	if p.Type != "postgres" && p.Type != "redis" && p.Type != "minio" {
+		return nil, fmt.Errorf("unsupported addon type %q (postgres|redis|minio)", p.Type)
 	}
 
 	var objs []render.Object
@@ -61,6 +69,7 @@ func Render(p Params) ([]render.Object, error) {
 	var (
 		container  corev1.Container
 		port       int32
+		extraPorts []int32
 		stringData map[string]string
 	)
 
@@ -119,6 +128,32 @@ func Render(p Params) ([]render.Object, error) {
 		stringData = map[string]string{
 			"REDIS_PASSWORD": p.Creds.Password,
 		}
+	case "minio":
+		port = MinIOPort
+		extraPorts = []int32{MinIOConsolePort}
+		container = corev1.Container{
+			Name:  "minio",
+			Image: fmt.Sprintf("minio/minio:%s", p.Version),
+			Args:  []string{"server", "/data", "--console-address", fmt.Sprintf(":%d", MinIOConsolePort)},
+			EnvFrom: []corev1.EnvFromSource{{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: SecretName(p.Name)},
+				},
+			}},
+			Ports: []corev1.ContainerPort{{ContainerPort: port}, {ContainerPort: MinIOConsolePort}},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "data", MountPath: "/data"},
+			},
+			ReadinessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{Path: "/minio/health/live", Port: intstr.FromInt32(port)},
+				},
+			},
+		}
+		stringData = map[string]string{
+			"MINIO_ROOT_USER":     p.Creds.User,
+			"MINIO_ROOT_PASSWORD": p.Creds.Password,
+		}
 	}
 
 	sts := &appsv1.StatefulSet{
@@ -149,13 +184,19 @@ func Render(p Params) ([]render.Object, error) {
 		return nil, err
 	}
 
+	svcPorts := []corev1.ServicePort{{Name: "main", Port: port, TargetPort: intstr.FromInt32(port)}}
+	for _, ep := range extraPorts {
+		svcPorts = append(svcPorts, corev1.ServicePort{
+			Name: fmt.Sprintf("port-%d", ep), Port: ep, TargetPort: intstr.FromInt32(ep),
+		})
+	}
 	svc := &corev1.Service{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
 		ObjectMeta: meta,
 		Spec: corev1.ServiceSpec{
 			ClusterIP: "None",
 			Selector:  lbls,
-			Ports:     []corev1.ServicePort{{Port: port, TargetPort: intstr.FromInt32(port)}},
+			Ports:     svcPorts,
 		},
 	}
 	if err := add("Service", svc); err != nil {

@@ -10,8 +10,10 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/sutantodadang/luncur/internal/addon"
+	"github.com/sutantodadang/luncur/internal/s3"
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
@@ -24,11 +26,19 @@ func newAddonCreds(typ string) (addon.Creds, error) {
 		return addon.Creds{}, err
 	}
 	pw := hex.EncodeToString(raw)
-	if typ == "postgres" {
+	switch typ {
+	case "postgres":
 		return addon.Creds{User: "app", Password: pw, DB: "app"}, nil
+	case "minio":
+		// User/Password are the root credentials; DB is the default bucket.
+		return addon.Creds{User: "luncur", Password: pw, DB: "luncur"}, nil
 	}
 	return addon.Creds{Password: pw}, nil
 }
+
+// minioDefaultVersion is the pinned minio/minio image tag new minio addons
+// get when no version is requested; bumped deliberately, never floated.
+const minioDefaultVersion = "RELEASE.2025-04-22T22-12-26Z"
 
 // sealCreds/unsealCreds JSON-round-trip addon.Creds through the sealer —
 // same pattern as app env vars (appenv.go).
@@ -73,8 +83,27 @@ func addonKeyURL(typ, name, namespace string, creds addon.Creds) (key, url strin
 	case "redis":
 		key = "REDIS_URL"
 		url = fmt.Sprintf("redis://:%s@%s:6379", creds.Password, host)
+	case "minio":
+		key = "LUNCUR_S3_ENDPOINT"
+		url = fmt.Sprintf("http://%s:%d", host, addon.MinIOPort)
 	}
 	return key, url
+}
+
+// addonEnvVars is the full env map one attached addon injects. Postgres and
+// redis inject their single connection URL; minio injects the LUNCUR_S3_*
+// set apps and jobs use to reach project object storage.
+func addonEnvVars(typ, name, namespace string, creds addon.Creds) map[string]string {
+	key, url := addonKeyURL(typ, name, namespace, creds)
+	if typ == "minio" {
+		return map[string]string{
+			"LUNCUR_S3_ENDPOINT": url,
+			"LUNCUR_S3_KEY":      creds.User,
+			"LUNCUR_S3_SECRET":   creds.Password,
+			"LUNCUR_S3_BUCKET":   creds.DB,
+		}
+	}
+	return map[string]string{key: url}
 }
 
 // addonEnv computes the connection env an app's attached addons inject:
@@ -95,17 +124,17 @@ func (s *server) addonEnv(p store.Project, a store.App, userEnv map[string]strin
 		if err != nil {
 			return nil, nil, fmt.Errorf("unseal addon %s creds: %w", ad.Name, err)
 		}
-		key, url := addonKeyURL(ad.Type, ad.Name, p.Namespace, creds)
-		if seenType[ad.Type] {
-			key = key + "_" + strings.ToUpper(strings.ReplaceAll(ad.Name, "-", "_"))
+		for key, url := range addonEnvVars(ad.Type, ad.Name, p.Namespace, creds) {
+			if seenType[ad.Type] {
+				key = key + "_" + strings.ToUpper(strings.ReplaceAll(ad.Name, "-", "_"))
+			}
+			if _, taken := userEnv[key]; taken {
+				collisions = append(collisions, key)
+				continue
+			}
+			out[key] = url
 		}
 		seenType[ad.Type] = true
-
-		if _, taken := userEnv[key]; taken {
-			collisions = append(collisions, key)
-			continue
-		}
-		out[key] = url
 	}
 	return out, collisions, nil
 }
@@ -151,6 +180,8 @@ func (s *server) createAddon(ctx context.Context, p store.Project, typ, name, ve
 			version = "16"
 		case "redis":
 			version = "7"
+		case "minio":
+			version = minioDefaultVersion
 		}
 	}
 
@@ -193,7 +224,49 @@ func (s *server) createAddon(ctx context.Context, p store.Project, typ, name, ve
 		s.syncIfLive(ctx, p, app)
 	}
 
+	if a.Type == "minio" {
+		// MinIO does not auto-create buckets; bootstrap the default one
+		// once the StatefulSet is up. Best-effort: apps can also create it
+		// themselves via the injected credentials.
+		go s.ensureMinioBucket(p, a, creds)
+	}
+
 	return a, nil
+}
+
+// minioBucketWait bounds how long ensureMinioBucket polls for the minio
+// StatefulSet to come up; a package-level var so tests can lower it.
+var minioBucketWait = 5 * time.Minute
+
+// ensureMinioBucket waits for a minio addon's StatefulSet to report ready,
+// then creates its default bucket via the S3 API. Failures are logged only.
+func (s *server) ensureMinioBucket(p store.Project, a store.Addon, creds addon.Creds) {
+	ctx, cancel := context.WithTimeout(context.Background(), minioBucketWait)
+	defer cancel()
+	for {
+		ready, err := s.kube.StatefulSetReady(ctx, p.Namespace, addon.ServiceName(a.Name))
+		if err == nil && ready {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			log.Printf("minio %s: gave up waiting for readiness; bucket %q not created", a.Name, creds.DB)
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+	client := &s3.Client{
+		Endpoint:  fmt.Sprintf("http://%s.%s:%d", addon.ServiceName(a.Name), p.Namespace, addon.MinIOPort),
+		Bucket:    creds.DB,
+		AccessKey: creds.User,
+		SecretKey: creds.Password,
+	}
+	if err := client.CreateBucket(ctx); err != nil {
+		if strings.Contains(err.Error(), "BucketAlready") {
+			return
+		}
+		log.Printf("minio %s: create bucket %q: %v", a.Name, creds.DB, err)
+	}
 }
 
 func (s *server) handleCreateAddon(w http.ResponseWriter, r *http.Request, u store.User) {

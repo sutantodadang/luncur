@@ -22,8 +22,10 @@ type Addon struct {
 }
 
 func (s *Store) CreateAddon(projectID int64, typ, name, version string, sizeGB int, credsEnc []byte) (Addon, error) {
-	if typ != "postgres" && typ != "redis" {
-		return Addon{}, fmt.Errorf("unsupported addon type %q (postgres|redis)", typ)
+	switch typ {
+	case "postgres", "redis", "minio", "mlflow":
+	default:
+		return Addon{}, fmt.Errorf("unsupported addon type %q (postgres|redis|minio|mlflow)", typ)
 	}
 	if !validName(name) {
 		return Addon{}, fmt.Errorf("invalid addon name %q (lowercase letters, digits, dashes; max 40 chars)", name)

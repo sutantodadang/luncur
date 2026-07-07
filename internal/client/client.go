@@ -730,6 +730,39 @@ func (c *Client) Rollback(project, app string, deployID string) (int64, error) {
 	return out.Seq, err
 }
 
+// S3Config is a project's external S3 configuration. SecretKey is only
+// ever sent, never returned.
+type S3Config struct {
+	Endpoint  string `json:"endpoint"`
+	Region    string `json:"region,omitempty"`
+	Bucket    string `json:"bucket"`
+	AccessKey string `json:"access_key,omitempty"`
+	SecretKey string `json:"secret_key,omitempty"`
+}
+
+// SetProjectS3 stores a project's external S3 credentials (sealed at rest).
+func (c *Client) SetProjectS3(project string, cfg S3Config) error {
+	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/s3", cfg, nil)
+}
+
+// GetProjectS3 fetches the stored config (no secret key).
+func (c *Client) GetProjectS3(project string) (S3Config, error) {
+	var out S3Config
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/s3", nil, &out)
+	return out, err
+}
+
+// DeleteProjectS3 clears a project's external S3 configuration.
+func (c *Client) DeleteProjectS3(project string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/s3", nil, nil)
+}
+
+// SetAppS3Env toggles LUNCUR_S3_* env injection for one app.
+func (c *Client) SetAppS3Env(project, app string, enabled bool) error {
+	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/s3",
+		map[string]bool{"enabled": enabled}, nil)
+}
+
 // RunInfo is one triggered run of a kind=job app.
 type RunInfo struct {
 	ID         int64  `json:"id"`

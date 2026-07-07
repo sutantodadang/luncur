@@ -82,6 +82,44 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 		log.Printf("app %s: addon env collides with user env, user wins: %s", a.Name, strings.Join(collisions, ", "))
 	}
 
+	// Opt-in external S3: LUNCUR_S3_* from the project's stored config.
+	// User env (and an attached minio addon, injected above) wins per key.
+	if a.InjectS3 {
+		cfg, err := s.st.GetProjectS3(p.ID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			// Flag on but nothing configured: nothing to inject.
+		case err != nil:
+			return render.Rendered{}, fmt.Errorf("project s3: %w", err)
+		default:
+			if s.sealer == nil {
+				return render.Rendered{}, fmt.Errorf("cannot unseal project s3 keys: no sealer configured")
+			}
+			ak, err := s.sealer.Open(cfg.AccessKeyEnc)
+			if err != nil {
+				return render.Rendered{}, fmt.Errorf("unseal s3 access key: %w", err)
+			}
+			sk, err := s.sealer.Open(cfg.SecretKeyEnc)
+			if err != nil {
+				return render.Rendered{}, fmt.Errorf("unseal s3 secret key: %w", err)
+			}
+			s3env := map[string]string{
+				"LUNCUR_S3_ENDPOINT": cfg.Endpoint,
+				"LUNCUR_S3_KEY":      string(ak),
+				"LUNCUR_S3_SECRET":   string(sk),
+				"LUNCUR_S3_BUCKET":   cfg.Bucket,
+			}
+			if cfg.Region != "" {
+				s3env["LUNCUR_S3_REGION"] = cfg.Region
+			}
+			for k, v := range s3env {
+				if _, taken := env[k]; !taken {
+					env[k] = v
+				}
+			}
+		}
+	}
+
 	// Buildpack contract: apps built from source (nixpacks, most
 	// Dockerfiles) bind to $PORT. Without it they fall back to their own
 	// default (8000, 3000, ...) while the Service targets a.Port and every

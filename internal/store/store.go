@@ -75,6 +75,7 @@ func migrate(db *sql.DB) error {
 		{"apps", "build_path", `ALTER TABLE apps ADD COLUMN build_path TEXT NOT NULL DEFAULT ''`},
 		{"apps", "internal", `ALTER TABLE apps ADD COLUMN internal INTEGER NOT NULL DEFAULT 0`},
 		{"apps", "gpu_count", `ALTER TABLE apps ADD COLUMN gpu_count INTEGER NOT NULL DEFAULT 0`},
+		{"apps", "inject_s3", `ALTER TABLE apps ADD COLUMN inject_s3 INTEGER NOT NULL DEFAULT 0`},
 	} {
 		var n int
 		if err := db.QueryRow(
@@ -108,6 +109,10 @@ func migrate(db *sql.DB) error {
 	// point.
 	if err := migrateDeploymentIDsToText(db); err != nil {
 		return fmt.Errorf("migrate deployment ids to text: %w", err)
+	}
+
+	if err := migrateAddonTypes(db); err != nil {
+		return fmt.Errorf("migrate addon types: %w", err)
 	}
 
 	// Created here rather than in schema.sql: schema.sql's CREATE TABLE IF
@@ -262,5 +267,63 @@ func migrateDeploymentIDsToText(db *sql.DB) error {
 		return fmt.Errorf("rename deployments_new: %w", err)
 	}
 
+	return tx.Commit()
+}
+
+// migrateAddonTypes rebuilds the addons table when its CHECK constraint
+// predates the minio/mlflow types. SQLite can't ALTER a CHECK, so this is a
+// copy-rename rebuild; addon_attachments survives because ids are preserved
+// (foreign_keys is toggled off around the swap).
+func migrateAddonTypes(db *sql.DB) error {
+	var tableSQL string
+	err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'addons'`,
+	).Scan(&tableSQL)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if strings.Contains(tableSQL, "'minio'") {
+		return nil
+	}
+
+	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	defer db.Exec(`PRAGMA foreign_keys=ON`) //nolint:errcheck
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+
+	if _, err := tx.Exec(`
+CREATE TABLE addons_new (
+  id         INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  type       TEXT NOT NULL CHECK (type IN ('postgres','redis','minio','mlflow')),
+  name       TEXT NOT NULL,
+  version    TEXT NOT NULL,
+  size_gb    INTEGER NOT NULL DEFAULT 1,
+  creds_enc  BLOB,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (project_id, name)
+)`); err != nil {
+		return fmt.Errorf("create addons_new: %w", err)
+	}
+	if _, err := tx.Exec(`
+INSERT INTO addons_new (id, project_id, type, name, version, size_gb, creds_enc, created_at)
+SELECT id, project_id, type, name, version, size_gb, creds_enc, created_at FROM addons`); err != nil {
+		return fmt.Errorf("copy addons: %w", err)
+	}
+	if _, err := tx.Exec(`DROP TABLE addons`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE addons_new RENAME TO addons`); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

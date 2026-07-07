@@ -132,6 +132,6 @@ func projectCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(create, list, addMember, rename, rm, removeMember)
+	cmd.AddCommand(create, list, addMember, rename, rm, removeMember, projectS3Cmd())
 	return cmd
 }
