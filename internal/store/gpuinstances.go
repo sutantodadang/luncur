@@ -23,9 +23,15 @@ type GPUInstance struct {
 
 // CreateGPUInstance records a rent that was just accepted by the provider.
 func (s *Store) CreateGPUInstance(provider string, externalRef string, label, gpuName string, numGPUs int) (GPUInstance, error) {
+	return s.CreateGPUInstanceWithStatus(provider, externalRef, label, gpuName, numGPUs, "active")
+}
+
+// CreateGPUInstanceWithStatus is CreateGPUInstance with an explicit initial
+// status (used for ambiguous rents recorded as "renting").
+func (s *Store) CreateGPUInstanceWithStatus(provider, externalRef, label, gpuName string, numGPUs int, status string) (GPUInstance, error) {
 	res, err := s.db.Exec(
-		`INSERT INTO gpu_instances (provider, external_ref, label, gpu_name, num_gpus, status) VALUES (?, ?, ?, ?, ?, 'active')`,
-		provider, externalRef, label, gpuName, numGPUs,
+		`INSERT INTO gpu_instances (provider, external_ref, label, gpu_name, num_gpus, status) VALUES (?, ?, ?, ?, ?, ?)`,
+		provider, externalRef, label, gpuName, numGPUs, status,
 	)
 	if err != nil {
 		return GPUInstance{}, fmt.Errorf("insert gpu instance: %w", err)

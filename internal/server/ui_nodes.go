@@ -107,7 +107,7 @@ func (s *server) handleUIGPURent(w http.ResponseWriter, r *http.Request, u store
 	}
 	disk, _ := strconv.Atoi(r.PostFormValue("disk_gb"))
 	numGPUs, _ := strconv.Atoi(r.PostFormValue("num_gpus"))
-	if _, err := s.rentGPU(r.Context(), offerID, disk, r.PostFormValue("gpu_name"), numGPUs); err != nil {
+	if _, err := s.rentGPU(r.Context(), "vastai", offerID, disk, r.PostFormValue("gpu_name"), numGPUs, "", ""); err != nil {
 		http.Redirect(w, r, "/ui/nodes?gpu_err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}

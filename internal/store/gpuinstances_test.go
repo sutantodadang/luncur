@@ -39,6 +39,26 @@ func TestGPUInstances(t *testing.T) {
 	}
 }
 
+func TestCreateGPUInstanceWithStatus(t *testing.T) {
+	s := openTest(t)
+
+	g, err := s.CreateGPUInstanceWithStatus("nebius", "", "luncur-gpu-2", "H100", 1, "renting")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Provider != "nebius" || g.ExternalRef != "" || g.Status != "renting" {
+		t.Fatalf("created = %+v", g)
+	}
+
+	got, err := s.GetGPUInstance(g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "renting" {
+		t.Fatalf("status = %q, want renting", got.Status)
+	}
+}
+
 func TestGPUInstanceExternalRefMigration(t *testing.T) {
 	s := openTest(t)
 	// Simulate a pre-A2 row: write external_id directly, external_ref empty.
