@@ -188,3 +188,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+
+CREATE TABLE IF NOT EXISTS gpu_instances (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider    TEXT NOT NULL,
+  external_id INTEGER NOT NULL,
+  label       TEXT NOT NULL,
+  gpu_name    TEXT NOT NULL DEFAULT '',
+  num_gpus    INTEGER NOT NULL DEFAULT 0,
+  status      TEXT NOT NULL CHECK (status IN ('renting','active','destroyed')),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);

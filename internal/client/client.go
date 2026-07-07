@@ -1086,3 +1086,72 @@ func (c *Client) SystemUpdate(version, image string) (string, error) {
 	err := c.do("POST", "/v1/system/update", map[string]string{"version": version, "image": image}, &out)
 	return out.Image, err
 }
+
+// GPUOffer is one rentable machine from the GPU marketplace search.
+type GPUOffer struct {
+	ID          int64   `json:"id"`
+	GPUName     string  `json:"gpu_name"`
+	NumGPUs     int     `json:"num_gpus"`
+	DPHTotal    float64 `json:"dph_total"`
+	DiskSpace   float64 `json:"disk_space"`
+	Geolocation string  `json:"geolocation"`
+}
+
+// GPUInstance is one rented GPU VM tracked by the server.
+type GPUInstance struct {
+	ID             int64   `json:"id"`
+	Provider       string  `json:"provider"`
+	ExternalID     int64   `json:"external_id"`
+	Label          string  `json:"label"`
+	GPUName        string  `json:"gpu_name"`
+	NumGPUs        int     `json:"num_gpus"`
+	Status         string  `json:"status"`
+	ProviderStatus string  `json:"provider_status"`
+	DPHTotal       float64 `json:"dph_total"`
+	CreatedAt      string  `json:"created_at"`
+}
+
+// SetGPUKey stores a GPU provider API key (sealed server-side).
+func (c *Client) SetGPUKey(provider, apiKey string) error {
+	return c.do("PUT", "/v1/gpu/key", map[string]string{"provider": provider, "api_key": apiKey}, nil)
+}
+
+// GPUOffers searches rentable VM offers, cheapest first.
+func (c *Client) GPUOffers(gpuName string, numGPUs, limit int) ([]GPUOffer, error) {
+	q := url.Values{}
+	if gpuName != "" {
+		q.Set("gpu_name", gpuName)
+	}
+	if numGPUs > 0 {
+		q.Set("num_gpus", fmt.Sprint(numGPUs))
+	}
+	if limit > 0 {
+		q.Set("limit", fmt.Sprint(limit))
+	}
+	var out struct {
+		Offers []GPUOffer `json:"offers"`
+	}
+	err := c.do("GET", "/v1/gpu/offers?"+q.Encode(), nil, &out)
+	return out.Offers, err
+}
+
+// RentGPU accepts an offer as a cluster-joining VM.
+func (c *Client) RentGPU(offerID int64, diskGB int, gpuName string, numGPUs int) (GPUInstance, error) {
+	var out GPUInstance
+	err := c.do("POST", "/v1/gpu/instances", map[string]any{
+		"offer_id": offerID, "disk_gb": diskGB, "gpu_name": gpuName, "num_gpus": numGPUs,
+	}, &out)
+	return out, err
+}
+
+// ListGPUInstances lists tracked GPU instances.
+func (c *Client) ListGPUInstances() ([]GPUInstance, error) {
+	var out []GPUInstance
+	err := c.do("GET", "/v1/gpu/instances", nil, &out)
+	return out, err
+}
+
+// DestroyGPUInstance deletes a rented VM (billing stops, data gone).
+func (c *Client) DestroyGPUInstance(id int64) error {
+	return c.do("DELETE", fmt.Sprintf("/v1/gpu/instances/%d", id), nil, nil)
+}

@@ -57,6 +57,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(doctorCmd())
 	root.AddCommand(joinCmd())
 	root.AddCommand(nodeCmd())
+	root.AddCommand(gpuCmd())
 	root.AddCommand(runCmd())
 	root.AddCommand(accountCmd())
 	return root

@@ -919,3 +919,28 @@ func (c *Client) DeploymentStatus(ctx context.Context, namespace, name string) (
 	desired, _, _ = unstructured.NestedInt64(u.Object, "spec", "replicas")
 	return ready, desired, nil
 }
+
+// GPUPodsRequested reports whether any non-terminal pod in the cluster
+// requests nvidia.com/gpu devices. The gpucloud idle loop uses this: zero
+// GPU pods for long enough means rented instances are burning money for
+// nothing.
+func (c *Client) GPUPodsRequested(ctx context.Context) (bool, error) {
+	if c.cs == nil {
+		return false, fmt.Errorf("kubernetes client not configured")
+	}
+	pods, err := c.cs.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, err
+	}
+	for _, p := range pods.Items {
+		if p.Status.Phase != corev1.PodPending && p.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		for _, ctr := range p.Spec.Containers {
+			if q, ok := ctr.Resources.Limits[corev1.ResourceName(render.GPUResource)]; ok && !q.IsZero() {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}

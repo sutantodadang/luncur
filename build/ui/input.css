@@ -144,6 +144,7 @@
      dark-theme chips instead of the old inline <style> colors. */
   .status-live,
   .status-issued,
+  .status-active,
   .status-succeeded {
     @apply inline-flex items-center rounded-[4px] border border-[rgba(61,220,132,.25)] bg-[rgba(61,220,132,.1)] px-2 py-0.5 font-mono text-[11px] font-medium text-phosphor;
   }
