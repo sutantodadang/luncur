@@ -1,0 +1,100 @@
+{{define "pipeline.html"}}
+{{template "head" .}}{{template "nav" .}}
+<p class="mb-1 font-mono text-[11px] text-mut"><a class="hover:text-inkhi" href="/ui/projects/{{.Project.Name}}">{{.Project.Name}}</a> / pipelines / <span class="text-ink">{{.Pipeline.Name}}</span></p>
+<div class="mb-4 flex flex-wrap items-center gap-3">
+  <h1 class="text-xl font-semibold text-inkhi">{{.Pipeline.Name}}</h1>
+  <span class="chip chip-muted">{{.Engine}}</span>
+  {{if .Pipeline.Cron}}<code class="font-mono text-[11px] text-mut">{{.Pipeline.Cron}}</code>{{end}}
+</div>
+{{if .Warning}}<p class="err">{{.Warning}}</p>{{end}}
+
+<div class="card mb-6">
+<h2>Definition</h2>
+<p class="mb-3 text-sm text-mut">step env is stored in plaintext — put secrets in app env instead.</p>
+<form method="post" action="/ui/projects/{{.Project.Name}}/pipelines/{{.Pipeline.Name}}">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <textarea class="input mb-3 h-72 font-mono text-xs" name="yaml" rows="24">{{.Pipeline.YAML}}</textarea>
+  <div class="mb-1 flex flex-wrap items-end gap-2">
+    <label class="flex flex-col gap-1 text-xs text-mut">cron<input class="input w-56" name="cron" placeholder="0 3 * * * (blank = manual/webhook only)" value="{{.Pipeline.Cron}}"></label>
+    <label class="flex flex-col gap-1 text-xs text-mut">engine<select class="input w-auto" name="engine">
+      <option value="native"{{if ne .Engine "argo"}} selected{{end}}>native</option>
+      <option value="argo"{{if eq .Engine "argo"}} selected{{end}}>argo</option>
+    </select></label>
+    <button type="submit" class="btn">save</button>
+  </div>
+</form>
+<div class="cli-echo">$ <b>luncur pipeline update {{.Pipeline.Name}} --project {{.Project.Name}} --file pipeline.yaml [--cron "0 3 * * *"] [--engine native|argo]</b></div>
+</div>
+
+<div class="card mb-6">
+<h2>Run</h2>
+<form method="post" action="/ui/projects/{{.Project.Name}}/pipelines/{{.Pipeline.Name}}/run">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn">run now</button>
+</form>
+<div class="cli-echo mb-3">$ <b>luncur pipeline run {{.Pipeline.Name}} --project {{.Project.Name}}</b></div>
+{{if .Runs}}
+<table class="tbl"><tr><th>ID</th><th>Trigger</th><th>Status</th><th>Started</th><th>Finished</th></tr>
+{{range .Runs}}<tr>
+  <td class="font-mono text-xs">{{.ID}}</td>
+  <td class="font-mono text-xs">{{.Trigger}}</td>
+  <td><span class="chip {{.ChipClass}}">{{.Status}}</span></td>
+  <td class="text-xs text-mut">{{.StartedAt}}</td>
+  <td class="text-xs text-mut">{{if .FinishedAt}}{{.FinishedAt}}{{else}}&ndash;{{end}}</td>
+</tr>{{end}}
+</table>
+{{if .CurrentRun}}{{template "pipelinesteps" .CurrentRun}}{{end}}
+{{else}}<p class="text-sm text-mut">No runs yet. Run above, or wait for cron/webhook.</p>{{end}}
+<div class="cli-echo mt-2">$ <b>luncur pipeline status &lt;run-id&gt; --pipeline {{.Pipeline.Name}} --project {{.Project.Name}}</b></div>
+</div>
+
+<div class="card">
+<h2>Webhook</h2>
+{{if .WebhookEnabled}}<p class="mb-3"><input class="input font-mono text-xs" readonly size="72" value="{{.WebhookURL}}"></p>{{end}}
+<div id="pipeline-webhook-secret" class="mb-2"></div>
+<form method="post" hx-post="/ui/projects/{{.Project.Name}}/pipelines/{{.Pipeline.Name}}/webhook-secret" hx-target="#pipeline-webhook-secret" hx-swap="innerHTML">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn" hx-confirm="Rotate the webhook secret for {{.Pipeline.Name}}? The previous secret stops working immediately.">rotate webhook</button>
+</form>
+<div class="cli-echo mt-1">$ <b>luncur pipeline webhook {{.Pipeline.Name}} --project {{.Project.Name}}</b></div>
+</div>
+{{template "foot" .}}
+{{end}}
+
+{{/* pipelinesteps is the Run card's polling fragment for the most recent
+     run's step table: while the run is still "running" it re-fetches itself
+     every 15s (same self-terminating htmx idiom as "sweeptrials"); once it
+     lands on a terminal status (done/stopped/failed) the returned markup
+     carries no hx-* attributes, so htmx stops re-fetching on its own. */}}
+{{define "pipelinesteps"}}<div id="pipeline-run-steps"{{if .Polling}} hx-get="/ui/projects/{{.ProjectName}}/pipelines/{{.PipelineName}}/runs/{{.ID}}/steps" hx-trigger="every 15s" hx-swap="outerHTML"{{end}}>
+<p class="mb-2 text-xs text-mut">run <code>{{.ID}}</code> &middot; <span class="chip {{.ChipClass}}">{{.Status}}</span> &middot; trigger {{.Trigger}}</p>
+{{if .Warning}}<p class="err">{{.Warning}}</p>{{end}}
+{{if .Steps}}
+<table class="tbl"><tr><th>Step</th><th>Kind</th><th>State</th><th>Attempt</th><th>Detail</th><th>Duration</th></tr>
+{{range .Steps}}<tr>
+  <td class="font-mono text-xs">{{.Name}}</td>
+  <td class="font-mono text-xs">{{.Kind}}</td>
+  <td><span class="chip {{.ChipClass}}">{{.State}}</span></td>
+  <td class="font-mono text-xs">{{.Attempt}}</td>
+  <td class="text-xs text-mut">{{if .Detail}}{{.Detail}}{{else}}&ndash;{{end}}</td>
+  <td class="font-mono text-xs">{{.Duration}}</td>
+</tr>{{end}}
+</table>
+{{end}}
+{{if eq .Status "running"}}
+<form class="mt-2" method="post" action="/ui/projects/{{.ProjectName}}/pipelines/{{.PipelineName}}/runs/{{.ID}}/stop">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn-ghost" hx-confirm="Stop run {{.ID}}? Running steps are killed.">stop run</button>
+</form>
+<div class="cli-echo mt-1">$ <b>luncur pipeline stop {{.ID}} --pipeline {{.PipelineName}} --project {{.ProjectName}}</b></div>
+{{end}}
+</div>{{end}}
+
+{{/* pipelinewebhooksecret is the Webhook card's rotate-response fragment:
+     the freshly generated URL+secret, shown here ONLY — the detail page's
+     own GET render never re-renders it (handleUIPipeline doesn't carry
+     WebhookSecretOnce), same contract as app.html's webhook-enable
+     fragment. */}}
+{{define "pipelinewebhooksecret"}}<p class="mb-2 text-sm text-mut">secret shown once — store it now (GitHub/Gitea: "Secret" field; GitLab: "Secret token" field):</p>
+<p class="mb-1"><input class="input font-mono text-xs" readonly size="72" value="{{.WebhookURL}}"></p>
+<p><input class="input font-mono text-xs" readonly size="72" value="{{.WebhookSecretOnce}}"></p>{{end}}

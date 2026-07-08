@@ -150,6 +150,39 @@ function uiPresetChange(preset) {
 </div>
 
 <div class="card mb-6">
+<h2>Pipelines</h2>
+{{if not .Pipelines}}<p class="mb-1 text-sm text-mut">No pipelines yet. Create one below.</p>{{end}}
+<table class="tbl"><tr><th>Name</th><th>Engine</th><th>Cron</th><th>Last run</th><th></th><th></th></tr>
+{{range .Pipelines}}<tr>
+  <td><a class="text-inkhi hover:text-signal" href="/ui/projects/{{$.Project.Name}}/pipelines/{{.Name}}">{{.Name}}</a></td>
+  <td class="font-mono text-xs">{{.Engine}}</td>
+  <td class="font-mono text-xs">{{if .Cron}}{{.Cron}}{{else}}&ndash;{{end}}</td>
+  <td>{{if .HasRun}}<span class="chip {{.LastRunChip}}">{{.LastRunStatus}}</span>{{else}}<span class="chip chip-muted">never run</span>{{end}}</td>
+  <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/pipelines/{{.Name}}/run">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+    <button type="submit" class="btn-ghost">run</button>
+  </form></td>
+  <td><a class="btn-ghost" href="/ui/projects/{{$.Project.Name}}/pipelines/{{.Name}}">detail</a></td>
+</tr>{{end}}
+</table>
+<details class="mt-3">
+  <summary class="cursor-pointer text-xs text-mut">create pipeline</summary>
+  <form method="post" action="/ui/projects/{{.Project.Name}}/pipelines" class="mt-2 flex flex-wrap items-end gap-2">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <input class="input w-auto flex-1" name="name" placeholder="name" required>
+    <label class="flex w-full flex-col gap-1 text-xs text-mut">pipeline.yaml<textarea class="input w-full font-mono text-xs" name="yaml" rows="6" placeholder="steps:&#10;  train:&#10;    app: trainer&#10;  evaluate:&#10;    app: evaluator&#10;    needs: [train]" required></textarea></label>
+    <label class="flex flex-col gap-1 text-xs text-mut">cron<input class="input w-56" name="cron" placeholder="0 3 * * * (optional)"></label>
+    <label class="flex flex-col gap-1 text-xs text-mut">engine<select class="input w-auto" name="engine">
+      <option value="native" selected>native</option>
+      <option value="argo">argo</option>
+    </select></label>
+    <button type="submit" class="btn">create pipeline</button>
+  </form>
+</details>
+<div class="cli-echo">$ <b>luncur pipeline create &lt;name&gt; --project {{.Project.Name}} --file pipeline.yaml</b></div>
+</div>
+
+<div class="card mb-6">
 <h2>Members</h2>
 <table class="tbl"><tr><th>Email</th><th>Role</th><th></th></tr>
 {{range .Members}}<tr><td>{{.Email}}</td><td>{{.Role}}</td><td>{{if $.IsAdmin}}<form class="inline-flex" method="post" action="/ui/projects/{{$.Project.Name}}/members/remove">
