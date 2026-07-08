@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS projects (
   name          TEXT NOT NULL UNIQUE,
   k8s_namespace TEXT NOT NULL UNIQUE,
   gpu_quota     INTEGER NOT NULL DEFAULT 0,
+  cpu_quota_milli INTEGER NOT NULL DEFAULT 0,
+  mem_quota_mb  INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

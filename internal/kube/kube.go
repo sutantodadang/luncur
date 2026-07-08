@@ -61,6 +61,13 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"PriorityClass":            {Group: "scheduling.k8s.io", Version: "v1", Resource: "priorityclasses"},
 	"HorizontalPodAutoscaler":  {Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"},
 	"NetworkPolicy":            {Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"},
+	// Project quotas (D4): ResourceQuota/LimitRange also back the GPU quota
+	// feature's ResourceQuota apply, which had no GVR entry until now (see
+	// gpu.QuotaObject) — its cluster apply was failing with "no GVR for kind
+	// \"ResourceQuota\"" since it shipped.
+	"ResourceQuota":       {Group: "", Version: "v1", Resource: "resourcequotas"},
+	"LimitRange":          {Group: "", Version: "v1", Resource: "limitranges"},
+	"PodDisruptionBudget": {Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"},
 }
 
 // clusterScoped marks kinds Apply must patch without a namespace.
@@ -285,6 +292,7 @@ func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) er
 		{"Ingress", app},
 		{"CronJob", app},
 		{"HorizontalPodAutoscaler", app},
+		{"PodDisruptionBudget", app},
 		{"Secret", render.SecretName(app)},
 	}
 	for _, t := range targets {

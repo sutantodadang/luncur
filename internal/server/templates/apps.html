@@ -86,6 +86,20 @@ function uiPresetChange(preset) {
 </form>
 <div class="cli-echo">$ <b>luncur project gpu-quota {{.Project.Name}} &lt;n&gt;</b></div>
 </div>
+
+<div class="card mb-6">
+<h2>Resource quota</h2>
+<form method="post" action="/ui/projects/{{.Project.Name}}/quota" class="flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <label class="text-xs text-mut">cpu (milli)</label>
+  <input class="input w-24" type="number" name="cpu" min="0" value="{{.CPUQuotaMilli}}">
+  <label class="text-xs text-mut">memory (Mi)</label>
+  <input class="input w-24" type="number" name="memory" min="0" value="{{.MemQuotaMB}}">
+  <button type="submit" class="btn-ghost">set quota</button>
+  <span class="text-xs text-mut">total cpu/memory this project's namespace may use; 0 = unlimited</span>
+</form>
+<div class="cli-echo">$ <b>luncur project quota {{.Project.Name}} --cpu 4000 --memory 8192</b></div>
+</div>
 {{end}}
 
 {{if not .Apps}}<p class="mb-1 text-sm text-mut">No apps yet. Create one above or with <code>luncur app create</code>.</p><div class="cli-echo mb-6">$ <b>luncur app create &lt;name&gt;</b></div>{{end}}

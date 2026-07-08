@@ -158,6 +158,39 @@ func projectCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(create, list, addMember, rename, rm, removeMember, projectS3Cmd(), gpuQuota)
+	var quotaCPU, quotaMemory int64
+	var quotaOff bool
+	quota := &cobra.Command{
+		Use:   "quota <project>",
+		Short: "Cap total CPU/memory the project's namespace may use (0 = unlimited, admin)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !quotaOff && quotaCPU == 0 && quotaMemory == 0 {
+				return fmt.Errorf("nothing to set; pass --cpu and/or --memory, or --off to clear")
+			}
+			cpu, mem := quotaCPU, quotaMemory
+			if quotaOff {
+				cpu, mem = 0, 0
+			}
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			if err := c.SetProjectQuota(args[0], cpu, mem); err != nil {
+				return err
+			}
+			if cpu == 0 && mem == 0 {
+				cmd.Printf("quota cleared for %s (unlimited)\n", args[0])
+			} else {
+				cmd.Printf("quota for %s: cpu=%dm memory=%dMi\n", args[0], cpu, mem)
+			}
+			return nil
+		},
+	}
+	quota.Flags().Int64Var(&quotaCPU, "cpu", 0, "total CPU millicores the namespace may use (0 = unlimited)")
+	quota.Flags().Int64Var(&quotaMemory, "memory", 0, "total memory in Mi the namespace may use (0 = unlimited)")
+	quota.Flags().BoolVar(&quotaOff, "off", false, "clear the quota (unlimited)")
+
+	cmd.AddCommand(create, list, addMember, rename, rm, removeMember, projectS3Cmd(), gpuQuota, quota)
 	return cmd
 }

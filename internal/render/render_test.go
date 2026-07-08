@@ -11,6 +11,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
@@ -77,8 +78,10 @@ func TestRenderDeployment(t *testing.T) {
 
 func TestRenderNoEnvMeansNoSecret(t *testing.T) {
 	r := mustRender(t, testInput(), nil)
-	if len(r.Objects) != 3 {
-		t.Fatalf("want 3 objects without env, got %d", len(r.Objects))
+	// D4: testInput's Replicas:2 now also renders an automatic PDB, so
+	// Deployment+Service+Ingress+PodDisruptionBudget = 4.
+	if len(r.Objects) != 4 {
+		t.Fatalf("want 4 objects without env, got %d", len(r.Objects))
 	}
 	var d appsv1.Deployment
 	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
@@ -113,8 +116,9 @@ func TestRenderServiceAndIngress(t *testing.T) {
 
 func TestRenderSecret(t *testing.T) {
 	r := mustRender(t, testInput(), map[string]string{"A": "1", "B": "2"})
-	if len(r.Objects) != 4 || r.Objects[0].Kind != "Secret" {
-		t.Fatalf("want Secret first of 4, got %+v", r.Objects)
+	// D4: +1 for the automatic PDB (testInput's Replicas:2).
+	if len(r.Objects) != 5 || r.Objects[0].Kind != "Secret" {
+		t.Fatalf("want Secret first of 5, got %+v", r.Objects)
 	}
 	var sec corev1.Secret
 	json.Unmarshal(r.Objects[0].JSON, &sec)
@@ -130,10 +134,12 @@ func TestYAMLMultiDoc(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(y)
-	if strings.Count(s, "\n---\n") != 3 {
-		t.Fatalf("want 3 separators for 4 docs, got:\n%s", s)
+	// D4: +1 doc for the automatic PDB (testInput's Replicas:2) -> 5 docs, 4
+	// separators.
+	if strings.Count(s, "\n---\n") != 4 {
+		t.Fatalf("want 4 separators for 5 docs, got:\n%s", s)
 	}
-	for _, want := range []string{"kind: Deployment", "kind: Service", "kind: Ingress", "kind: Secret"} {
+	for _, want := range []string{"kind: Deployment", "kind: Service", "kind: Ingress", "kind: Secret", "kind: PodDisruptionBudget"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("missing %q in YAML", want)
 		}
@@ -278,8 +284,9 @@ func cronInput() Input {
 
 func TestRenderWorkerHasOnlyDeploymentNoPorts(t *testing.T) {
 	r := mustRender(t, workerInput(), nil)
-	if len(r.Objects) != 1 || r.Objects[0].Kind != "Deployment" {
-		t.Fatalf("want exactly one Deployment for worker, got %+v", r.Objects)
+	// D4: workerInput's Replicas:2 now also renders an automatic PDB.
+	if len(r.Objects) != 2 || r.Objects[0].Kind != "Deployment" {
+		t.Fatalf("want Deployment+PodDisruptionBudget for worker, got %+v", r.Objects)
 	}
 	var d appsv1.Deployment
 	if err := json.Unmarshal(r.Objects[0].JSON, &d); err != nil {
@@ -296,8 +303,9 @@ func TestRenderWorkerHasOnlyDeploymentNoPorts(t *testing.T) {
 
 func TestRenderWorkerWithEnvHasSecretAndEnvFrom(t *testing.T) {
 	r := mustRender(t, workerInput(), map[string]string{"K": "v"})
-	if len(r.Objects) != 2 {
-		t.Fatalf("want Secret+Deployment for worker with env, got %+v", r.Objects)
+	// D4: +1 for the automatic PDB (workerInput's Replicas:2).
+	if len(r.Objects) != 3 {
+		t.Fatalf("want Secret+Deployment+PodDisruptionBudget for worker with env, got %+v", r.Objects)
 	}
 	var d appsv1.Deployment
 	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
@@ -559,8 +567,9 @@ func TestRenderWorkerWithVolume(t *testing.T) {
 	in := workerInput()
 	in.Volumes = []Volume{{Name: "state", Path: "/state", SizeGB: 2}}
 	r := mustRender(t, in, nil)
-	if len(r.Objects) != 2 || r.Objects[0].Kind != "PersistentVolumeClaim" {
-		t.Fatalf("want PVC+Deployment for worker with volume, got %+v", r.Objects)
+	// D4: +1 for the automatic PDB (workerInput's Replicas:2).
+	if len(r.Objects) != 3 || r.Objects[0].Kind != "PersistentVolumeClaim" {
+		t.Fatalf("want PVC+Deployment+PodDisruptionBudget for worker with volume, got %+v", r.Objects)
 	}
 	var d appsv1.Deployment
 	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
@@ -594,8 +603,10 @@ func TestRenderInternalWebHasServiceNoIngress(t *testing.T) {
 	in := testInput()
 	in.Internal = true
 	r := mustRender(t, in, nil)
-	if len(r.Objects) != 2 {
-		t.Fatalf("want Deployment+Service only for internal web, got %+v", r.Objects)
+	// D4: +1 for the automatic PDB (testInput's Replicas:2) — Internal only
+	// suppresses the Ingress, not the PDB.
+	if len(r.Objects) != 3 {
+		t.Fatalf("want Deployment+Service+PodDisruptionBudget for internal web, got %+v", r.Objects)
 	}
 	if _, err := findKind(r, "Ingress"); err == nil {
 		t.Fatalf("internal web app must not render an Ingress, got %+v", r.Objects)
@@ -623,8 +634,9 @@ func findKind(r Rendered, kind string) (int, error) {
 // this field existed — byte-identical behavior for internal=0.
 func TestRenderNonInternalWebUnchanged(t *testing.T) {
 	r := mustRender(t, testInput(), nil)
-	if len(r.Objects) != 3 {
-		t.Fatalf("want Deployment+Service+Ingress for non-internal web, got %+v", r.Objects)
+	// D4: +1 for the automatic PDB (testInput's Replicas:2).
+	if len(r.Objects) != 4 {
+		t.Fatalf("want Deployment+Service+Ingress+PodDisruptionBudget for non-internal web, got %+v", r.Objects)
 	}
 	if _, err := findKind(r, "Ingress"); err != nil {
 		t.Fatalf("non-internal web app must render an Ingress: %v", err)
@@ -638,7 +650,9 @@ func TestRenderInternalIgnoredForWorkerAndCron(t *testing.T) {
 	w := workerInput()
 	w.Internal = true
 	rw := mustRender(t, w, nil)
-	if len(rw.Objects) != 1 || rw.Objects[0].Kind != "Deployment" {
+	// D4: +1 for the automatic PDB (workerInput's Replicas:2); Internal has
+	// no bearing on it either way.
+	if len(rw.Objects) != 2 || rw.Objects[0].Kind != "Deployment" {
 		t.Fatalf("internal=true must not change worker's object set, got %+v", rw.Objects)
 	}
 
@@ -801,5 +815,159 @@ func TestRenderAutoscaleIgnoredForModelAndCron(t *testing.T) {
 	rc := mustRender(t, c, nil)
 	if _, err := findKind(rc, "HorizontalPodAutoscaler"); err == nil {
 		t.Fatalf("cron apps must never render an HPA, got %+v", rc.Objects)
+	}
+}
+
+// TestRenderPDBPresentAtReplicas2 covers D4: a web app with Replicas>=2 gets
+// an automatic PodDisruptionBudget capping voluntary disruption at 1.
+func TestRenderPDBPresentAtReplicas2(t *testing.T) {
+	r := mustRender(t, testInput(), nil) // testInput: Replicas 2
+	var pdb policyv1.PodDisruptionBudget
+	if err := json.Unmarshal(objByKind(t, r, "PodDisruptionBudget"), &pdb); err != nil {
+		t.Fatal(err)
+	}
+	if pdb.Spec.MaxUnavailable == nil || pdb.Spec.MaxUnavailable.IntValue() != 1 {
+		t.Fatalf("maxUnavailable: %+v", pdb.Spec.MaxUnavailable)
+	}
+	if pdb.Spec.Selector == nil || pdb.Spec.Selector.MatchLabels["app.kubernetes.io/name"] != "api" {
+		t.Fatalf("selector: %+v", pdb.Spec.Selector)
+	}
+}
+
+// TestRenderPDBAbsentAtReplicas1 covers D4: a single-replica web app gets no
+// PDB — maxUnavailable:1 on it would block every node drain forever.
+func TestRenderPDBAbsentAtReplicas1(t *testing.T) {
+	in := testInput()
+	in.Replicas = 1
+	r := mustRender(t, in, nil)
+	if _, err := findKind(r, "PodDisruptionBudget"); err == nil {
+		t.Fatalf("replicas=1 must not render a PDB, got %+v", r.Objects)
+	}
+}
+
+// TestRenderPDBPresentAtAutoMin2 covers D4: an autoscaling web app judges the
+// PDB threshold against AutoMin, not the (irrelevant, HPA-owned) Replicas
+// field — AutoMin=2 renders a PDB even though Replicas is left at 1.
+func TestRenderPDBPresentAtAutoMin2(t *testing.T) {
+	in := testInput()
+	in.Replicas = 1
+	in.CPUMilli = 250
+	in.AutoMin, in.AutoMax, in.AutoCPU = 2, 5, 70
+	r := mustRender(t, in, nil)
+	if _, err := findKind(r, "PodDisruptionBudget"); err != nil {
+		t.Fatalf("AutoMin=2 must render a PDB even with Replicas=1: %v", err)
+	}
+}
+
+// TestRenderPDBIgnoredForModelAndCron checks the automatic PDB has no effect
+// outside web/worker: model and cron apps never render a PDB even at
+// Replicas>=2.
+func TestRenderPDBIgnoredForModelAndCron(t *testing.T) {
+	m := Input{
+		AppName: "llm", Namespace: "ns", Image: "ignored:0", Host: "llm.example.com",
+		Kind: "model", Replicas: 2, ModelSource: "hf:org/name/model.gguf",
+	}
+	rm := mustRender(t, m, nil)
+	if _, err := findKind(rm, "PodDisruptionBudget"); err == nil {
+		t.Fatalf("model apps must never render a PDB, got %+v", rm.Objects)
+	}
+
+	// cron has no meaningful Replicas/AutoMin at all; confirm it stays PDB-free.
+	c := cronInput()
+	rc := mustRender(t, c, nil)
+	if _, err := findKind(rc, "PodDisruptionBudget"); err == nil {
+		t.Fatalf("cron apps must never render a PDB, got %+v", rc.Objects)
+	}
+}
+
+// TestProjectQuotaObjectsCPUOnly covers D4's ProjectQuotaObjects with only a
+// CPU quota set: the ResourceQuota's Hard map gets limits.cpu only, and the
+// LimitRange still rides along with its container defaults.
+func TestProjectQuotaObjectsCPUOnly(t *testing.T) {
+	objs, err := ProjectQuotaObjects("luncur-proj", 4000, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rq corev1.ResourceQuota
+	var lr corev1.LimitRange
+	for _, o := range objs {
+		switch o.Kind {
+		case "ResourceQuota":
+			if err := json.Unmarshal(o.JSON, &rq); err != nil {
+				t.Fatal(err)
+			}
+		case "LimitRange":
+			if err := json.Unmarshal(o.JSON, &lr); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if rq.Name != ProjectQuotaName || rq.Namespace != "luncur-proj" {
+		t.Fatalf("resourcequota meta: %+v", rq.ObjectMeta)
+	}
+	wantCPU := *resource.NewMilliQuantity(4000, resource.DecimalSI)
+	if got, ok := rq.Spec.Hard[corev1.ResourceName("limits.cpu")]; !ok || got.Cmp(wantCPU) != 0 {
+		t.Fatalf("limits.cpu: %+v", rq.Spec.Hard)
+	}
+	if _, ok := rq.Spec.Hard[corev1.ResourceName("limits.memory")]; ok {
+		t.Fatalf("limits.memory should be absent when memMB=0: %+v", rq.Spec.Hard)
+	}
+	if lr.Name != LimitRangeName || len(lr.Spec.Limits) != 1 {
+		t.Fatalf("limitrange: %+v", lr)
+	}
+	item := lr.Spec.Limits[0]
+	if item.Type != corev1.LimitTypeContainer {
+		t.Fatalf("limitrange item type: %q", item.Type)
+	}
+	if _, ok := item.Default[corev1.ResourceCPU]; !ok {
+		t.Fatalf("limitrange default cpu missing: %+v", item.Default)
+	}
+	if _, ok := item.DefaultRequest[corev1.ResourceMemory]; !ok {
+		t.Fatalf("limitrange defaultRequest memory missing: %+v", item.DefaultRequest)
+	}
+}
+
+// TestProjectQuotaObjectsMemOnly mirrors the CPU-only case for memory alone.
+func TestProjectQuotaObjectsMemOnly(t *testing.T) {
+	objs, err := ProjectQuotaObjects("luncur-proj", 0, 8192)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rq corev1.ResourceQuota
+	for _, o := range objs {
+		if o.Kind == "ResourceQuota" {
+			if err := json.Unmarshal(o.JSON, &rq); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, ok := rq.Spec.Hard[corev1.ResourceName("limits.cpu")]; ok {
+		t.Fatalf("limits.cpu should be absent when cpuMilli=0: %+v", rq.Spec.Hard)
+	}
+	wantMem := *resource.NewQuantity(8192*1024*1024, resource.BinarySI)
+	if got, ok := rq.Spec.Hard[corev1.ResourceName("limits.memory")]; !ok || got.Cmp(wantMem) != 0 {
+		t.Fatalf("limits.memory: %+v", rq.Spec.Hard)
+	}
+}
+
+// TestProjectQuotaObjectsBoth covers both quotas set together.
+func TestProjectQuotaObjectsBoth(t *testing.T) {
+	objs, err := ProjectQuotaObjects("luncur-proj", 2000, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rq corev1.ResourceQuota
+	for _, o := range objs {
+		if o.Kind == "ResourceQuota" {
+			if err := json.Unmarshal(o.JSON, &rq); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, ok := rq.Spec.Hard[corev1.ResourceName("limits.cpu")]; !ok {
+		t.Fatalf("limits.cpu missing: %+v", rq.Spec.Hard)
+	}
+	if _, ok := rq.Spec.Hard[corev1.ResourceName("limits.memory")]; !ok {
+		t.Fatalf("limits.memory missing: %+v", rq.Spec.Hard)
 	}
 }

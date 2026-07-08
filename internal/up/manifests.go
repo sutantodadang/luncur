@@ -81,7 +81,7 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole"},
 		ObjectMeta: metav1.ObjectMeta{Name: "luncur", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
-			rule([]string{""}, []string{"namespaces", "services", "secrets", "configmaps", "serviceaccounts", "persistentvolumeclaims"}, full...),
+			rule([]string{""}, []string{"namespaces", "services", "secrets", "configmaps", "serviceaccounts", "persistentvolumeclaims", "resourcequotas", "limitranges"}, full...),
 			rule([]string{""}, []string{"pods", "pods/log", "events", "nodes"}, read...),
 			rule([]string{""}, []string{"pods/exec"}, "create"),
 			rule([]string{"apps"}, []string{"deployments", "statefulsets", "daemonsets"}, full...),
@@ -93,6 +93,7 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 			rule([]string{"cert-manager.io"}, []string{"clusterissuers"}, manage...),
 			rule([]string{"metrics.k8s.io"}, []string{"pods", "nodes"}, read...),
 			rule([]string{"autoscaling"}, []string{"horizontalpodautoscalers"}, full...),
+			rule([]string{"policy"}, []string{"poddisruptionbudgets"}, full...),
 		},
 	}
 	if err := add("ClusterRole", cr); err != nil {
