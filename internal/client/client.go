@@ -857,6 +857,80 @@ func (c *Client) FollowRunLogs(project, app string, id int64, follow bool, tail 
 	return c.stream(p, w)
 }
 
+// SweepTrialInfo is one trial within a hyperparameter sweep, as returned by
+// the API. Params is the param set actually assigned to this trial.
+type SweepTrialInfo struct {
+	ID          string            `json:"id"`
+	State       string            `json:"state"`
+	Params      map[string]string `json:"params,omitempty"`
+	RunID       int64             `json:"run_id,omitempty"`
+	MetricValue *float64          `json:"metric_value,omitempty"`
+	MetricStep  *int64            `json:"metric_step,omitempty"`
+}
+
+// SweepInfo is a hyperparameter sweep as returned by the API. Trials is
+// populated by StartSweep/GetSweep/StopSweep; ListSweeps omits it (counts +
+// BestValue are enough for a summary row).
+type SweepInfo struct {
+	ID          string           `json:"id"`
+	Status      string           `json:"status"`
+	Metric      string           `json:"metric"`
+	Direction   string           `json:"direction"`
+	MaxTrials   int              `json:"max_trials"`
+	Parallel    int              `json:"parallel"`
+	EarlyStop   bool             `json:"early_stop"`
+	Nodes       int              `json:"nodes,omitempty"`
+	Framework   string           `json:"framework,omitempty"`
+	Warning     string           `json:"warning,omitempty"`
+	CreatedAt   string           `json:"created_at"`
+	Counts      map[string]int   `json:"counts"`
+	BestTrialID string           `json:"best_trial_id,omitempty"`
+	BestValue   *float64         `json:"best_value,omitempty"`
+	Truncated   bool             `json:"truncated,omitempty"`
+	Trials      []SweepTrialInfo `json:"trials,omitempty"`
+}
+
+// StartSweep creates a hyperparameter sweep for a kind=job app: paramsYAML
+// is the raw params.yaml contents (grid or random search space), metric is
+// the name a trial's run reports via MLflow or the luncur-metric log-line
+// contract.
+func (c *Client) StartSweep(project, app, paramsYAML, metric, direction string, maxTrials, parallel int, earlyStop bool, nodes int, framework string) (SweepInfo, error) {
+	var out SweepInfo
+	body := map[string]any{
+		"params_yaml": paramsYAML,
+		"metric":      metric,
+		"direction":   direction,
+		"max_trials":  maxTrials,
+		"parallel":    parallel,
+		"early_stop":  earlyStop,
+		"nodes":       nodes,
+		"framework":   framework,
+	}
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/sweeps", body, &out)
+	return out, err
+}
+
+// ListSweeps fetches a job app's sweeps (newest first).
+func (c *Client) ListSweeps(project, app string) ([]SweepInfo, error) {
+	var out []SweepInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/sweeps", nil, &out)
+	return out, err
+}
+
+// GetSweep fetches one sweep's status plus its full trial list.
+func (c *Client) GetSweep(project, app, id string) (SweepInfo, error) {
+	var out SweepInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/sweeps/"+url.PathEscape(id), nil, &out)
+	return out, err
+}
+
+// StopSweep stops a running sweep; idempotent — a second call is a no-op.
+func (c *Client) StopSweep(project, app, id string) (SweepInfo, error) {
+	var out SweepInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/sweeps/"+url.PathEscape(id)+"/stop", nil, &out)
+	return out, err
+}
+
 type TokenInfo struct {
 	ID         int64  `json:"id"`
 	Name       string `json:"name"`
