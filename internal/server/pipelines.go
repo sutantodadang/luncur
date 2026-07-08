@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -1339,4 +1342,166 @@ func (s *server) handleStopPipelineRun(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 	writeJSON(w, http.StatusOK, pipelineRunDetailJSON(run, steps))
+}
+
+// --- webhook trigger (C2 Task 3) ----------------------------------------
+
+// pipelineWebhookPath returns the public (unauthenticated) hook URL path an
+// external system posts to, to trigger pipeline id. Deviates from the spec's
+// /v1/hooks/... in favor of the repo's existing hook-path convention
+// (webhook.go's webhookPath for app deploy hooks lives at /hooks/apps/...).
+func pipelineWebhookPath(id string) string {
+	return "/hooks/pipelines/" + id
+}
+
+// generatePipelineWebhookSecret is handleGeneratePipelineWebhookSecret's
+// shared core: generate a fresh 32-byte secret (hex-encoded, 64 chars — what
+// the caller signs/compares with), seal it, and store it. Always
+// regenerates: calling this on a pipeline that already has a secret rotates
+// it, invalidating the old one — same convention as enableWebhook
+// (webhook.go) for app deploy hooks. Returns the plaintext hex secret — the
+// ONLY time it is ever available in plaintext; only the sealed form
+// persists.
+func (s *server) generatePipelineWebhookSecret(pl store.Pipeline) (string, error) {
+	if s.sealer == nil {
+		return "", errSealerUnavailable
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	secretHex := hex.EncodeToString(raw)
+	sealed, err := s.sealer.Seal([]byte(secretHex))
+	if err != nil {
+		return "", err
+	}
+	if err := s.st.SetPipelineWebhookSecret(pl.ID, sealed); err != nil {
+		return "", err
+	}
+	return secretHex, nil
+}
+
+// handleGeneratePipelineWebhookSecret turns on (or rotates) a pipeline's
+// trigger webhook. The secret is returned in this response ONLY — it is
+// never recoverable from the store afterward (only the sealed bytes
+// persist), mirroring handleWebhookEnable's contract for app deploy hooks.
+func (s *server) handleGeneratePipelineWebhookSecret(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pl, ok := s.requirePipeline(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+
+	secretHex, err := s.generatePipelineWebhookSecret(pl)
+	if err != nil {
+		if errors.Is(err, errSealerUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", errSealerUnavailable.Error())
+			return
+		}
+		log.Printf("generate pipeline webhook secret: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"url": pipelineWebhookPath(pl.ID), "secret": secretHex,
+	})
+}
+
+// handleDeletePipelineWebhookSecret turns off a pipeline's trigger webhook:
+// the stored secret is cleared, so any previously-issued secret stops
+// verifying.
+func (s *server) handleDeletePipelineWebhookSecret(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pl, ok := s.requirePipeline(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+	if err := s.st.SetPipelineWebhookSecret(pl.ID, nil); err != nil {
+		log.Printf("delete pipeline webhook secret: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// writePipelineWebhookTriggerError maps startPipelineRun's sentinel errors to
+// the webhook trigger's response: unlike the authenticated create-run
+// endpoint (writePipelineRequestError, 400s), a signature-verified webhook
+// call that can't fire is a 409 conflict — the request itself was fine, the
+// pipeline just isn't in a runnable state (argo engine unavailable, or the
+// stored yaml/app-refs have since drifted invalid).
+func writePipelineWebhookTriggerError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, errPipelineEngineUnavailable):
+		writeError(w, http.StatusConflict, "engine_unavailable", err.Error())
+	case errors.Is(err, errPipelineAppMismatch):
+		writeError(w, http.StatusConflict, "kind_mismatch", err.Error())
+	case errors.Is(err, errBadPipelineRequest):
+		writeError(w, http.StatusConflict, "bad_request", err.Error())
+	default:
+		return false
+	}
+	return true
+}
+
+// handlePipelineWebhookTrigger is the public (unauthenticated at the
+// HTTP-auth layer) endpoint an external system posts to, to trigger a
+// pipeline run. Auth is the HMAC/token check itself (verifyWebhook,
+// webhook.go): every failure up to and including a bad signature answers
+// with the identical 401 body — no existence oracle for a pipeline id,
+// matching handleWebhookTrigger's convention for app deploy hooks. Unlike
+// the cron trigger, a webhook fire is NOT Forbid-gated against a running
+// previous run (spec: Forbid applies to cron only) — every valid call starts
+// a fresh run. The request body itself is never parsed; it only needs to be
+// read so verifyWebhook can hash it.
+func (s *server) handlePipelineWebhookTrigger(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, webhookMaxBody)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		webhookUnauthorized(w)
+		return
+	}
+
+	pl, err := s.st.GetPipelineByID(r.PathValue("id"))
+	if err != nil {
+		webhookUnauthorized(w)
+		return
+	}
+	if pl.WebhookSecret == nil || s.sealer == nil {
+		webhookUnauthorized(w)
+		return
+	}
+	plain, err := s.sealer.Open(pl.WebhookSecret)
+	if err != nil {
+		webhookUnauthorized(w)
+		return
+	}
+	if !verifyWebhook(r, body, string(plain)) {
+		webhookUnauthorized(w)
+		return
+	}
+
+	if info := auditFrom(r.Context()); info != nil {
+		info.Email = "webhook"
+		info.Pattern = r.Pattern
+	}
+
+	// Authenticated from here on — failures are ordinary status codes.
+	run, _, err := s.startPipelineRun(r.Context(), pl, "webhook")
+	if err != nil {
+		if writePipelineWebhookTriggerError(w, err) {
+			return
+		}
+		log.Printf("pipeline webhook trigger: start run: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"run_id": run.ID})
 }

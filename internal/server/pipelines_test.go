@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -1082,4 +1083,235 @@ func TestSettingPipelineEngineValidation(t *testing.T) {
 func jsonQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// --- webhook trigger (C2 Task 3) ------------------------------------------
+
+// pipelineWebhookHTTPTestServer builds a sealer-backed test server with no
+// kube layer: every webhook test below fires a notify-only (or never-fired)
+// pipeline spec, so nothing here ever needs kube (startPipelineLoop's
+// kube==nil guard doesn't apply — pipelineTick is only ever invoked inline
+// by startPipelineRun in these tests, never via the loop).
+func pipelineWebhookHTTPTestServer(t *testing.T) (*httptestServer, *store.Store) {
+	t.Helper()
+	st := newTestStore(t)
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newHTTPTest(t, Deps{Store: st, Sealer: sealer, ExternalIP: "1.2.3.4"})
+	return srv, st
+}
+
+// pipelineWebhookGenerate posts .../webhook-secret and decodes the url+secret
+// response (200; regenerates every call, app-webhook convention).
+func pipelineWebhookGenerate(t *testing.T, srv *httptestServer, admin, project, name string) (url, secretHex string) {
+	t.Helper()
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/"+project+"/pipelines/"+name+"/webhook-secret", admin, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("generate webhook secret: want 200, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	defer resp.Body.Close()
+	var out struct {
+		URL    string `json:"url"`
+		Secret string `json:"secret"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.URL == "" || len(out.Secret) != 64 {
+		t.Fatalf("bad generate response: %+v", out)
+	}
+	return out.URL, out.Secret
+}
+
+// pipelineWebhookCreate creates a project (if not already) and a notify-only
+// pipeline via the API, returning its id.
+func pipelineWebhookCreate(t *testing.T, srv *httptestServer, admin, project, name string) string {
+	t.Helper()
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/"+project+"/pipelines", admin,
+		`{"name":"`+name+`","yaml":"steps:\n  n:\n    notify: hi\n"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create pipeline %s: want 201, got %d (%s)", name, resp.StatusCode, mustReadBody(t, resp))
+	}
+	defer resp.Body.Close()
+	var created map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	return created["id"].(string)
+}
+
+// TestPipelineWebhookSecretGenerateSealedAndRotate covers the manage
+// endpoint: generate returns a 64-hex secret + url, the sealed bytes stored
+// in the DB never equal the plaintext, and a second generate rotates the
+// secret — the old signature stops verifying.
+func TestPipelineWebhookSecretGenerateSealedAndRotate(t *testing.T) {
+	srv, st := pipelineWebhookHTTPTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	plID := pipelineWebhookCreate(t, srv, admin, "ml", "pipe")
+
+	url1, secret1 := pipelineWebhookGenerate(t, srv, admin, "ml", "pipe")
+	if url1 != pipelineWebhookPath(plID) {
+		t.Fatalf("generate url = %q, want %q", url1, pipelineWebhookPath(plID))
+	}
+
+	pl, err := st.GetPipelineByID(plID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pl.WebhookSecret == nil || string(pl.WebhookSecret) == secret1 {
+		t.Fatalf("sealed secret must not equal plaintext: %v", pl.WebhookSecret)
+	}
+
+	oldSig := githubSig(secret1, []byte("{}"))
+	_, secret2 := pipelineWebhookGenerate(t, srv, admin, "ml", "pipe")
+	if secret2 == secret1 {
+		t.Fatal("rotate: want a new secret, got the same one")
+	}
+
+	resp := postWebhook(t, srv.URL+url1, map[string]string{"X-Hub-Signature-256": oldSig}, []byte("{}"))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("rotated-out secret: want 401, got %d", resp.StatusCode)
+	}
+}
+
+// TestPipelineWebhookTriggerAuthIdenticalAndFires checks that every auth
+// failure (unknown pipeline id, bad signature, no secret configured)
+// answers with the byte-identical 401 body (no existence oracle), and that a
+// correctly signed request fires a run recorded with trigger "webhook".
+func TestPipelineWebhookTriggerAuthIdenticalAndFires(t *testing.T) {
+	srv, st := pipelineWebhookHTTPTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	pipelineWebhookCreate(t, srv, admin, "ml", "pipe")
+	url, secretHex := pipelineWebhookGenerate(t, srv, admin, "ml", "pipe")
+	unsetID := pipelineWebhookCreate(t, srv, admin, "ml", "unset") // never generated a secret
+
+	body := []byte(`{}`)
+	var bodies [][]byte
+	var statuses []int
+	collect := func(resp *http.Response) {
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		statuses = append(statuses, resp.StatusCode)
+		bodies = append(bodies, b)
+	}
+
+	// Unknown pipeline id.
+	collect(postWebhook(t, srv.URL+"/hooks/pipelines/nosuchid",
+		map[string]string{"X-Hub-Signature-256": githubSig(secretHex, body)}, body))
+	// Bad signature.
+	collect(postWebhook(t, srv.URL+url,
+		map[string]string{"X-Hub-Signature-256": githubSig("wrong-secret", body)}, body))
+	// No secret configured.
+	collect(postWebhook(t, srv.URL+pipelineWebhookPath(unsetID),
+		map[string]string{"X-Hub-Signature-256": githubSig(secretHex, body)}, body))
+
+	for i, code := range statuses {
+		if code != http.StatusUnauthorized {
+			t.Fatalf("case %d: status = %d, want 401", i, code)
+		}
+	}
+	for i := 1; i < len(bodies); i++ {
+		if string(bodies[i]) != string(bodies[0]) {
+			t.Fatalf("case %d body %q != case 0 body %q — auth failures must be identical", i, bodies[i], bodies[0])
+		}
+	}
+
+	// Valid signature: 202 + a run created with trigger webhook.
+	resp := postWebhook(t, srv.URL+url, map[string]string{"X-Hub-Signature-256": githubSig(secretHex, body)}, body)
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted || out["run_id"] == nil {
+		t.Fatalf("webhook fire: status=%d body=%v", resp.StatusCode, out)
+	}
+	got, err := st.GetPipelineRun(out["run_id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Trigger != "webhook" {
+		t.Fatalf("run trigger = %q, want webhook", got.Trigger)
+	}
+}
+
+// TestPipelineWebhookSecretDeleteClearsHook covers DELETE .../webhook-secret:
+// the hook stops verifying once cleared.
+func TestPipelineWebhookSecretDeleteClearsHook(t *testing.T) {
+	srv, st := pipelineWebhookHTTPTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	pipelineWebhookCreate(t, srv, admin, "ml", "pipe")
+	url, secretHex := pipelineWebhookGenerate(t, srv, admin, "ml", "pipe")
+
+	del := doAuthed(t, "DELETE", srv.URL+"/v1/projects/ml/pipelines/pipe/webhook-secret", admin, "")
+	if del.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete webhook secret: want 204, got %d", del.StatusCode)
+	}
+	del.Body.Close()
+
+	body := []byte(`{}`)
+	resp := postWebhook(t, srv.URL+url, map[string]string{"X-Hub-Signature-256": githubSig(secretHex, body)}, body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("hook after delete: want 401, got %d", resp.StatusCode)
+	}
+}
+
+// TestPipelineWebhookTriggerNotForbidGated checks the documented deviation
+// from cron: a webhook fire is NOT blocked by an already-"running" previous
+// run (Forbid only applies to cron, per the plan's spec deviation note). A
+// running run is seeded directly via the store (no kube/app dependency
+// needed to make a step "running"), then a webhook fire must still create a
+// brand new run.
+func TestPipelineWebhookTriggerNotForbidGated(t *testing.T) {
+	srv, st := pipelineWebhookHTTPTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	plID := pipelineWebhookCreate(t, srv, admin, "ml", "pipe")
+	url, secretHex := pipelineWebhookGenerate(t, srv, admin, "ml", "pipe")
+
+	pl, err := st.GetPipelineByID(plID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorRun := pipelineSeedRun(t, st, pl, []pipeline.Step{{Name: "a", Kind: "app", App: "nope"}})
+	row := pipelineFindStep(t, st, priorRun.ID, "a")
+	if err := st.MarkStepRunning(row.ID, nil, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{}`)
+	resp := postWebhook(t, srv.URL+url, map[string]string{"X-Hub-Signature-256": githubSig(secretHex, body)}, body)
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("webhook fire while previous run running: status=%d body=%v", resp.StatusCode, out)
+	}
+	if out["run_id"] == priorRun.ID {
+		t.Fatal("webhook fire must create a new run, not reuse the running one")
+	}
+
+	stillRunning, err := st.GetPipelineRun(priorRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stillRunning.Status != "running" {
+		t.Fatalf("prior run status = %q, want still running (untouched)", stillRunning.Status)
+	}
+
+	runs, err := st.ListPipelineRuns(plID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %+v, want 2 (webhook not Forbid-gated)", runs)
+	}
 }

@@ -157,6 +157,24 @@ func (s *Store) CronPipelines() ([]Pipeline, error) {
 	return out, rows.Err()
 }
 
+// SetPipelineWebhookSecret sets (or, with nil/empty, clears) a pipeline's
+// sealed webhook secret. nil/empty stores NULL (webhook disabled) — same
+// convention as apps.go's SetWebhookSecret.
+func (s *Store) SetPipelineWebhookSecret(id string, sealed []byte) error {
+	var v any
+	if len(sealed) > 0 {
+		v = sealed
+	}
+	res, err := s.db.Exec(`UPDATE pipelines SET webhook_secret = ? WHERE id = ?`, v, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // UpdatePipeline replaces a pipeline's yaml/cron/engine. Existing in-flight
 // runs are unaffected — their spec_json snapshot is immutable.
 func (s *Store) UpdatePipeline(id, yaml, cron, engine string) error {

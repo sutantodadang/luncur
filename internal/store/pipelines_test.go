@@ -336,6 +336,46 @@ func TestDeletePipelineCascades(t *testing.T) {
 		t.Fatalf("run steps must cascade-delete: %+v", rows)
 	}
 	_ = steps
+}
+
+// TestSetPipelineWebhookSecret covers set/clear and the unknown-id error,
+// mirroring apps.go's SetWebhookSecret test.
+func TestSetPipelineWebhookSecret(t *testing.T) {
+	st, p := pipelineStore(t)
+	pl, err := st.CreatePipeline(Pipeline{ProjectID: p.ID, Name: "pl1", YAML: "steps:\n  a:\n    app: x\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pl.WebhookSecret != nil {
+		t.Fatalf("new pipeline must have no webhook secret: %+v", pl)
+	}
+
+	sealed := []byte("sealed-bytes")
+	if err := st.SetPipelineWebhookSecret(pl.ID, sealed); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetPipelineByID(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.WebhookSecret) != string(sealed) {
+		t.Fatalf("webhook secret = %v, want %v", got.WebhookSecret, sealed)
+	}
+
+	if err := st.SetPipelineWebhookSecret(pl.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetPipelineByID(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WebhookSecret != nil {
+		t.Fatalf("webhook secret after clear = %v, want nil", got.WebhookSecret)
+	}
+
+	if err := st.SetPipelineWebhookSecret("nope", sealed); err != ErrNotFound {
+		t.Fatalf("unknown id: err = %v, want ErrNotFound", err)
+	}
 
 	if err := st.DeletePipeline("nope"); err != ErrNotFound {
 		t.Fatalf("delete missing pipeline: %v, want ErrNotFound", err)
