@@ -276,6 +276,36 @@ func TestListPipelineRunsOrderingAndCap(t *testing.T) {
 	}
 }
 
+// TestCronPipelinesFiltersEmptyCron covers CronPipelines: only pipelines with
+// a non-empty cron come back, across projects.
+func TestCronPipelinesFiltersEmptyCron(t *testing.T) {
+	st, p := pipelineStore(t)
+	noCron, err := st.CreatePipeline(Pipeline{ProjectID: p.ID, Name: "no-cron", YAML: "steps:\n  a:\n    app: x\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withCron, err := st.CreatePipeline(Pipeline{ProjectID: p.ID, Name: "with-cron", YAML: "steps:\n  a:\n    app: x\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdatePipeline(withCron.ID, withCron.YAML, "0 3 * * *", withCron.Engine); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.CronPipelines()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != withCron.ID || got[0].Cron != "0 3 * * *" {
+		t.Fatalf("CronPipelines = %+v, want only %s with cron set", got, withCron.ID)
+	}
+	for _, pl := range got {
+		if pl.ID == noCron.ID {
+			t.Fatalf("CronPipelines must not include pipeline with empty cron: %+v", pl)
+		}
+	}
+}
+
 func TestDeletePipelineCascades(t *testing.T) {
 	st, p := pipelineStore(t)
 	pl, err := st.CreatePipeline(Pipeline{ProjectID: p.ID, Name: "pl1", YAML: "steps:\n  a:\n    app: x\n"})
@@ -306,6 +336,46 @@ func TestDeletePipelineCascades(t *testing.T) {
 		t.Fatalf("run steps must cascade-delete: %+v", rows)
 	}
 	_ = steps
+}
+
+// TestSetPipelineWebhookSecret covers set/clear and the unknown-id error,
+// mirroring apps.go's SetWebhookSecret test.
+func TestSetPipelineWebhookSecret(t *testing.T) {
+	st, p := pipelineStore(t)
+	pl, err := st.CreatePipeline(Pipeline{ProjectID: p.ID, Name: "pl1", YAML: "steps:\n  a:\n    app: x\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pl.WebhookSecret != nil {
+		t.Fatalf("new pipeline must have no webhook secret: %+v", pl)
+	}
+
+	sealed := []byte("sealed-bytes")
+	if err := st.SetPipelineWebhookSecret(pl.ID, sealed); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetPipelineByID(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.WebhookSecret) != string(sealed) {
+		t.Fatalf("webhook secret = %v, want %v", got.WebhookSecret, sealed)
+	}
+
+	if err := st.SetPipelineWebhookSecret(pl.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetPipelineByID(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WebhookSecret != nil {
+		t.Fatalf("webhook secret after clear = %v, want nil", got.WebhookSecret)
+	}
+
+	if err := st.SetPipelineWebhookSecret("nope", sealed); err != ErrNotFound {
+		t.Fatalf("unknown id: err = %v, want ErrNotFound", err)
+	}
 
 	if err := st.DeletePipeline("nope"); err != ErrNotFound {
 		t.Fatalf("delete missing pipeline: %v, want ErrNotFound", err)

@@ -2,14 +2,18 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/sutantodadang/luncur/internal/cronexpr"
 	"github.com/sutantodadang/luncur/internal/pipeline"
 	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
@@ -146,8 +150,13 @@ func (s *server) startPipelineLoop(ctx context.Context) {
 	}
 }
 
-// pipelineTick drives one tick of every active pipeline run.
+// pipelineTick drives one tick of every active pipeline run, firing any due
+// cron-scheduled pipelines first (firePipelineCrons) so a run it just
+// created gets its root steps driven in the same tick, same as a manual
+// trigger's inline pipelineTick (startPipelineRun's doc comment).
 func (s *server) pipelineTick(ctx context.Context) {
+	s.firePipelineCrons(ctx)
+
 	runs, err := s.st.ActivePipelineRuns()
 	if err != nil {
 		log.Printf("pipeline tick: list active runs: %v", err)
@@ -155,6 +164,57 @@ func (s *server) pipelineTick(ctx context.Context) {
 	}
 	for _, run := range runs {
 		s.pipelineTickOne(ctx, run)
+	}
+}
+
+// pipelineStartedAtLayout is the Go time layout matching SQLite's
+// datetime('now') column format, used to parse PipelineRun.StartedAt for the
+// cron same-minute dedupe check below.
+const pipelineStartedAtLayout = "2006-01-02 15:04:05"
+
+// firePipelineCrons starts a run for every cron-scheduled pipeline that's
+// due this minute, called at the top of pipelineTick before run driving.
+// Never crashes the loop: an unparseable cron (creation validates this, so
+// it's defensive only), an over-budget/engine-unavailable start, or any
+// other startPipelineRun failure is logged and skipped rather than
+// propagated.
+func (s *server) firePipelineCrons(ctx context.Context) {
+	pipelines, err := s.st.CronPipelines()
+	if err != nil {
+		log.Printf("pipeline cron: list cron pipelines: %v", err)
+		return
+	}
+	now := s.nowFn().UTC().Truncate(time.Minute)
+	for _, pl := range pipelines {
+		sched, err := cronexpr.Parse(pl.Cron)
+		if err != nil {
+			log.Printf("pipeline %s: cron %q unparseable, skipped: %v", pl.Name, pl.Cron, err)
+			continue
+		}
+		if !sched.Matches(now) {
+			continue
+		}
+
+		runs, err := s.st.ListPipelineRuns(pl.ID)
+		if err != nil {
+			log.Printf("pipeline %s: cron: list runs: %v", pl.Name, err)
+			continue
+		}
+		if len(runs) > 0 {
+			last := runs[0] // ListPipelineRuns is newest first
+			if last.Status == "running" {
+				log.Printf("pipeline %s: cron skipped, previous run still running", pl.Name)
+				continue
+			}
+			if startedAt, err := time.Parse(pipelineStartedAtLayout, last.StartedAt); err == nil &&
+				startedAt.UTC().Truncate(time.Minute).Equal(now) {
+				continue // already fired this minute
+			}
+		}
+
+		if _, _, err := s.startPipelineRun(ctx, pl, "cron"); err != nil {
+			log.Printf("pipeline %s: cron: start run: %v", pl.Name, err)
+		}
 	}
 }
 
@@ -742,13 +802,30 @@ func (s *server) validatePipelineAppRefs(p store.Project, spec pipeline.Spec) er
 	return nil
 }
 
+// validatePipelineCron rejects a non-empty cron that fails cronexpr.Parse,
+// naming the "cron" field in the error (400 bad_request via
+// errBadPipelineRequest, same convention as engine/yaml validation). An
+// empty cron is always valid — it just means "no schedule".
+func validatePipelineCron(cron string) error {
+	if cron == "" {
+		return nil
+	}
+	if _, err := cronexpr.Parse(cron); err != nil {
+		return fmt.Errorf("%w: cron: %v", errBadPipelineRequest, err)
+	}
+	return nil
+}
+
 // createPipeline is handleCreatePipeline's shared core: compile+validate the
-// yaml, check every app reference against the store, then persist. Kept
-// separate from the handler so a future UI create form can share it (same
-// convention as startSweep/startRun).
-func (s *server) createPipeline(p store.Project, name, yamlStr, engine string, createdBy sql.NullInt64) (store.Pipeline, error) {
+// yaml, validate cron (if set), check every app reference against the store,
+// then persist. Kept separate from the handler so a future UI create form
+// can share it (same convention as startSweep/startRun).
+func (s *server) createPipeline(p store.Project, name, yamlStr, engine, cron string, createdBy sql.NullInt64) (store.Pipeline, error) {
 	if !validPipelineEngine(engine) {
 		return store.Pipeline{}, fmt.Errorf("%w: engine must be \"\", \"native\", or \"argo\", got %q", errBadPipelineRequest, engine)
+	}
+	if err := validatePipelineCron(cron); err != nil {
+		return store.Pipeline{}, err
 	}
 	spec, err := pipeline.Compile([]byte(yamlStr))
 	if err != nil {
@@ -761,17 +838,17 @@ func (s *server) createPipeline(p store.Project, name, yamlStr, engine string, c
 		ProjectID: p.ID,
 		Name:      name,
 		YAML:      yamlStr,
+		Cron:      cron,
 		Engine:    engine,
 		CreatedBy: createdBy,
 	})
 }
 
-// updatePipeline is handleUpdatePipeline's shared core: yaml/engine are
-// optional in the request (nil = keep current value); cron is left untouched
-// (C1 never writes it — C2's concern). Re-validates the effective yaml/engine
-// exactly like createPipeline, since an update can introduce the same kinds
-// of problems a create can.
-func (s *server) updatePipeline(p store.Project, pl store.Pipeline, yamlPtr, enginePtr *string) (store.Pipeline, error) {
+// updatePipeline is handleUpdatePipeline's shared core: yaml/engine/cron are
+// all optional in the request (nil = keep current value). Re-validates the
+// effective yaml/engine/cron exactly like createPipeline, since an update can
+// introduce the same kinds of problems a create can.
+func (s *server) updatePipeline(p store.Project, pl store.Pipeline, yamlPtr, enginePtr, cronPtr *string) (store.Pipeline, error) {
 	yamlStr := pl.YAML
 	if yamlPtr != nil {
 		yamlStr = *yamlPtr
@@ -780,8 +857,15 @@ func (s *server) updatePipeline(p store.Project, pl store.Pipeline, yamlPtr, eng
 	if enginePtr != nil {
 		engine = *enginePtr
 	}
+	cron := pl.Cron
+	if cronPtr != nil {
+		cron = *cronPtr
+	}
 	if !validPipelineEngine(engine) {
 		return store.Pipeline{}, fmt.Errorf("%w: engine must be \"\", \"native\", or \"argo\", got %q", errBadPipelineRequest, engine)
+	}
+	if err := validatePipelineCron(cron); err != nil {
+		return store.Pipeline{}, err
 	}
 	spec, err := pipeline.Compile([]byte(yamlStr))
 	if err != nil {
@@ -790,22 +874,27 @@ func (s *server) updatePipeline(p store.Project, pl store.Pipeline, yamlPtr, eng
 	if err := s.validatePipelineAppRefs(p, spec); err != nil {
 		return store.Pipeline{}, err
 	}
-	if err := s.st.UpdatePipeline(pl.ID, yamlStr, pl.Cron, engine); err != nil {
+	if err := s.st.UpdatePipeline(pl.ID, yamlStr, cron, engine); err != nil {
 		return store.Pipeline{}, err
 	}
 	return s.st.GetPipelineByID(pl.ID)
 }
 
-// startPipelineRun is handleCreatePipelineRun's shared core: resolve the
-// run's engine (pipeline.Engine, else the pipeline_engine setting, else
-// "native"; "argo" is rejected until C3), re-compile the stored yaml (safety
-// net — it was validated at write time, but re-validate rather than trust a
-// stale snapshot), re-check app references (an app referenced at create time
-// may have been deleted/changed kind since), then create the run with its
-// pre-expanded pending step rows in topo order. Also fires one immediate
-// pipelineTick so a manually triggered run's root steps launch instantly
-// instead of waiting up to pipelineLoopInterval for the next tick.
-func (s *server) startPipelineRun(ctx context.Context, pl store.Pipeline) (store.PipelineRun, []store.PipelineRunStep, error) {
+// startPipelineRun is the shared run-start core for every trigger (manual:
+// handleCreatePipelineRun, cron: firePipelineCrons, webhook: a future C3
+// handler): resolve the run's engine (pipeline.Engine, else the
+// pipeline_engine setting, else "native"; "argo" is rejected until C3),
+// re-compile the stored yaml (safety net — it was validated at write time,
+// but re-validate rather than trust a stale snapshot), re-check app
+// references (an app referenced at create time may have been
+// deleted/changed kind since), then create the run with its pre-expanded
+// pending step rows in topo order, recording trigger (manual|cron|webhook).
+// Also fires one immediate pipelineTick so the run's root steps launch
+// instantly instead of waiting up to pipelineLoopInterval for the next tick
+// — for a cron-triggered call this re-enters pipelineTick/firePipelineCrons
+// one level deep; the nested firePipelineCrons pass sees this run already
+// "running" and skips it (Forbid concurrency check), so it terminates.
+func (s *server) startPipelineRun(ctx context.Context, pl store.Pipeline, trigger string) (store.PipelineRun, []store.PipelineRunStep, error) {
 	engine := pl.Engine
 	if engine == "" {
 		if v, err := s.st.GetSetting("pipeline_engine"); err == nil {
@@ -843,7 +932,7 @@ func (s *server) startPipelineRun(ctx context.Context, pl store.Pipeline) (store
 	run, steps, err := s.st.CreatePipelineRun(store.PipelineRun{
 		PipelineID: pl.ID,
 		SpecJSON:   string(specJSON),
-		Trigger:    "manual",
+		Trigger:    trigger,
 	}, stepNamesKinds)
 	if err != nil {
 		return store.PipelineRun{}, nil, fmt.Errorf("create run: %w", err)
@@ -868,12 +957,14 @@ func pipelineBaseJSON(pl store.Pipeline) map[string]any {
 		"id":         pl.ID,
 		"name":       pl.Name,
 		"engine":     pl.Engine,
+		"cron":       pl.Cron, // "" when unscheduled; CLI's `pipeline ls` needs this on every row, not just detail
 		"created_at": pl.CreatedAt,
 	}
 }
 
-// pipelineListJSON is one row of GET .../pipelines: base fields plus the
-// newest run's id/status/started_at (nil when the pipeline has never run).
+// pipelineListJSON is one row of GET .../pipelines: base fields (including
+// cron, for the CLI's ls CRON column) plus the newest run's
+// id/status/started_at (nil when the pipeline has never run).
 func pipelineListJSON(pl store.Pipeline, lastRun *store.PipelineRun) map[string]any {
 	out := pipelineBaseJSON(pl)
 	if lastRun != nil {
@@ -1006,6 +1097,7 @@ func (s *server) handleCreatePipeline(w http.ResponseWriter, r *http.Request, u 
 		Name   string `json:"name"`
 		YAML   string `json:"yaml"`
 		Engine string `json:"engine"`
+		Cron   string `json:"cron"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
@@ -1016,7 +1108,7 @@ func (s *server) handleCreatePipeline(w http.ResponseWriter, r *http.Request, u 
 	if u.ID != 0 {
 		createdBy = sql.NullInt64{Int64: u.ID, Valid: true}
 	}
-	pl, err := s.createPipeline(p, req.Name, req.YAML, req.Engine, createdBy)
+	pl, err := s.createPipeline(p, req.Name, req.YAML, req.Engine, req.Cron, createdBy)
 	if err != nil {
 		if writePipelineRequestError(w, err) {
 			return
@@ -1028,9 +1120,10 @@ func (s *server) handleCreatePipeline(w http.ResponseWriter, r *http.Request, u 
 	writeJSON(w, http.StatusCreated, pipelineDetailJSON(pl))
 }
 
-// handleUpdatePipeline replaces a pipeline's yaml and/or engine (both
-// optional; omitted fields keep their current value). cron is C2's concern
-// and is never touched here.
+// handleUpdatePipeline replaces a pipeline's yaml/engine/cron (all optional;
+// omitted fields keep their current value). An empty-string cron clears the
+// schedule; a non-empty cron is validated (400 bad_request naming "cron" on
+// bad syntax).
 func (s *server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.requireProject(w, u, r.PathValue("project"))
 	if !ok {
@@ -1044,13 +1137,14 @@ func (s *server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request, u 
 	var req struct {
 		YAML   *string `json:"yaml"`
 		Engine *string `json:"engine"`
+		Cron   *string `json:"cron"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
 
-	updated, err := s.updatePipeline(p, pl, req.YAML, req.Engine)
+	updated, err := s.updatePipeline(p, pl, req.YAML, req.Engine, req.Cron)
 	if err != nil {
 		if writePipelineRequestError(w, err) {
 			return
@@ -1151,7 +1245,7 @@ func (s *server) handleCreatePipelineRun(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	run, steps, err := s.startPipelineRun(r.Context(), pl)
+	run, steps, err := s.startPipelineRun(r.Context(), pl, "manual")
 	if err != nil {
 		if writePipelineRequestError(w, err) {
 			return
@@ -1249,4 +1343,166 @@ func (s *server) handleStopPipelineRun(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 	writeJSON(w, http.StatusOK, pipelineRunDetailJSON(run, steps))
+}
+
+// --- webhook trigger (C2 Task 3) ----------------------------------------
+
+// pipelineWebhookPath returns the public (unauthenticated) hook URL path an
+// external system posts to, to trigger pipeline id. Deviates from the spec's
+// /v1/hooks/... in favor of the repo's existing hook-path convention
+// (webhook.go's webhookPath for app deploy hooks lives at /hooks/apps/...).
+func pipelineWebhookPath(id string) string {
+	return "/hooks/pipelines/" + id
+}
+
+// generatePipelineWebhookSecret is handleGeneratePipelineWebhookSecret's
+// shared core: generate a fresh 32-byte secret (hex-encoded, 64 chars — what
+// the caller signs/compares with), seal it, and store it. Always
+// regenerates: calling this on a pipeline that already has a secret rotates
+// it, invalidating the old one — same convention as enableWebhook
+// (webhook.go) for app deploy hooks. Returns the plaintext hex secret — the
+// ONLY time it is ever available in plaintext; only the sealed form
+// persists.
+func (s *server) generatePipelineWebhookSecret(pl store.Pipeline) (string, error) {
+	if s.sealer == nil {
+		return "", errSealerUnavailable
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	secretHex := hex.EncodeToString(raw)
+	sealed, err := s.sealer.Seal([]byte(secretHex))
+	if err != nil {
+		return "", err
+	}
+	if err := s.st.SetPipelineWebhookSecret(pl.ID, sealed); err != nil {
+		return "", err
+	}
+	return secretHex, nil
+}
+
+// handleGeneratePipelineWebhookSecret turns on (or rotates) a pipeline's
+// trigger webhook. The secret is returned in this response ONLY — it is
+// never recoverable from the store afterward (only the sealed bytes
+// persist), mirroring handleWebhookEnable's contract for app deploy hooks.
+func (s *server) handleGeneratePipelineWebhookSecret(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pl, ok := s.requirePipeline(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+
+	secretHex, err := s.generatePipelineWebhookSecret(pl)
+	if err != nil {
+		if errors.Is(err, errSealerUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", errSealerUnavailable.Error())
+			return
+		}
+		log.Printf("generate pipeline webhook secret: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"url": pipelineWebhookPath(pl.ID), "secret": secretHex,
+	})
+}
+
+// handleDeletePipelineWebhookSecret turns off a pipeline's trigger webhook:
+// the stored secret is cleared, so any previously-issued secret stops
+// verifying.
+func (s *server) handleDeletePipelineWebhookSecret(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pl, ok := s.requirePipeline(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+	if err := s.st.SetPipelineWebhookSecret(pl.ID, nil); err != nil {
+		log.Printf("delete pipeline webhook secret: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// writePipelineWebhookTriggerError maps startPipelineRun's sentinel errors to
+// the webhook trigger's response: unlike the authenticated create-run
+// endpoint (writePipelineRequestError, 400s), a signature-verified webhook
+// call that can't fire is a 409 conflict — the request itself was fine, the
+// pipeline just isn't in a runnable state (argo engine unavailable, or the
+// stored yaml/app-refs have since drifted invalid).
+func writePipelineWebhookTriggerError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, errPipelineEngineUnavailable):
+		writeError(w, http.StatusConflict, "engine_unavailable", err.Error())
+	case errors.Is(err, errPipelineAppMismatch):
+		writeError(w, http.StatusConflict, "kind_mismatch", err.Error())
+	case errors.Is(err, errBadPipelineRequest):
+		writeError(w, http.StatusConflict, "bad_request", err.Error())
+	default:
+		return false
+	}
+	return true
+}
+
+// handlePipelineWebhookTrigger is the public (unauthenticated at the
+// HTTP-auth layer) endpoint an external system posts to, to trigger a
+// pipeline run. Auth is the HMAC/token check itself (verifyWebhook,
+// webhook.go): every failure up to and including a bad signature answers
+// with the identical 401 body — no existence oracle for a pipeline id,
+// matching handleWebhookTrigger's convention for app deploy hooks. Unlike
+// the cron trigger, a webhook fire is NOT Forbid-gated against a running
+// previous run (spec: Forbid applies to cron only) — every valid call starts
+// a fresh run. The request body itself is never parsed; it only needs to be
+// read so verifyWebhook can hash it.
+func (s *server) handlePipelineWebhookTrigger(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, webhookMaxBody)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		webhookUnauthorized(w)
+		return
+	}
+
+	pl, err := s.st.GetPipelineByID(r.PathValue("id"))
+	if err != nil {
+		webhookUnauthorized(w)
+		return
+	}
+	if pl.WebhookSecret == nil || s.sealer == nil {
+		webhookUnauthorized(w)
+		return
+	}
+	plain, err := s.sealer.Open(pl.WebhookSecret)
+	if err != nil {
+		webhookUnauthorized(w)
+		return
+	}
+	if !verifyWebhook(r, body, string(plain)) {
+		webhookUnauthorized(w)
+		return
+	}
+
+	if info := auditFrom(r.Context()); info != nil {
+		info.Email = "webhook"
+		info.Pattern = r.Pattern
+	}
+
+	// Authenticated from here on — failures are ordinary status codes.
+	run, _, err := s.startPipelineRun(r.Context(), pl, "webhook")
+	if err != nil {
+		if writePipelineWebhookTriggerError(w, err) {
+			return
+		}
+		log.Printf("pipeline webhook trigger: start run: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"run_id": run.ID})
 }

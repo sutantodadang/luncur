@@ -945,6 +945,7 @@ type PipelineInfo struct {
 	ID        string           `json:"id"`
 	Name      string           `json:"name"`
 	Engine    string           `json:"engine,omitempty"`
+	Cron      string           `json:"cron,omitempty"`
 	YAML      string           `json:"yaml,omitempty"`
 	CreatedAt string           `json:"created_at"`
 	LastRun   *PipelineLastRun `json:"last_run,omitempty"`
@@ -981,20 +982,22 @@ type PipelineRunInfo struct {
 
 // CreatePipeline compiles+validates and stores a pipeline.yaml. yamlStr is
 // the raw file contents; engine is "" (follow the install's pipeline_engine
-// setting), "native", or "argo".
+// setting), "native", or "argo"; cron is "" (manual trigger only) or a
+// 5-field cron expression (validated server-side).
 //
 // Step env in pipeline.yaml is stored in plaintext — put secrets in app env
 // instead.
-func (c *Client) CreatePipeline(project, name, yamlStr, engine string) (PipelineInfo, error) {
+func (c *Client) CreatePipeline(project, name, yamlStr, engine, cron string) (PipelineInfo, error) {
 	var out PipelineInfo
-	body := map[string]any{"name": name, "yaml": yamlStr, "engine": engine}
+	body := map[string]any{"name": name, "yaml": yamlStr, "engine": engine, "cron": cron}
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/pipelines", body, &out)
 	return out, err
 }
 
-// UpdatePipeline replaces a pipeline's yaml and/or engine; a nil pointer
-// leaves that field's current value unchanged.
-func (c *Client) UpdatePipeline(project, name string, yamlStr, engine *string) (PipelineInfo, error) {
+// UpdatePipeline replaces a pipeline's yaml/engine/cron; a nil pointer
+// leaves that field's current value unchanged (an empty non-nil cron clears
+// the schedule).
+func (c *Client) UpdatePipeline(project, name string, yamlStr, engine, cron *string) (PipelineInfo, error) {
 	var out PipelineInfo
 	body := map[string]any{}
 	if yamlStr != nil {
@@ -1002,6 +1005,9 @@ func (c *Client) UpdatePipeline(project, name string, yamlStr, engine *string) (
 	}
 	if engine != nil {
 		body["engine"] = *engine
+	}
+	if cron != nil {
+		body["cron"] = *cron
 	}
 	err := c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/pipelines/"+url.PathEscape(name), body, &out)
 	return out, err
@@ -1057,6 +1063,24 @@ func (c *Client) StopPipelineRun(project, name, id string) (PipelineRunInfo, err
 	var out PipelineRunInfo
 	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/pipelines/"+url.PathEscape(name)+"/runs/"+url.PathEscape(id)+"/stop", nil, &out)
 	return out, err
+}
+
+// PipelineWebhookSecret generates (or, if one already exists, rotates) a
+// pipeline's trigger webhook secret. The returned secret is shown ONLY in
+// this response — it is never recoverable from the store afterward.
+func (c *Client) PipelineWebhookSecret(project, name string) (url_, secret string, err error) {
+	var out struct {
+		URL    string `json:"url"`
+		Secret string `json:"secret"`
+	}
+	err = c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/pipelines/"+url.PathEscape(name)+"/webhook-secret", nil, &out)
+	return out.URL, out.Secret, err
+}
+
+// DisablePipelineWebhook clears a pipeline's trigger webhook secret; any
+// previously-issued secret stops verifying.
+func (c *Client) DisablePipelineWebhook(project, name string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/pipelines/"+url.PathEscape(name)+"/webhook-secret", nil, nil)
 }
 
 type TokenInfo struct {

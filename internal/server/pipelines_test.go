@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -667,6 +668,223 @@ func TestPipelineReconcileMarksOrphanedImageStepFailed(t *testing.T) {
 	}
 }
 
+// --- cron firing (firePipelineCrons, C2) -----------------------------------
+
+// pipelineSeedCronPipeline creates a cron-scheduled pipeline with a single
+// synchronous notify step — no kube, no watch goroutines, so cron-loop tests
+// stay deterministic (an app step's async watchRun would race the tick).
+func pipelineSeedCronPipeline(t *testing.T, st *store.Store, projectID int64, name, cron string) store.Pipeline {
+	t.Helper()
+	pl, err := st.CreatePipeline(store.Pipeline{
+		ProjectID: projectID,
+		Name:      name,
+		YAML:      "steps:\n  n:\n    notify: hi\n",
+		Cron:      cron,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pl
+}
+
+func TestFirePipelineCronsDueMinuteFiresTriggerCron(t *testing.T) {
+	s := pipelineTestServer(t, nil, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pl := pipelineSeedCronPipeline(t, s.st, p.ID, "nightly", "0 3 * * *")
+
+	// not due: 02:59.
+	s.nowFn = func() time.Time { return time.Date(2026, 7, 8, 2, 59, 0, 0, time.UTC) }
+	s.pipelineTick(context.Background())
+	runs, err := s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs = %+v, want none at 02:59", runs)
+	}
+
+	// due: 03:00 (seconds must be truncated away).
+	s.nowFn = func() time.Time { return time.Date(2026, 7, 8, 3, 0, 42, 0, time.UTC) }
+	s.pipelineTick(context.Background())
+	runs, err = s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v, want exactly 1 at 03:00", runs)
+	}
+	if runs[0].Trigger != "cron" {
+		t.Fatalf("trigger = %q, want cron", runs[0].Trigger)
+	}
+	// The synchronous notify step was driven by the inline tick, and the
+	// outer tick's run-driving pass then finished the drained run.
+	if runs[0].Status != "done" {
+		t.Fatalf("run status = %q, want done (notify step drains same tick)", runs[0].Status)
+	}
+}
+
+func TestFirePipelineCronsSameMinuteNoDoubleFire(t *testing.T) {
+	s := pipelineTestServer(t, nil, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pl := pipelineSeedCronPipeline(t, s.st, p.ID, "everymin", "* * * * *")
+
+	s.nowFn = func() time.Time { return time.Date(2026, 7, 8, 10, 30, 0, 0, time.UTC) }
+	s.pipelineTick(context.Background())
+
+	runs, err := s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v, want 1 after first tick", runs)
+	}
+
+	// Re-tick with now pinned to the run's own StartedAt minute (the run is
+	// already done — notify drains synchronously — so this exercises the
+	// same-minute StartedAt dedupe, not the running guard).
+	startedAt, err := time.Parse(pipelineStartedAtLayout, runs[0].StartedAt)
+	if err != nil {
+		t.Fatalf("parse StartedAt %q: %v", runs[0].StartedAt, err)
+	}
+	s.nowFn = func() time.Time { return startedAt.UTC() }
+	s.pipelineTick(context.Background())
+	runs, err = s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v, want still 1 (same-minute dedupe)", runs)
+	}
+
+	// The next minute is a fresh minute: the dedupe must not block it.
+	s.nowFn = func() time.Time { return startedAt.UTC().Add(time.Minute) }
+	s.pipelineTick(context.Background())
+	runs, err = s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %+v, want 2 (next minute fires again)", runs)
+	}
+}
+
+func TestFirePipelineCronsRunningPreviousRunSkips(t *testing.T) {
+	s := pipelineTestServer(t, nil, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	a := pipelineSeedApp(t, s.st, p.ID, "train", "job", "trainer:1")
+	pl := pipelineSeedCronPipeline(t, s.st, p.ID, "busy", "0 3 * * *")
+
+	// A previous run is still in flight: its app step's job run is still
+	// "running", so the seeded run stays running across ticks.
+	run := pipelineSeedRun(t, s.st, pl, []pipeline.Step{{Name: "a", Kind: "app", App: "train"}})
+	row := pipelineFindStep(t, s.st, run.ID, "a")
+	jr, err := s.st.CreateJobRun(a.ID, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.MarkStepRunning(row.ID, &jr.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	s.nowFn = func() time.Time { return time.Date(2026, 7, 8, 3, 0, 0, 0, time.UTC) }
+	s.pipelineTick(context.Background())
+
+	runs, err := s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v, want only the pre-existing run (cron Forbid)", runs)
+	}
+	if runs[0].ID != run.ID {
+		t.Fatalf("runs = %+v, want the pre-existing run %s only", runs, run.ID)
+	}
+}
+
+func TestFirePipelineCronsEmptyCronNeverFires(t *testing.T) {
+	s := pipelineTestServer(t, nil, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pl := pipelineSeedCronPipeline(t, s.st, p.ID, "manual-only", "")
+
+	s.nowFn = func() time.Time { return time.Date(2026, 7, 8, 3, 0, 0, 0, time.UTC) }
+	s.pipelineTick(context.Background())
+
+	runs, err := s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs = %+v, want none (no cron configured)", runs)
+	}
+}
+
+// TestPipelineCronValidationAPI covers create/update cron validation and
+// persistence: bad cron -> 400 bad_request naming the field, good cron
+// persists (and comes back in the detail JSON), empty cron clears.
+func TestPipelineCronValidationAPI(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+
+	// create with a bad cron -> 400 bad_request naming cron.
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines", admin,
+		`{"name":"pipe","yaml":"steps:\n  a:\n    app: train\n","cron":"not-a-cron"}`)
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, body) != "bad_request" {
+		t.Fatalf("create bad cron: want 400 bad_request, got %d (%s)", resp.StatusCode, body)
+	}
+	if !bytesContains(body, "cron") {
+		t.Fatalf("bad cron error must name the cron field: %s", body)
+	}
+
+	// create with a good cron -> 201 with cron echoed back.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines", admin,
+		`{"name":"pipe","yaml":"steps:\n  a:\n    app: train\n","cron":"0 3 * * *"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create with cron: want 201, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var created map[string]any
+	json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+	if created["cron"] != "0 3 * * *" {
+		t.Fatalf("created cron = %v, want 0 3 * * *", created["cron"])
+	}
+
+	// update with a bad cron -> 400 bad_request, existing cron untouched.
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, `{"cron":"61 * * * *"}`)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, mustReadBody(t, resp)) != "bad_request" {
+		t.Fatalf("update bad cron: want 400 bad_request, got %d", resp.StatusCode)
+	}
+
+	// update with a good cron -> 200 and persists.
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, `{"cron":"*/15 * * * *"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update cron: want 200, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp.Body.Close()
+	resp = doAuthed(t, "GET", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, "")
+	var got map[string]any
+	json.NewDecoder(resp.Body).Decode(&got)
+	resp.Body.Close()
+	if got["cron"] != "*/15 * * * *" {
+		t.Fatalf("persisted cron = %v, want */15 * * * *", got["cron"])
+	}
+
+	// update with an empty cron clears the schedule.
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, `{"cron":""}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clear cron: want 200, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp.Body.Close()
+	resp = doAuthed(t, "GET", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, "")
+	json.NewDecoder(resp.Body).Decode(&got)
+	resp.Body.Close()
+	if got["cron"] != "" {
+		t.Fatalf("cleared cron = %v, want \"\"", got["cron"])
+	}
+}
+
 // --- HTTP endpoint tests (Task 6) ------------------------------------------
 
 // TestPipelinesAPI covers the pipeline CRUD + run lifecycle end to end
@@ -865,4 +1083,235 @@ func TestSettingPipelineEngineValidation(t *testing.T) {
 func jsonQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// --- webhook trigger (C2 Task 3) ------------------------------------------
+
+// pipelineWebhookHTTPTestServer builds a sealer-backed test server with no
+// kube layer: every webhook test below fires a notify-only (or never-fired)
+// pipeline spec, so nothing here ever needs kube (startPipelineLoop's
+// kube==nil guard doesn't apply — pipelineTick is only ever invoked inline
+// by startPipelineRun in these tests, never via the loop).
+func pipelineWebhookHTTPTestServer(t *testing.T) (*httptestServer, *store.Store) {
+	t.Helper()
+	st := newTestStore(t)
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newHTTPTest(t, Deps{Store: st, Sealer: sealer, ExternalIP: "1.2.3.4"})
+	return srv, st
+}
+
+// pipelineWebhookGenerate posts .../webhook-secret and decodes the url+secret
+// response (200; regenerates every call, app-webhook convention).
+func pipelineWebhookGenerate(t *testing.T, srv *httptestServer, admin, project, name string) (url, secretHex string) {
+	t.Helper()
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/"+project+"/pipelines/"+name+"/webhook-secret", admin, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("generate webhook secret: want 200, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	defer resp.Body.Close()
+	var out struct {
+		URL    string `json:"url"`
+		Secret string `json:"secret"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.URL == "" || len(out.Secret) != 64 {
+		t.Fatalf("bad generate response: %+v", out)
+	}
+	return out.URL, out.Secret
+}
+
+// pipelineWebhookCreate creates a project (if not already) and a notify-only
+// pipeline via the API, returning its id.
+func pipelineWebhookCreate(t *testing.T, srv *httptestServer, admin, project, name string) string {
+	t.Helper()
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/"+project+"/pipelines", admin,
+		`{"name":"`+name+`","yaml":"steps:\n  n:\n    notify: hi\n"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create pipeline %s: want 201, got %d (%s)", name, resp.StatusCode, mustReadBody(t, resp))
+	}
+	defer resp.Body.Close()
+	var created map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	return created["id"].(string)
+}
+
+// TestPipelineWebhookSecretGenerateSealedAndRotate covers the manage
+// endpoint: generate returns a 64-hex secret + url, the sealed bytes stored
+// in the DB never equal the plaintext, and a second generate rotates the
+// secret — the old signature stops verifying.
+func TestPipelineWebhookSecretGenerateSealedAndRotate(t *testing.T) {
+	srv, st := pipelineWebhookHTTPTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	plID := pipelineWebhookCreate(t, srv, admin, "ml", "pipe")
+
+	url1, secret1 := pipelineWebhookGenerate(t, srv, admin, "ml", "pipe")
+	if url1 != pipelineWebhookPath(plID) {
+		t.Fatalf("generate url = %q, want %q", url1, pipelineWebhookPath(plID))
+	}
+
+	pl, err := st.GetPipelineByID(plID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pl.WebhookSecret == nil || string(pl.WebhookSecret) == secret1 {
+		t.Fatalf("sealed secret must not equal plaintext: %v", pl.WebhookSecret)
+	}
+
+	oldSig := githubSig(secret1, []byte("{}"))
+	_, secret2 := pipelineWebhookGenerate(t, srv, admin, "ml", "pipe")
+	if secret2 == secret1 {
+		t.Fatal("rotate: want a new secret, got the same one")
+	}
+
+	resp := postWebhook(t, srv.URL+url1, map[string]string{"X-Hub-Signature-256": oldSig}, []byte("{}"))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("rotated-out secret: want 401, got %d", resp.StatusCode)
+	}
+}
+
+// TestPipelineWebhookTriggerAuthIdenticalAndFires checks that every auth
+// failure (unknown pipeline id, bad signature, no secret configured)
+// answers with the byte-identical 401 body (no existence oracle), and that a
+// correctly signed request fires a run recorded with trigger "webhook".
+func TestPipelineWebhookTriggerAuthIdenticalAndFires(t *testing.T) {
+	srv, st := pipelineWebhookHTTPTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	pipelineWebhookCreate(t, srv, admin, "ml", "pipe")
+	url, secretHex := pipelineWebhookGenerate(t, srv, admin, "ml", "pipe")
+	unsetID := pipelineWebhookCreate(t, srv, admin, "ml", "unset") // never generated a secret
+
+	body := []byte(`{}`)
+	var bodies [][]byte
+	var statuses []int
+	collect := func(resp *http.Response) {
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		statuses = append(statuses, resp.StatusCode)
+		bodies = append(bodies, b)
+	}
+
+	// Unknown pipeline id.
+	collect(postWebhook(t, srv.URL+"/hooks/pipelines/nosuchid",
+		map[string]string{"X-Hub-Signature-256": githubSig(secretHex, body)}, body))
+	// Bad signature.
+	collect(postWebhook(t, srv.URL+url,
+		map[string]string{"X-Hub-Signature-256": githubSig("wrong-secret", body)}, body))
+	// No secret configured.
+	collect(postWebhook(t, srv.URL+pipelineWebhookPath(unsetID),
+		map[string]string{"X-Hub-Signature-256": githubSig(secretHex, body)}, body))
+
+	for i, code := range statuses {
+		if code != http.StatusUnauthorized {
+			t.Fatalf("case %d: status = %d, want 401", i, code)
+		}
+	}
+	for i := 1; i < len(bodies); i++ {
+		if string(bodies[i]) != string(bodies[0]) {
+			t.Fatalf("case %d body %q != case 0 body %q — auth failures must be identical", i, bodies[i], bodies[0])
+		}
+	}
+
+	// Valid signature: 202 + a run created with trigger webhook.
+	resp := postWebhook(t, srv.URL+url, map[string]string{"X-Hub-Signature-256": githubSig(secretHex, body)}, body)
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted || out["run_id"] == nil {
+		t.Fatalf("webhook fire: status=%d body=%v", resp.StatusCode, out)
+	}
+	got, err := st.GetPipelineRun(out["run_id"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Trigger != "webhook" {
+		t.Fatalf("run trigger = %q, want webhook", got.Trigger)
+	}
+}
+
+// TestPipelineWebhookSecretDeleteClearsHook covers DELETE .../webhook-secret:
+// the hook stops verifying once cleared.
+func TestPipelineWebhookSecretDeleteClearsHook(t *testing.T) {
+	srv, st := pipelineWebhookHTTPTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	pipelineWebhookCreate(t, srv, admin, "ml", "pipe")
+	url, secretHex := pipelineWebhookGenerate(t, srv, admin, "ml", "pipe")
+
+	del := doAuthed(t, "DELETE", srv.URL+"/v1/projects/ml/pipelines/pipe/webhook-secret", admin, "")
+	if del.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete webhook secret: want 204, got %d", del.StatusCode)
+	}
+	del.Body.Close()
+
+	body := []byte(`{}`)
+	resp := postWebhook(t, srv.URL+url, map[string]string{"X-Hub-Signature-256": githubSig(secretHex, body)}, body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("hook after delete: want 401, got %d", resp.StatusCode)
+	}
+}
+
+// TestPipelineWebhookTriggerNotForbidGated checks the documented deviation
+// from cron: a webhook fire is NOT blocked by an already-"running" previous
+// run (Forbid only applies to cron, per the plan's spec deviation note). A
+// running run is seeded directly via the store (no kube/app dependency
+// needed to make a step "running"), then a webhook fire must still create a
+// brand new run.
+func TestPipelineWebhookTriggerNotForbidGated(t *testing.T) {
+	srv, st := pipelineWebhookHTTPTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	plID := pipelineWebhookCreate(t, srv, admin, "ml", "pipe")
+	url, secretHex := pipelineWebhookGenerate(t, srv, admin, "ml", "pipe")
+
+	pl, err := st.GetPipelineByID(plID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorRun := pipelineSeedRun(t, st, pl, []pipeline.Step{{Name: "a", Kind: "app", App: "nope"}})
+	row := pipelineFindStep(t, st, priorRun.ID, "a")
+	if err := st.MarkStepRunning(row.ID, nil, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{}`)
+	resp := postWebhook(t, srv.URL+url, map[string]string{"X-Hub-Signature-256": githubSig(secretHex, body)}, body)
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("webhook fire while previous run running: status=%d body=%v", resp.StatusCode, out)
+	}
+	if out["run_id"] == priorRun.ID {
+		t.Fatal("webhook fire must create a new run, not reuse the running one")
+	}
+
+	stillRunning, err := st.GetPipelineRun(priorRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stillRunning.Status != "running" {
+		t.Fatalf("prior run status = %q, want still running (untouched)", stillRunning.Status)
+	}
+
+	runs, err := st.ListPipelineRuns(plID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %+v, want 2 (webhook not Forbid-gated)", runs)
+	}
 }

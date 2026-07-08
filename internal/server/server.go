@@ -231,6 +231,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/pipelines/{name}/runs", s.authed(s.handleListPipelineRuns))
 	mux.HandleFunc("GET /v1/projects/{project}/pipelines/{name}/runs/{id}", s.authed(s.handleGetPipelineRun))
 	mux.HandleFunc("POST /v1/projects/{project}/pipelines/{name}/runs/{id}/stop", s.authed(s.handleStopPipelineRun))
+	mux.HandleFunc("POST /v1/projects/{project}/pipelines/{name}/webhook-secret", s.authed(s.handleGeneratePipelineWebhookSecret))
+	mux.HandleFunc("DELETE /v1/projects/{project}/pipelines/{name}/webhook-secret", s.authed(s.handleDeletePipelineWebhookSecret))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/scale", s.authed(s.handleScaleApp))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/health", s.authed(s.handleSetHealth))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookEnable))
@@ -295,6 +297,10 @@ func (s *server) handler() http.Handler {
 	// IS the auth) — a git provider hits this directly, so it must not sit
 	// behind s.authed's bearer-token check.
 	mux.HandleFunc("POST /hooks/apps/{project}/{app}", s.handleWebhookTrigger)
+	// Pipeline webhook trigger: same unauthenticated-by-design convention as
+	// the app deploy hook above — no additional rate-limit middleware wraps
+	// either route (auditMiddleware, applied to the whole mux below, is it).
+	mux.HandleFunc("POST /hooks/pipelines/{id}", s.handlePipelineWebhookTrigger)
 
 	s.uiRoutes(mux)
 
