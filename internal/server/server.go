@@ -269,6 +269,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{project}/addons/{name}/upgrade", s.authed(s.handleUpgradeAddon))
 	mux.HandleFunc("GET /v1/projects/{project}/addons/{name}/url", s.authed(s.handleAddonURL))
 	mux.HandleFunc("POST /v1/system/update", s.adminOnly(s.handleSystemUpdate))
+	mux.HandleFunc("POST /v1/system/argo-install", s.adminOnly(s.handleArgoInstall))
 	mux.HandleFunc("POST /v1/backups", s.adminOnly(s.handleCreateBackup))
 	mux.HandleFunc("GET /v1/backups", s.adminOnly(s.handleListBackups))
 	mux.HandleFunc("POST /v1/backups/prune", s.adminOnly(s.handlePruneBackups))

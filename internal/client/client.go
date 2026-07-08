@@ -1356,6 +1356,17 @@ func (c *Client) SystemUpdate(version, image string) (string, error) {
 	return out.Image, err
 }
 
+// ArgoInstall installs the pinned Argo Workflows controller (no argo-server
+// UI) via the admin-only system endpoint; returns the installed version.
+func (c *Client) ArgoInstall() (string, error) {
+	var out struct {
+		Installed bool   `json:"installed"`
+		Version   string `json:"version"`
+	}
+	err := c.do("POST", "/v1/system/argo-install", nil, &out)
+	return out.Version, err
+}
+
 // GPUOffer is one rentable machine from the GPU marketplace search.
 type GPUOffer struct {
 	ID          int64   `json:"id"`

@@ -220,21 +220,56 @@ func (s *server) firePipelineCrons(ctx context.Context) {
 
 // pipelineRunContext loads the state a run's tick/reconcile/stop all need:
 // the pipeline row (for its project + name — ArtifactEnv needs the name,
-// notify needs both), the project, and the compiled spec snapshot.
-func (s *server) pipelineRunContext(run store.PipelineRun) (store.Pipeline, store.Project, pipeline.Spec, error) {
+// notify needs both), the project, the compiled spec snapshot, and the
+// run's own engine ("" or "native" = native, "argo" = argo). engine comes
+// from decodePipelineRunSpec, not pl.Engine — the pipeline's engine setting
+// can change after a run starts, but the run itself must keep driving on
+// whichever engine actually launched it.
+func (s *server) pipelineRunContext(run store.PipelineRun) (store.Pipeline, store.Project, pipeline.Spec, string, error) {
 	pl, err := s.st.GetPipelineByID(run.PipelineID)
 	if err != nil {
-		return store.Pipeline{}, store.Project{}, pipeline.Spec{}, fmt.Errorf("get pipeline %s: %w", run.PipelineID, err)
+		return store.Pipeline{}, store.Project{}, pipeline.Spec{}, "", fmt.Errorf("get pipeline %s: %w", run.PipelineID, err)
 	}
 	project, err := s.st.GetProjectByID(pl.ProjectID)
 	if err != nil {
-		return store.Pipeline{}, store.Project{}, pipeline.Spec{}, fmt.Errorf("get project %d: %w", pl.ProjectID, err)
+		return store.Pipeline{}, store.Project{}, pipeline.Spec{}, "", fmt.Errorf("get project %d: %w", pl.ProjectID, err)
+	}
+	spec, engine, err := decodePipelineRunSpec(run.SpecJSON)
+	if err != nil {
+		return store.Pipeline{}, store.Project{}, pipeline.Spec{}, "", fmt.Errorf("unmarshal spec: %w", err)
+	}
+	return pl, project, spec, engine, nil
+}
+
+// decodePipelineRunSpec parses a run's spec_json into its compiled spec and
+// declared engine. Native runs (and every run created before C3) store a
+// bare pipeline.Spec — engine=="" there means native. C3's argo runs wrap
+// it as {"engine":"argo","spec":{...}} so the run's engine survives even if
+// the pipeline's own engine setting changes later (startPipelineRun's doc
+// comment). Detected by probing for a top-level "engine" key rather than
+// trying-and-falling-back: a bare Spec has no "engine" key, but unmarshaling
+// it into the envelope struct wouldn't error either (its "spec" key would
+// just be missing) — it would silently succeed with an empty Steps slice.
+func decodePipelineRunSpec(raw string) (pipeline.Spec, string, error) {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		return pipeline.Spec{}, "", err
+	}
+	if _, ok := probe["engine"]; ok {
+		var envelope struct {
+			Engine string        `json:"engine"`
+			Spec   pipeline.Spec `json:"spec"`
+		}
+		if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+			return pipeline.Spec{}, "", err
+		}
+		return envelope.Spec, envelope.Engine, nil
 	}
 	var spec pipeline.Spec
-	if err := json.Unmarshal([]byte(run.SpecJSON), &spec); err != nil {
-		return store.Pipeline{}, store.Project{}, pipeline.Spec{}, fmt.Errorf("unmarshal spec: %w", err)
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+		return pipeline.Spec{}, "", err
 	}
-	return pl, project, spec, nil
+	return spec, "", nil
 }
 
 // pipelineResolveApp looks up an app by name within the run's project,
@@ -254,9 +289,13 @@ func (s *server) pipelineResolveApp(project store.Project, name string, cache ma
 }
 
 func (s *server) pipelineTickOne(ctx context.Context, run store.PipelineRun) {
-	pl, project, spec, err := s.pipelineRunContext(run)
+	pl, project, spec, engine, err := s.pipelineRunContext(run)
 	if err != nil {
 		log.Printf("pipeline run %s: %v", run.ID, err)
+		return
+	}
+	if engine == "argo" {
+		s.pipelineTickArgoRun(ctx, run, pl, project, spec)
 		return
 	}
 	rows, err := s.st.ListRunSteps(run.ID)
@@ -608,9 +647,14 @@ func (s *server) finishPipelineStep(run store.PipelineRun, v pipeStepView, state
 // already the idempotent no-op case (B2 stopSweep convention) and this must
 // not be called again for it.
 func (s *server) stopPipelineRun(ctx context.Context, run store.PipelineRun) error {
-	_, project, spec, err := s.pipelineRunContext(run)
+	_, project, spec, engine, err := s.pipelineRunContext(run)
 	if err != nil {
 		return err
+	}
+	if engine == "argo" && s.kube != nil {
+		if err := s.kube.DeleteWorkflow(ctx, project.Namespace, argoWorkflowName(run.ID)); err != nil {
+			log.Printf("pipeline run %s: stop: delete workflow: %v", run.ID, err)
+		}
 	}
 	rows, err := s.st.ListRunSteps(run.ID)
 	if err != nil {
@@ -677,9 +721,16 @@ func (s *server) pipelineReconcile(ctx context.Context) {
 }
 
 func (s *server) pipelineReconcileOne(ctx context.Context, run store.PipelineRun) {
-	_, project, spec, err := s.pipelineRunContext(run)
+	_, project, spec, engine, err := s.pipelineRunContext(run)
 	if err != nil {
 		log.Printf("pipeline run %s: reconcile: %v", run.ID, err)
+		return
+	}
+	if engine == "argo" {
+		// Argo compute rows have no native job_runs/Job to check for
+		// survival — this reconcile pass understands only those. The
+		// regular tick loop's GetWorkflow call correctly harvests an argo
+		// run's true state once the loop resumes; nothing to do here.
 		return
 	}
 	rows, err := s.st.ListRunSteps(run.ID)
@@ -762,10 +813,19 @@ var errBadPipelineRequest = errors.New("bad pipeline request")
 // error code for the same underlying problem).
 var errPipelineAppMismatch = errors.New("pipeline app mismatch")
 
-// errPipelineEngineUnavailable is startPipelineRun's sentinel for
-// engine="argo" — accepted at create/update time (stored) but rejected at
-// run start until C3 ships the Argo engine.
+// errPipelineEngineUnavailable was startPipelineRun's sentinel for
+// engine="argo" while C3 hadn't shipped yet. The argo engine now has a real
+// start path (startArgoPipelineRun); its own preflight failure is
+// errArgoNotInstalled instead. Kept (with its response-mapping cases below)
+// as a stable 400 engine_unavailable code in case a future engine value is
+// accepted-but-not-yet-runnable the same way argo once was.
 var errPipelineEngineUnavailable = errors.New("pipeline engine unavailable")
+
+// errArgoNotInstalled is startPipelineRun's sentinel for an argo-engine run
+// whose cluster doesn't have the Argo Workflows CRD installed (or has no
+// kube client configured at all) — handlers map it to 400
+// argo_not_installed, naming the fix (`luncur argo install`) in the message.
+var errArgoNotInstalled = errors.New("argo workflows engine not installed")
 
 // validPipelineEngine reports whether v is a legal Pipeline.Engine value:
 // ""  follows the pipeline_engine setting (else "native"), "native"/"argo"
@@ -881,14 +941,21 @@ func (s *server) updatePipeline(p store.Project, pl store.Pipeline, yamlPtr, eng
 }
 
 // startPipelineRun is the shared run-start core for every trigger (manual:
-// handleCreatePipelineRun, cron: firePipelineCrons, webhook: a future C3
-// handler): resolve the run's engine (pipeline.Engine, else the
-// pipeline_engine setting, else "native"; "argo" is rejected until C3),
-// re-compile the stored yaml (safety net — it was validated at write time,
-// but re-validate rather than trust a stale snapshot), re-check app
-// references (an app referenced at create time may have been
-// deleted/changed kind since), then create the run with its pre-expanded
-// pending step rows in topo order, recording trigger (manual|cron|webhook).
+// handleCreatePipelineRun, cron: firePipelineCrons, webhook: C2's
+// handlePipelineWebhookTrigger): resolve the run's engine (pipeline.Engine,
+// else the pipeline_engine setting, else "native"), re-compile the stored
+// yaml (safety net — it was validated at write time, but re-validate rather
+// than trust a stale snapshot), re-check app references (an app referenced
+// at create time may have been deleted/changed kind since), then create the
+// run with its pre-expanded pending step rows in topo order, recording
+// trigger (manual|cron|webhook). An argo-engine run additionally: preflights
+// (CRD installed, actions terminal, static whole-DAG GPU budget, every
+// compute step's image resolvable — argoPreflight) before any state is
+// created, then after the run row exists (so its runID is known) compiles
+// and applies the run's Workflow CR and marks every compute step's row
+// running immediately (Argo owns their lifecycle from here). The run's
+// engine is recorded in spec_json itself (decodePipelineRunSpec's envelope)
+// so it survives even if the pipeline's own engine setting changes later.
 // Also fires one immediate pipelineTick so the run's root steps launch
 // instantly instead of waiting up to pipelineLoopInterval for the next tick
 // — for a cron-triggered call this re-enters pipelineTick/firePipelineCrons
@@ -904,9 +971,6 @@ func (s *server) startPipelineRun(ctx context.Context, pl store.Pipeline, trigge
 	if engine == "" {
 		engine = "native"
 	}
-	if engine == "argo" {
-		return store.PipelineRun{}, nil, fmt.Errorf("%w: argo engine ships in a later release — use native", errPipelineEngineUnavailable)
-	}
 
 	spec, err := pipeline.Compile([]byte(pl.YAML))
 	if err != nil {
@@ -920,9 +984,30 @@ func (s *server) startPipelineRun(ctx context.Context, pl store.Pipeline, trigge
 		return store.PipelineRun{}, nil, err
 	}
 
-	specJSON, err := json.Marshal(spec)
-	if err != nil {
-		return store.PipelineRun{}, nil, fmt.Errorf("encode spec: %w", err)
+	var resolved map[string]argoResolvedStep
+	if engine == "argo" {
+		resolved, err = s.argoPreflight(ctx, project, spec)
+		if err != nil {
+			return store.PipelineRun{}, nil, err
+		}
+	}
+
+	var specJSON []byte
+	if engine == "argo" {
+		b, err := json.Marshal(struct {
+			Engine string        `json:"engine"`
+			Spec   pipeline.Spec `json:"spec"`
+		}{Engine: "argo", Spec: spec})
+		if err != nil {
+			return store.PipelineRun{}, nil, fmt.Errorf("encode spec: %w", err)
+		}
+		specJSON = b
+	} else {
+		b, err := json.Marshal(spec)
+		if err != nil {
+			return store.PipelineRun{}, nil, fmt.Errorf("encode spec: %w", err)
+		}
+		specJSON = b
 	}
 	stepNamesKinds := make([][2]string, len(spec.Steps))
 	for i, st := range spec.Steps {
@@ -936,6 +1021,50 @@ func (s *server) startPipelineRun(ctx context.Context, pl store.Pipeline, trigge
 	}, stepNamesKinds)
 	if err != nil {
 		return store.PipelineRun{}, nil, fmt.Errorf("create run: %w", err)
+	}
+
+	if engine == "argo" {
+		computeSteps := make([]argoComputeStep, 0, len(spec.Steps))
+		for _, st := range spec.Steps {
+			if st.Kind != "app" && st.Kind != "image" {
+				continue
+			}
+			r := resolved[st.Name]
+			// pipeline.Compile forbids gpu on app-kind steps (image-only
+			// field); buildWorkflowCR reads Step.GPU directly, so the
+			// resolved app-derived value (argoPreflight) is stamped onto
+			// this copy of the compiled step.
+			stepForCR := st
+			if stepForCR.Kind == "app" {
+				stepForCR.GPU = r.GPU
+			}
+			computeSteps = append(computeSteps, argoComputeStep{
+				Step: stepForCR, Image: r.Image, Command: r.Command,
+				Env: pipelineStepEnv(pl, run.ID, st),
+			})
+		}
+		obj := buildWorkflowCR(project.Namespace, run.ID, computeSteps)
+		applyErr := s.kube.EnsureNamespace(ctx, project.Namespace)
+		if applyErr == nil {
+			applyErr = s.kube.Apply(ctx, project.Namespace, []render.Object{obj})
+		}
+		if applyErr != nil {
+			if e := s.st.FinishPipelineRun(run.ID, "failed"); e != nil {
+				log.Printf("pipeline run %s: finish failed run after apply error: %v", run.ID, e)
+			}
+			return store.PipelineRun{}, nil, fmt.Errorf("%w: apply workflow: %v", errRunStartFailed, applyErr)
+		}
+		byName := make(map[string]string, len(steps))
+		for _, st := range steps {
+			byName[st.Name] = st.ID
+		}
+		for _, cs := range computeSteps {
+			if id, ok := byName[cs.Step.Name]; ok {
+				if err := s.st.MarkStepRunning(id, nil, 0); err != nil {
+					log.Printf("pipeline run %s: mark step %s running: %v", run.ID, cs.Step.Name, err)
+				}
+			}
+		}
 	}
 
 	s.pipelineTick(ctx)
@@ -1076,6 +1205,8 @@ func writePipelineRequestError(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, errPipelineEngineUnavailable):
 		writeError(w, http.StatusBadRequest, "engine_unavailable", err.Error())
+	case errors.Is(err, errArgoNotInstalled):
+		writeError(w, http.StatusBadRequest, "argo_not_installed", err.Error())
 	case errors.Is(err, errPipelineAppMismatch):
 		writeError(w, http.StatusBadRequest, "kind_mismatch", err.Error())
 	case errors.Is(err, errBadPipelineRequest):
@@ -1442,6 +1573,8 @@ func writePipelineWebhookTriggerError(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, errPipelineEngineUnavailable):
 		writeError(w, http.StatusConflict, "engine_unavailable", err.Error())
+	case errors.Is(err, errArgoNotInstalled):
+		writeError(w, http.StatusConflict, "argo_not_installed", err.Error())
 	case errors.Is(err, errPipelineAppMismatch):
 		writeError(w, http.StatusConflict, "kind_mismatch", err.Error())
 	case errors.Is(err, errBadPipelineRequest):

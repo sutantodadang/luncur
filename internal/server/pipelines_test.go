@@ -1021,9 +1021,21 @@ func TestPipelinesAPI(t *testing.T) {
 	resp.Body.Close()
 }
 
-// TestPipelineRunEngineArgoRejected covers a pipeline pinned to engine=argo:
-// run start must 400 engine_unavailable until C3 ships the Argo engine.
-func TestPipelineRunEngineArgoRejected(t *testing.T) {
+// TestPipelineRunEngineArgoHTTP covers a pipeline pinned to engine=argo end
+// to end through the HTTP layer (the happy "stays running" path — argo's
+// individual pieces, including a real Workflow round-trip via
+// argoApplyingDyn, are covered in argo_test.go): kubeServer's fake dynamic
+// client answers every action with unconditional success, which reads as
+// "CRD present" (kube.HasWorkflowCRD's nil-Get doc comment) for the start
+// preflight, but ALSO makes every subsequent Get (including the immediate
+// post-start tick's GetWorkflow) look like NotFound (kube.GetWorkflow's own
+// nil-object doc comment) — so this fake can never show a run that's still
+// "running" after its first tick; it always shows the "workflow vanished"
+// branch instead. Before the app is deployed, run start 400s bad_request
+// (no live deployment to run); after deploying, it 202s with the compute
+// step applied+marked running, then immediately flipped to failed by that
+// same first tick's missing-workflow handling.
+func TestPipelineRunEngineArgoHTTP(t *testing.T) {
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -1036,9 +1048,38 @@ func TestPipelineRunEngineArgoRejected(t *testing.T) {
 	}
 	resp.Body.Close()
 
+	// Not deployed yet: argoPreflight can't resolve the app step's image.
 	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines/pipe/runs", admin, `{}`)
-	if resp.StatusCode != http.StatusBadRequest || errCode(t, mustReadBody(t, resp)) != "engine_unavailable" {
-		t.Fatalf("run with engine=argo: want 400 engine_unavailable, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, mustReadBody(t, resp)) != "bad_request" {
+		t.Fatalf("run before deploy: want 400 bad_request, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/deploy", admin, `{"image":"trainer:1"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("deploy: want 200, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines/pipe/runs", admin, `{}`)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("run after deploy: want 202, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var run map[string]any
+	json.NewDecoder(resp.Body).Decode(&run)
+	resp.Body.Close()
+	if run["status"] != "failed" || run["warning"] != "argo workflow missing" {
+		t.Fatalf("run = %+v, want failed with the workflow-missing warning (fake-client Get limitation, see doc comment)", run)
+	}
+	steps, _ := run["steps"].([]any)
+	if len(steps) != 1 {
+		t.Fatalf("run steps = %+v, want 1", steps)
+	}
+	step0 := steps[0].(map[string]any)
+	if step0["name"] != "train" || step0["state"] != "failed" || step0["detail"] != "argo node missing" {
+		t.Fatalf("root step = %+v, want failed/argo node missing", step0)
+	}
+	if step0["job_run_id"] != nil {
+		t.Fatalf("root step job_run_id = %v, want absent (argo owns the step, not job_runs)", step0["job_run_id"])
 	}
 }
 
