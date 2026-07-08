@@ -112,6 +112,13 @@ func (s *Store) GetPipeline(projectID int64, name string) (Pipeline, error) {
 	return scanPipeline(s.db.QueryRow(`SELECT `+pipelineCols+` FROM pipelines WHERE project_id = ? AND name = ?`, projectID, name))
 }
 
+// GetPipelineByID looks up a pipeline by its primary key, for code that only
+// has a run's PipelineID foreign key and not the owning project's name (the
+// engine loop; mirrors GetAppByID's reason for existing).
+func (s *Store) GetPipelineByID(id string) (Pipeline, error) {
+	return s.getPipelineByID(id)
+}
+
 // ListPipelines returns a project's pipelines, name ascending.
 func (s *Store) ListPipelines(projectID int64) ([]Pipeline, error) {
 	rows, err := s.db.Query(`SELECT `+pipelineCols+` FROM pipelines WHERE project_id = ? ORDER BY name ASC`, projectID)
