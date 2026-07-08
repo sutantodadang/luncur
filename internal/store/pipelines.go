@@ -137,6 +137,26 @@ func (s *Store) ListPipelines(projectID int64) ([]Pipeline, error) {
 	return out, rows.Err()
 }
 
+// CronPipelines returns every pipeline with a non-empty cron, across all
+// projects — the set the server's pipeline loop checks for due-ness each
+// tick (firePipelineCrons).
+func (s *Store) CronPipelines() ([]Pipeline, error) {
+	rows, err := s.db.Query(`SELECT ` + pipelineCols + ` FROM pipelines WHERE cron != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Pipeline
+	for rows.Next() {
+		var pl Pipeline
+		if err := rows.Scan(&pl.ID, &pl.ProjectID, &pl.Name, &pl.YAML, &pl.Cron, &pl.WebhookSecret, &pl.Engine, &pl.CreatedBy, &pl.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, pl)
+	}
+	return out, rows.Err()
+}
+
 // UpdatePipeline replaces a pipeline's yaml/cron/engine. Existing in-flight
 // runs are unaffected — their spec_json snapshot is immutable.
 func (s *Store) UpdatePipeline(id, yaml, cron, engine string) error {

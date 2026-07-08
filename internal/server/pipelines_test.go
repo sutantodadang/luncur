@@ -667,6 +667,223 @@ func TestPipelineReconcileMarksOrphanedImageStepFailed(t *testing.T) {
 	}
 }
 
+// --- cron firing (firePipelineCrons, C2) -----------------------------------
+
+// pipelineSeedCronPipeline creates a cron-scheduled pipeline with a single
+// synchronous notify step — no kube, no watch goroutines, so cron-loop tests
+// stay deterministic (an app step's async watchRun would race the tick).
+func pipelineSeedCronPipeline(t *testing.T, st *store.Store, projectID int64, name, cron string) store.Pipeline {
+	t.Helper()
+	pl, err := st.CreatePipeline(store.Pipeline{
+		ProjectID: projectID,
+		Name:      name,
+		YAML:      "steps:\n  n:\n    notify: hi\n",
+		Cron:      cron,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pl
+}
+
+func TestFirePipelineCronsDueMinuteFiresTriggerCron(t *testing.T) {
+	s := pipelineTestServer(t, nil, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pl := pipelineSeedCronPipeline(t, s.st, p.ID, "nightly", "0 3 * * *")
+
+	// not due: 02:59.
+	s.nowFn = func() time.Time { return time.Date(2026, 7, 8, 2, 59, 0, 0, time.UTC) }
+	s.pipelineTick(context.Background())
+	runs, err := s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs = %+v, want none at 02:59", runs)
+	}
+
+	// due: 03:00 (seconds must be truncated away).
+	s.nowFn = func() time.Time { return time.Date(2026, 7, 8, 3, 0, 42, 0, time.UTC) }
+	s.pipelineTick(context.Background())
+	runs, err = s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v, want exactly 1 at 03:00", runs)
+	}
+	if runs[0].Trigger != "cron" {
+		t.Fatalf("trigger = %q, want cron", runs[0].Trigger)
+	}
+	// The synchronous notify step was driven by the inline tick, and the
+	// outer tick's run-driving pass then finished the drained run.
+	if runs[0].Status != "done" {
+		t.Fatalf("run status = %q, want done (notify step drains same tick)", runs[0].Status)
+	}
+}
+
+func TestFirePipelineCronsSameMinuteNoDoubleFire(t *testing.T) {
+	s := pipelineTestServer(t, nil, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pl := pipelineSeedCronPipeline(t, s.st, p.ID, "everymin", "* * * * *")
+
+	s.nowFn = func() time.Time { return time.Date(2026, 7, 8, 10, 30, 0, 0, time.UTC) }
+	s.pipelineTick(context.Background())
+
+	runs, err := s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v, want 1 after first tick", runs)
+	}
+
+	// Re-tick with now pinned to the run's own StartedAt minute (the run is
+	// already done — notify drains synchronously — so this exercises the
+	// same-minute StartedAt dedupe, not the running guard).
+	startedAt, err := time.Parse(pipelineStartedAtLayout, runs[0].StartedAt)
+	if err != nil {
+		t.Fatalf("parse StartedAt %q: %v", runs[0].StartedAt, err)
+	}
+	s.nowFn = func() time.Time { return startedAt.UTC() }
+	s.pipelineTick(context.Background())
+	runs, err = s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v, want still 1 (same-minute dedupe)", runs)
+	}
+
+	// The next minute is a fresh minute: the dedupe must not block it.
+	s.nowFn = func() time.Time { return startedAt.UTC().Add(time.Minute) }
+	s.pipelineTick(context.Background())
+	runs, err = s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %+v, want 2 (next minute fires again)", runs)
+	}
+}
+
+func TestFirePipelineCronsRunningPreviousRunSkips(t *testing.T) {
+	s := pipelineTestServer(t, nil, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	a := pipelineSeedApp(t, s.st, p.ID, "train", "job", "trainer:1")
+	pl := pipelineSeedCronPipeline(t, s.st, p.ID, "busy", "0 3 * * *")
+
+	// A previous run is still in flight: its app step's job run is still
+	// "running", so the seeded run stays running across ticks.
+	run := pipelineSeedRun(t, s.st, pl, []pipeline.Step{{Name: "a", Kind: "app", App: "train"}})
+	row := pipelineFindStep(t, s.st, run.ID, "a")
+	jr, err := s.st.CreateJobRun(a.ID, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.MarkStepRunning(row.ID, &jr.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	s.nowFn = func() time.Time { return time.Date(2026, 7, 8, 3, 0, 0, 0, time.UTC) }
+	s.pipelineTick(context.Background())
+
+	runs, err := s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v, want only the pre-existing run (cron Forbid)", runs)
+	}
+	if runs[0].ID != run.ID {
+		t.Fatalf("runs = %+v, want the pre-existing run %s only", runs, run.ID)
+	}
+}
+
+func TestFirePipelineCronsEmptyCronNeverFires(t *testing.T) {
+	s := pipelineTestServer(t, nil, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pl := pipelineSeedCronPipeline(t, s.st, p.ID, "manual-only", "")
+
+	s.nowFn = func() time.Time { return time.Date(2026, 7, 8, 3, 0, 0, 0, time.UTC) }
+	s.pipelineTick(context.Background())
+
+	runs, err := s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs = %+v, want none (no cron configured)", runs)
+	}
+}
+
+// TestPipelineCronValidationAPI covers create/update cron validation and
+// persistence: bad cron -> 400 bad_request naming the field, good cron
+// persists (and comes back in the detail JSON), empty cron clears.
+func TestPipelineCronValidationAPI(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+
+	// create with a bad cron -> 400 bad_request naming cron.
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines", admin,
+		`{"name":"pipe","yaml":"steps:\n  a:\n    app: train\n","cron":"not-a-cron"}`)
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, body) != "bad_request" {
+		t.Fatalf("create bad cron: want 400 bad_request, got %d (%s)", resp.StatusCode, body)
+	}
+	if !bytesContains(body, "cron") {
+		t.Fatalf("bad cron error must name the cron field: %s", body)
+	}
+
+	// create with a good cron -> 201 with cron echoed back.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines", admin,
+		`{"name":"pipe","yaml":"steps:\n  a:\n    app: train\n","cron":"0 3 * * *"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create with cron: want 201, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var created map[string]any
+	json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+	if created["cron"] != "0 3 * * *" {
+		t.Fatalf("created cron = %v, want 0 3 * * *", created["cron"])
+	}
+
+	// update with a bad cron -> 400 bad_request, existing cron untouched.
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, `{"cron":"61 * * * *"}`)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, mustReadBody(t, resp)) != "bad_request" {
+		t.Fatalf("update bad cron: want 400 bad_request, got %d", resp.StatusCode)
+	}
+
+	// update with a good cron -> 200 and persists.
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, `{"cron":"*/15 * * * *"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update cron: want 200, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp.Body.Close()
+	resp = doAuthed(t, "GET", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, "")
+	var got map[string]any
+	json.NewDecoder(resp.Body).Decode(&got)
+	resp.Body.Close()
+	if got["cron"] != "*/15 * * * *" {
+		t.Fatalf("persisted cron = %v, want */15 * * * *", got["cron"])
+	}
+
+	// update with an empty cron clears the schedule.
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, `{"cron":""}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clear cron: want 200, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp.Body.Close()
+	resp = doAuthed(t, "GET", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, "")
+	json.NewDecoder(resp.Body).Decode(&got)
+	resp.Body.Close()
+	if got["cron"] != "" {
+		t.Fatalf("cleared cron = %v, want \"\"", got["cron"])
+	}
+}
+
 // --- HTTP endpoint tests (Task 6) ------------------------------------------
 
 // TestPipelinesAPI covers the pipeline CRUD + run lifecycle end to end

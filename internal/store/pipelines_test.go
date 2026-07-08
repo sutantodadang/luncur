@@ -276,6 +276,36 @@ func TestListPipelineRunsOrderingAndCap(t *testing.T) {
 	}
 }
 
+// TestCronPipelinesFiltersEmptyCron covers CronPipelines: only pipelines with
+// a non-empty cron come back, across projects.
+func TestCronPipelinesFiltersEmptyCron(t *testing.T) {
+	st, p := pipelineStore(t)
+	noCron, err := st.CreatePipeline(Pipeline{ProjectID: p.ID, Name: "no-cron", YAML: "steps:\n  a:\n    app: x\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withCron, err := st.CreatePipeline(Pipeline{ProjectID: p.ID, Name: "with-cron", YAML: "steps:\n  a:\n    app: x\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdatePipeline(withCron.ID, withCron.YAML, "0 3 * * *", withCron.Engine); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.CronPipelines()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != withCron.ID || got[0].Cron != "0 3 * * *" {
+		t.Fatalf("CronPipelines = %+v, want only %s with cron set", got, withCron.ID)
+	}
+	for _, pl := range got {
+		if pl.ID == noCron.ID {
+			t.Fatalf("CronPipelines must not include pipeline with empty cron: %+v", pl)
+		}
+	}
+}
+
 func TestDeletePipelineCascades(t *testing.T) {
 	st, p := pipelineStore(t)
 	pl, err := st.CreatePipeline(Pipeline{ProjectID: p.ID, Name: "pl1", YAML: "steps:\n  a:\n    app: x\n"})
