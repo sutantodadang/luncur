@@ -45,6 +45,12 @@ func TestLuncurObjects(t *testing.T) {
 			t.Fatalf("manifests missing %q", want)
 		}
 	}
+	// metrics.k8s.io must grant both pods and nodes, else node monitoring
+	// (ListNodes -> NodeMetrics) is Forbidden and the nodes page never
+	// leaves "collecting samples".
+	if !strings.Contains(all, `"resources":["pods","nodes"]`) {
+		t.Fatal(`manifests: metrics.k8s.io rule missing resources ["pods","nodes"]`)
+	}
 	for _, want := range []string{
 		`"--ssh-listen"`,
 		`"nodePort":30022`,
