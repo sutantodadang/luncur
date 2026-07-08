@@ -60,6 +60,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(gpuCmd())
 	root.AddCommand(runCmd())
 	root.AddCommand(sweepCmd())
+	root.AddCommand(pipelineCmd())
 	root.AddCommand(accountCmd())
 	return root
 }
