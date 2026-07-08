@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -664,4 +665,204 @@ func TestPipelineReconcileMarksOrphanedImageStepFailed(t *testing.T) {
 	if gotStep.State != "failed" || gotStep.Detail != "job missing after restart" {
 		t.Fatalf("step i = %+v, want failed/job missing after restart", gotStep)
 	}
+}
+
+// --- HTTP endpoint tests (Task 6) ------------------------------------------
+
+// TestPipelinesAPI covers the pipeline CRUD + run lifecycle end to end
+// (TestRunsAPI's pattern): create happy path, app-ref validation errors, run
+// launching its root step instantly, deleting a busy pipeline, idempotent
+// stop, and topo-ordered step output.
+func TestPipelinesAPI(t *testing.T) {
+	// kubeServerWithPods (not kubeServer): stopping the run below calls
+	// kube.DeleteJob, which needs the typed clientset half wired (nil cs
+	// panics), unlike a plain create/list flow.
+	srv, st, _ := kubeServerWithPods(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	// create with an app: step naming a non-job app -> 400 kind_mismatch.
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines", admin,
+		`{"name":"bad","yaml":"steps:\n  s:\n    app: api\n"}`)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, mustReadBody(t, resp)) != "kind_mismatch" {
+		t.Fatalf("web-app ref: want 400 kind_mismatch, got %d", resp.StatusCode)
+	}
+
+	// create with unparseable yaml (two kinds on one step) -> 400 bad_request
+	// naming the offending step.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines", admin,
+		`{"name":"bad2","yaml":"steps:\n  s:\n    app: train\n    image: busybox\n"}`)
+	body := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, body) != "bad_request" {
+		t.Fatalf("bad yaml: want 400 bad_request, got %d (%s)", resp.StatusCode, body)
+	}
+	if !bytesContains(body, `step \"s\"`) {
+		t.Fatalf("bad yaml error must name the offending step: %s", body)
+	}
+
+	// create happy path.
+	pipelineYAML := `steps:
+  train:
+    app: train
+`
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines", admin,
+		`{"name":"pipe","yaml":`+jsonQuote(pipelineYAML)+`}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create pipeline: want 201, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var created map[string]any
+	json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+	if created["name"] != "pipe" || created["yaml"] != pipelineYAML {
+		t.Fatalf("created pipeline = %+v", created)
+	}
+
+	// deploy the app so the run's root app step can actually launch.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/deploy", admin, `{"image":"trainer:1"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("deploy: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// run -> 202 with the root step already launched by the inline tick.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines/pipe/runs", admin, `{}`)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("start run: want 202, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var run map[string]any
+	json.NewDecoder(resp.Body).Decode(&run)
+	resp.Body.Close()
+	if run["status"] != "running" {
+		t.Fatalf("run status = %v, want running", run["status"])
+	}
+	steps, _ := run["steps"].([]any)
+	if len(steps) != 1 {
+		t.Fatalf("run steps = %+v, want 1", steps)
+	}
+	step0 := steps[0].(map[string]any)
+	if step0["name"] != "train" || step0["state"] != "running" || step0["job_run_id"] == nil {
+		t.Fatalf("root step = %+v, want running with a job_run_id (instant launch)", step0)
+	}
+	runID := run["id"].(string)
+
+	// delete while the run is still running -> 409 pipeline_busy.
+	resp = doAuthed(t, "DELETE", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, "")
+	if resp.StatusCode != http.StatusConflict || errCode(t, mustReadBody(t, resp)) != "pipeline_busy" {
+		t.Fatalf("delete busy pipeline: want 409 pipeline_busy, got %d", resp.StatusCode)
+	}
+
+	// get run: steps come back in topo order (single-step here, but exercises
+	// the endpoint's step-list plumbing end to end).
+	resp = doAuthed(t, "GET", srv.URL+"/v1/projects/ml/pipelines/pipe/runs/"+runID, admin, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get run: want 200, got %d", resp.StatusCode)
+	}
+	var got map[string]any
+	json.NewDecoder(resp.Body).Decode(&got)
+	resp.Body.Close()
+	gotSteps, _ := got["steps"].([]any)
+	if len(gotSteps) != 1 || gotSteps[0].(map[string]any)["name"] != "train" {
+		t.Fatalf("get run steps = %+v", gotSteps)
+	}
+
+	// stop: running -> stopped.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines/pipe/runs/"+runID+"/stop", admin, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stop run: want 200, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var stopped map[string]any
+	json.NewDecoder(resp.Body).Decode(&stopped)
+	resp.Body.Close()
+	if stopped["status"] != "stopped" {
+		t.Fatalf("stop run status = %v, want stopped", stopped["status"])
+	}
+
+	// stop again: idempotent no-op, still 200/stopped.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines/pipe/runs/"+runID+"/stop", admin, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stop run again: want 200, got %d", resp.StatusCode)
+	}
+	var stoppedAgain map[string]any
+	json.NewDecoder(resp.Body).Decode(&stoppedAgain)
+	resp.Body.Close()
+	if stoppedAgain["status"] != "stopped" {
+		t.Fatalf("stop run again status = %v, want stopped", stoppedAgain["status"])
+	}
+
+	// now the pipeline can be deleted.
+	resp = doAuthed(t, "DELETE", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete pipeline: want 204, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp = doAuthed(t, "GET", srv.URL+"/v1/projects/ml/pipelines/pipe", admin, "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("get deleted pipeline: want 404, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+// TestPipelineRunEngineArgoRejected covers a pipeline pinned to engine=argo:
+// run start must 400 engine_unavailable until C3 ships the Argo engine.
+func TestPipelineRunEngineArgoRejected(t *testing.T) {
+	srv, st, _ := kubeServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines", admin,
+		`{"name":"pipe","engine":"argo","yaml":"steps:\n  train:\n    app: train\n"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create pipeline: want 201, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/pipelines/pipe/runs", admin, `{}`)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, mustReadBody(t, resp)) != "engine_unavailable" {
+		t.Fatalf("run with engine=argo: want 400 engine_unavailable, got %d", resp.StatusCode)
+	}
+}
+
+// TestPipelinesUnknownProjectNotFound covers the existing project-scope
+// pattern (requireProject) for a project that doesn't exist.
+func TestPipelinesUnknownProjectNotFound(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "GET", srv.URL+"/v1/projects/nope/pipelines", admin, "")
+	if resp.StatusCode != http.StatusNotFound || errCode(t, mustReadBody(t, resp)) != "not_found" {
+		t.Fatalf("unknown project: want 404 not_found, got %d", resp.StatusCode)
+	}
+}
+
+// TestSettingPipelineEngineValidation covers settableKeys["pipeline_engine"]:
+// native/argo accepted, anything else rejected.
+func TestSettingPipelineEngineValidation(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/pipeline_engine", admin, `{"value":"native"}`)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("set native: want 204, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/pipeline_engine", admin, `{"value":"argo"}`)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("set argo: want 204, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/pipeline_engine", admin, `{"value":"garbage"}`)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, mustReadBody(t, resp)) != "bad_request" {
+		t.Fatalf("set garbage: want 400 bad_request, got %d", resp.StatusCode)
+	}
+}
+
+// jsonQuote encodes s as a JSON string literal, for embedding raw yaml
+// (with newlines) into a hand-written JSON request body.
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

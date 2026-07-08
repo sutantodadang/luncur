@@ -77,6 +77,13 @@ var settableKeys = map[string]func(string) bool{
 		n, err := strconv.Atoi(v)
 		return err == nil && n >= 0
 	},
+	// pipeline_engine: default orchestrator for pipelines that don't pin
+	// their own engine (store.Pipeline.Engine == ""). "argo" is accepted here
+	// (stored) but startPipelineRun rejects it with engine_unavailable until
+	// C3 ships the Argo engine.
+	"pipeline_engine": func(v string) bool {
+		return v == "native" || v == "argo"
+	},
 }
 
 // sealedKeys are write-only secrets: sealed at rest with the install

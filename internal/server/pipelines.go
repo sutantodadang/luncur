@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/sutantodadang/luncur/internal/pipeline"
@@ -683,4 +685,568 @@ func (s *server) pipelineReconcileOne(ctx context.Context, run store.PipelineRun
 			}
 		}
 	}
+}
+
+// --- endpoints --------------------------------------------------------
+
+// errBadPipelineRequest wraps every validation failure inside
+// createPipeline/updatePipeline/startPipelineRun that isn't an app-ref
+// problem (bad yaml, out-of-range engine value) so the handlers can map it to
+// 400 bad_request without string-sniffing the error — same convention as
+// errBadSweepRequest in sweeps.go.
+var errBadPipelineRequest = errors.New("bad pipeline request")
+
+// errPipelineAppMismatch is createPipeline/updatePipeline/startPipelineRun's
+// sentinel for an "app:" step naming an app that doesn't exist or isn't
+// kind=job — handlers map it to 400 kind_mismatch (mirrors requireJobApp's
+// error code for the same underlying problem).
+var errPipelineAppMismatch = errors.New("pipeline app mismatch")
+
+// errPipelineEngineUnavailable is startPipelineRun's sentinel for
+// engine="argo" — accepted at create/update time (stored) but rejected at
+// run start until C3 ships the Argo engine.
+var errPipelineEngineUnavailable = errors.New("pipeline engine unavailable")
+
+// validPipelineEngine reports whether v is a legal Pipeline.Engine value:
+// ""  follows the pipeline_engine setting (else "native"), "native"/"argo"
+// pin the run's engine explicitly.
+func validPipelineEngine(v string) bool {
+	return v == "" || v == "native" || v == "argo"
+}
+
+// validatePipelineAppRefs checks every step's app reference against the
+// store: "app:" steps must name an existing kind=job app in the project
+// (errPipelineAppMismatch); "deploy:"/"scale.app:" targets must name an
+// existing app of any kind (errBadPipelineRequest — this is an existence
+// check, not a kind check). Structural validation (DAG shape, field
+// legality) is pipeline.Compile's job; this only checks what Compile can't
+// see — the store.
+func (s *server) validatePipelineAppRefs(p store.Project, spec pipeline.Spec) error {
+	for _, st := range spec.Steps {
+		switch st.Kind {
+		case "app":
+			a, err := s.st.GetApp(p.ID, st.App)
+			if err != nil || a.Kind != "job" {
+				return fmt.Errorf("%w: step %q: app %q not found or not kind=job", errPipelineAppMismatch, st.Name, st.App)
+			}
+		case "deploy":
+			if _, err := s.st.GetApp(p.ID, st.Deploy); err != nil {
+				return fmt.Errorf("%w: step %q: app %q not found", errBadPipelineRequest, st.Name, st.Deploy)
+			}
+		case "scale":
+			if _, err := s.st.GetApp(p.ID, st.Scale.App); err != nil {
+				return fmt.Errorf("%w: step %q: app %q not found", errBadPipelineRequest, st.Name, st.Scale.App)
+			}
+		}
+	}
+	return nil
+}
+
+// createPipeline is handleCreatePipeline's shared core: compile+validate the
+// yaml, check every app reference against the store, then persist. Kept
+// separate from the handler so a future UI create form can share it (same
+// convention as startSweep/startRun).
+func (s *server) createPipeline(p store.Project, name, yamlStr, engine string, createdBy sql.NullInt64) (store.Pipeline, error) {
+	if !validPipelineEngine(engine) {
+		return store.Pipeline{}, fmt.Errorf("%w: engine must be \"\", \"native\", or \"argo\", got %q", errBadPipelineRequest, engine)
+	}
+	spec, err := pipeline.Compile([]byte(yamlStr))
+	if err != nil {
+		return store.Pipeline{}, fmt.Errorf("%w: %v", errBadPipelineRequest, err)
+	}
+	if err := s.validatePipelineAppRefs(p, spec); err != nil {
+		return store.Pipeline{}, err
+	}
+	return s.st.CreatePipeline(store.Pipeline{
+		ProjectID: p.ID,
+		Name:      name,
+		YAML:      yamlStr,
+		Engine:    engine,
+		CreatedBy: createdBy,
+	})
+}
+
+// updatePipeline is handleUpdatePipeline's shared core: yaml/engine are
+// optional in the request (nil = keep current value); cron is left untouched
+// (C1 never writes it — C2's concern). Re-validates the effective yaml/engine
+// exactly like createPipeline, since an update can introduce the same kinds
+// of problems a create can.
+func (s *server) updatePipeline(p store.Project, pl store.Pipeline, yamlPtr, enginePtr *string) (store.Pipeline, error) {
+	yamlStr := pl.YAML
+	if yamlPtr != nil {
+		yamlStr = *yamlPtr
+	}
+	engine := pl.Engine
+	if enginePtr != nil {
+		engine = *enginePtr
+	}
+	if !validPipelineEngine(engine) {
+		return store.Pipeline{}, fmt.Errorf("%w: engine must be \"\", \"native\", or \"argo\", got %q", errBadPipelineRequest, engine)
+	}
+	spec, err := pipeline.Compile([]byte(yamlStr))
+	if err != nil {
+		return store.Pipeline{}, fmt.Errorf("%w: %v", errBadPipelineRequest, err)
+	}
+	if err := s.validatePipelineAppRefs(p, spec); err != nil {
+		return store.Pipeline{}, err
+	}
+	if err := s.st.UpdatePipeline(pl.ID, yamlStr, pl.Cron, engine); err != nil {
+		return store.Pipeline{}, err
+	}
+	return s.st.GetPipelineByID(pl.ID)
+}
+
+// startPipelineRun is handleCreatePipelineRun's shared core: resolve the
+// run's engine (pipeline.Engine, else the pipeline_engine setting, else
+// "native"; "argo" is rejected until C3), re-compile the stored yaml (safety
+// net — it was validated at write time, but re-validate rather than trust a
+// stale snapshot), re-check app references (an app referenced at create time
+// may have been deleted/changed kind since), then create the run with its
+// pre-expanded pending step rows in topo order. Also fires one immediate
+// pipelineTick so a manually triggered run's root steps launch instantly
+// instead of waiting up to pipelineLoopInterval for the next tick.
+func (s *server) startPipelineRun(ctx context.Context, pl store.Pipeline) (store.PipelineRun, []store.PipelineRunStep, error) {
+	engine := pl.Engine
+	if engine == "" {
+		if v, err := s.st.GetSetting("pipeline_engine"); err == nil {
+			engine = v
+		}
+	}
+	if engine == "" {
+		engine = "native"
+	}
+	if engine == "argo" {
+		return store.PipelineRun{}, nil, fmt.Errorf("%w: argo engine ships in a later release — use native", errPipelineEngineUnavailable)
+	}
+
+	spec, err := pipeline.Compile([]byte(pl.YAML))
+	if err != nil {
+		return store.PipelineRun{}, nil, fmt.Errorf("%w: %v", errBadPipelineRequest, err)
+	}
+	project, err := s.st.GetProjectByID(pl.ProjectID)
+	if err != nil {
+		return store.PipelineRun{}, nil, fmt.Errorf("get project %d: %w", pl.ProjectID, err)
+	}
+	if err := s.validatePipelineAppRefs(project, spec); err != nil {
+		return store.PipelineRun{}, nil, err
+	}
+
+	specJSON, err := json.Marshal(spec)
+	if err != nil {
+		return store.PipelineRun{}, nil, fmt.Errorf("encode spec: %w", err)
+	}
+	stepNamesKinds := make([][2]string, len(spec.Steps))
+	for i, st := range spec.Steps {
+		stepNamesKinds[i] = [2]string{st.Name, st.Kind}
+	}
+
+	run, steps, err := s.st.CreatePipelineRun(store.PipelineRun{
+		PipelineID: pl.ID,
+		SpecJSON:   string(specJSON),
+		Trigger:    "manual",
+	}, stepNamesKinds)
+	if err != nil {
+		return store.PipelineRun{}, nil, fmt.Errorf("create run: %w", err)
+	}
+
+	s.pipelineTick(ctx)
+
+	got, err := s.st.GetPipelineRun(run.ID)
+	if err != nil {
+		return run, steps, nil // launched fine; report the pre-tick snapshot rather than fail the request
+	}
+	gotSteps, err := s.st.ListRunSteps(run.ID)
+	if err != nil {
+		return got, steps, nil
+	}
+	return got, gotSteps, nil
+}
+
+// pipelineBaseJSON is the field set every pipeline response shares.
+func pipelineBaseJSON(pl store.Pipeline) map[string]any {
+	return map[string]any{
+		"id":         pl.ID,
+		"name":       pl.Name,
+		"engine":     pl.Engine,
+		"created_at": pl.CreatedAt,
+	}
+}
+
+// pipelineListJSON is one row of GET .../pipelines: base fields plus the
+// newest run's id/status/started_at (nil when the pipeline has never run).
+func pipelineListJSON(pl store.Pipeline, lastRun *store.PipelineRun) map[string]any {
+	out := pipelineBaseJSON(pl)
+	if lastRun != nil {
+		out["last_run"] = map[string]any{
+			"id":         lastRun.ID,
+			"status":     lastRun.Status,
+			"started_at": lastRun.StartedAt,
+		}
+	} else {
+		out["last_run"] = nil
+	}
+	return out
+}
+
+// pipelineDetailJSON is the shape returned by create/update/get: base fields
+// plus the raw yaml.
+func pipelineDetailJSON(pl store.Pipeline) map[string]any {
+	out := pipelineBaseJSON(pl)
+	out["yaml"] = pl.YAML
+	return out
+}
+
+// pipelineRunBaseJSON is the field set every run response shares.
+func pipelineRunBaseJSON(run store.PipelineRun) map[string]any {
+	out := map[string]any{
+		"id":          run.ID,
+		"pipeline_id": run.PipelineID,
+		"status":      run.Status,
+		"trigger":     run.Trigger,
+		"started_at":  run.StartedAt,
+	}
+	if run.Warning != "" {
+		out["warning"] = run.Warning
+	}
+	if run.FinishedAt.Valid {
+		out["finished_at"] = run.FinishedAt.String
+	}
+	return out
+}
+
+// pipelineStepJSON renders one run step row.
+func pipelineStepJSON(st store.PipelineRunStep) map[string]any {
+	out := map[string]any{
+		"name":    st.Name,
+		"kind":    st.Kind,
+		"state":   st.State,
+		"attempt": st.Attempt,
+		"detail":  st.Detail,
+	}
+	if st.JobRunID.Valid {
+		out["job_run_id"] = st.JobRunID.Int64
+	}
+	if st.StartedAt.Valid {
+		out["started_at"] = st.StartedAt.String
+	}
+	if st.FinishedAt.Valid {
+		out["finished_at"] = st.FinishedAt.String
+	}
+	return out
+}
+
+// pipelineRunDetailJSON is the shape returned by run create/get/stop: base
+// run fields plus every step, in row (topo) order.
+func pipelineRunDetailJSON(run store.PipelineRun, steps []store.PipelineRunStep) map[string]any {
+	out := pipelineRunBaseJSON(run)
+	stepsOut := make([]map[string]any, 0, len(steps))
+	for _, st := range steps {
+		stepsOut = append(stepsOut, pipelineStepJSON(st))
+	}
+	out["steps"] = stepsOut
+	return out
+}
+
+// requirePipeline loads a pipeline by its project-scoped name, 404ing when
+// it doesn't exist in this project.
+func (s *server) requirePipeline(w http.ResponseWriter, p store.Project, name string) (store.Pipeline, bool) {
+	pl, err := s.st.GetPipeline(p.ID, name)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "no such pipeline")
+		return store.Pipeline{}, false
+	}
+	if err != nil {
+		log.Printf("get pipeline: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return store.Pipeline{}, false
+	}
+	return pl, true
+}
+
+// requirePipelineRun loads a run by id, verifying it belongs to pipeline pl.
+func (s *server) requirePipelineRun(w http.ResponseWriter, pl store.Pipeline, id string) (store.PipelineRun, bool) {
+	run, err := s.st.GetPipelineRun(id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && run.PipelineID != pl.ID) {
+		writeError(w, http.StatusNotFound, "not_found", "no such run")
+		return store.PipelineRun{}, false
+	}
+	if err != nil {
+		log.Printf("get pipeline run: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return store.PipelineRun{}, false
+	}
+	return run, true
+}
+
+// writePipelineRequestError maps createPipeline/updatePipeline/
+// startPipelineRun's sentinel errors to their HTTP status/code, returning
+// true if it wrote a response (the caller must return immediately).
+func writePipelineRequestError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, errPipelineEngineUnavailable):
+		writeError(w, http.StatusBadRequest, "engine_unavailable", err.Error())
+	case errors.Is(err, errPipelineAppMismatch):
+		writeError(w, http.StatusBadRequest, "kind_mismatch", err.Error())
+	case errors.Is(err, errBadPipelineRequest):
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+	default:
+		return false
+	}
+	return true
+}
+
+// handleCreatePipeline creates a pipeline from a compiled+validated
+// pipeline.yaml.
+func (s *server) handleCreatePipeline(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	var req struct {
+		Name   string `json:"name"`
+		YAML   string `json:"yaml"`
+		Engine string `json:"engine"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+
+	var createdBy sql.NullInt64
+	if u.ID != 0 {
+		createdBy = sql.NullInt64{Int64: u.ID, Valid: true}
+	}
+	pl, err := s.createPipeline(p, req.Name, req.YAML, req.Engine, createdBy)
+	if err != nil {
+		if writePipelineRequestError(w, err) {
+			return
+		}
+		log.Printf("create pipeline: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, pipelineDetailJSON(pl))
+}
+
+// handleUpdatePipeline replaces a pipeline's yaml and/or engine (both
+// optional; omitted fields keep their current value). cron is C2's concern
+// and is never touched here.
+func (s *server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pl, ok := s.requirePipeline(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+
+	var req struct {
+		YAML   *string `json:"yaml"`
+		Engine *string `json:"engine"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+
+	updated, err := s.updatePipeline(p, pl, req.YAML, req.Engine)
+	if err != nil {
+		if writePipelineRequestError(w, err) {
+			return
+		}
+		log.Printf("update pipeline: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, pipelineDetailJSON(updated))
+}
+
+// handleListPipelines lists a project's pipelines, each with its newest run
+// summary.
+func (s *server) handleListPipelines(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pipelines, err := s.st.ListPipelines(p.ID)
+	if err != nil {
+		log.Printf("list pipelines: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]map[string]any, 0, len(pipelines))
+	for _, pl := range pipelines {
+		runs, err := s.st.ListPipelineRuns(pl.ID)
+		if err != nil {
+			log.Printf("list runs for pipeline %s: %v", pl.ID, err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		var lastRun *store.PipelineRun
+		if len(runs) > 0 {
+			lastRun = &runs[0] // ListPipelineRuns is newest first
+		}
+		out = append(out, pipelineListJSON(pl, lastRun))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleGetPipeline returns one pipeline's detail, including its yaml.
+func (s *server) handleGetPipeline(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pl, ok := s.requirePipeline(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, pipelineDetailJSON(pl))
+}
+
+// handleDeletePipeline deletes a pipeline, refusing while any of its runs is
+// still in progress (409 pipeline_busy) — mirrors sweeps' "stop before you
+// can lose it" instinct, but pipelines have no auto-stop-on-delete: the
+// operator must stop the run first.
+func (s *server) handleDeletePipeline(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pl, ok := s.requirePipeline(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+
+	runs, err := s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		log.Printf("list runs for pipeline %s: %v", pl.ID, err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	for _, run := range runs {
+		if run.Status == "running" {
+			writeError(w, http.StatusConflict, "pipeline_busy", "pipeline has a run in progress")
+			return
+		}
+	}
+
+	if err := s.st.DeletePipeline(pl.ID); err != nil {
+		log.Printf("delete pipeline: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleCreatePipelineRun manually triggers a pipeline run.
+func (s *server) handleCreatePipelineRun(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pl, ok := s.requirePipeline(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+
+	run, steps, err := s.startPipelineRun(r.Context(), pl)
+	if err != nil {
+		if writePipelineRequestError(w, err) {
+			return
+		}
+		log.Printf("start pipeline run: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, pipelineRunDetailJSON(run, steps))
+}
+
+// handleListPipelineRuns lists a pipeline's run history (newest first,
+// capped at 50 by the store).
+func (s *server) handleListPipelineRuns(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pl, ok := s.requirePipeline(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+	runs, err := s.st.ListPipelineRuns(pl.ID)
+	if err != nil {
+		log.Printf("list pipeline runs: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]map[string]any, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, pipelineRunBaseJSON(run))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleGetPipelineRun returns one run plus its steps in row (topo) order.
+func (s *server) handleGetPipelineRun(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pl, ok := s.requirePipeline(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+	run, ok := s.requirePipelineRun(w, pl, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	steps, err := s.st.ListRunSteps(run.ID)
+	if err != nil {
+		log.Printf("list run steps: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, pipelineRunDetailJSON(run, steps))
+}
+
+// handleStopPipelineRun idempotently stops a run: a running run is torn down
+// via stopPipelineRun and finishes "stopped"; an already-finished run is a
+// 200 no-op that just reports current state (B2 stopSweep convention).
+func (s *server) handleStopPipelineRun(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	pl, ok := s.requirePipeline(w, p, r.PathValue("name"))
+	if !ok {
+		return
+	}
+	run, ok := s.requirePipelineRun(w, pl, r.PathValue("id"))
+	if !ok {
+		return
+	}
+
+	if run.Status == "running" {
+		if err := s.stopPipelineRun(r.Context(), run); err != nil {
+			log.Printf("stop pipeline run %s: %v", run.ID, err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		got, err := s.st.GetPipelineRun(run.ID)
+		if err != nil {
+			log.Printf("get pipeline run %s: %v", run.ID, err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		run = got
+	}
+
+	steps, err := s.st.ListRunSteps(run.ID)
+	if err != nil {
+		log.Printf("list run steps: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, pipelineRunDetailJSON(run, steps))
 }
