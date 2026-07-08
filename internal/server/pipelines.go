@@ -957,12 +957,14 @@ func pipelineBaseJSON(pl store.Pipeline) map[string]any {
 		"id":         pl.ID,
 		"name":       pl.Name,
 		"engine":     pl.Engine,
+		"cron":       pl.Cron, // "" when unscheduled; CLI's `pipeline ls` needs this on every row, not just detail
 		"created_at": pl.CreatedAt,
 	}
 }
 
-// pipelineListJSON is one row of GET .../pipelines: base fields plus the
-// newest run's id/status/started_at (nil when the pipeline has never run).
+// pipelineListJSON is one row of GET .../pipelines: base fields (including
+// cron, for the CLI's ls CRON column) plus the newest run's
+// id/status/started_at (nil when the pipeline has never run).
 func pipelineListJSON(pl store.Pipeline, lastRun *store.PipelineRun) map[string]any {
 	out := pipelineBaseJSON(pl)
 	if lastRun != nil {
@@ -978,11 +980,10 @@ func pipelineListJSON(pl store.Pipeline, lastRun *store.PipelineRun) map[string]
 }
 
 // pipelineDetailJSON is the shape returned by create/update/get: base fields
-// plus the raw yaml and cron ("" when unscheduled).
+// plus the raw yaml.
 func pipelineDetailJSON(pl store.Pipeline) map[string]any {
 	out := pipelineBaseJSON(pl)
 	out["yaml"] = pl.YAML
-	out["cron"] = pl.Cron
 	return out
 }
 

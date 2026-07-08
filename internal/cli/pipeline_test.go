@@ -36,6 +36,12 @@ type pipelineFake struct {
 	stopResp map[string]any
 
 	rmPath string
+
+	webhookGeneratePath  string
+	webhookGenerateCalls int
+	webhookGenerateResp  map[string]any
+
+	webhookDeletePath string
 }
 
 func newPipelineFake(t *testing.T) *pipelineFake {
@@ -77,17 +83,26 @@ func newPipelineFake(t *testing.T) *pipelineFake {
 		f.rmPath = r.URL.Path
 		w.WriteHeader(http.StatusNoContent)
 	})
+	mux.HandleFunc("POST /v1/projects/{project}/pipelines/{name}/webhook-secret", func(w http.ResponseWriter, r *http.Request) {
+		f.webhookGeneratePath = r.URL.Path
+		f.webhookGenerateCalls++
+		json.NewEncoder(w).Encode(f.webhookGenerateResp)
+	})
+	mux.HandleFunc("DELETE /v1/projects/{project}/pipelines/{name}/webhook-secret", func(w http.ResponseWriter, r *http.Request) {
+		f.webhookDeletePath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	})
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
 	return f
 }
 
 // TestPipelineCreatePostsRawYAML covers `luncur pipeline create`: the CLI
-// reads --file from disk and posts its raw contents plus name/engine.
+// reads --file from disk and posts its raw contents plus name/engine/cron.
 func TestPipelineCreatePostsRawYAML(t *testing.T) {
 	f := newPipelineFake(t)
 	setCLIConfig(t, f.srv.URL)
-	f.createResp = map[string]any{"id": "pl1", "name": "pipe", "engine": "native"}
+	f.createResp = map[string]any{"id": "pl1", "name": "pipe", "engine": "native", "cron": "0 3 * * *"}
 
 	yamlPath := filepath.Join(t.TempDir(), "pipeline.yaml")
 	yamlContents := "steps:\n  train:\n    app: train\n"
@@ -95,7 +110,7 @@ func TestPipelineCreatePostsRawYAML(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := run(t, "pipeline", "create", "pipe", "--project", "ml", "--file", yamlPath, "--engine", "native")
+	out, err := run(t, "pipeline", "create", "pipe", "--project", "ml", "--file", yamlPath, "--engine", "native", "--cron", "0 3 * * *")
 	if err != nil {
 		t.Fatalf("pipeline create: %v (%s)", err, out)
 	}
@@ -103,11 +118,33 @@ func TestPipelineCreatePostsRawYAML(t *testing.T) {
 	if f.createPath != "/v1/projects/ml/pipelines" {
 		t.Fatalf("create path = %q", f.createPath)
 	}
-	if f.createBody["name"] != "pipe" || f.createBody["yaml"] != yamlContents || f.createBody["engine"] != "native" {
+	if f.createBody["name"] != "pipe" || f.createBody["yaml"] != yamlContents || f.createBody["engine"] != "native" || f.createBody["cron"] != "0 3 * * *" {
 		t.Fatalf("create body = %+v", f.createBody)
 	}
 	if !strings.Contains(out, "pipeline pipe created") {
 		t.Fatalf("want create confirmation, got %q", out)
+	}
+}
+
+// TestPipelineCreateDefaultsCronEmpty covers the common case: --cron omitted
+// still sends an explicit "" (manual trigger only), matching the API's
+// always-present cron field.
+func TestPipelineCreateDefaultsCronEmpty(t *testing.T) {
+	f := newPipelineFake(t)
+	setCLIConfig(t, f.srv.URL)
+	f.createResp = map[string]any{"id": "pl1", "name": "pipe"}
+
+	yamlPath := filepath.Join(t.TempDir(), "pipeline.yaml")
+	if err := os.WriteFile(yamlPath, []byte("steps:\n  a:\n    app: x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "pipeline", "create", "pipe", "--project", "ml", "--file", yamlPath)
+	if err != nil {
+		t.Fatalf("pipeline create: %v (%s)", err, out)
+	}
+	if f.createBody["cron"] != "" {
+		t.Fatalf("create body cron = %v, want empty string", f.createBody["cron"])
 	}
 }
 
@@ -124,8 +161,8 @@ func TestPipelineCreateHelpMentionsPlaintextEnv(t *testing.T) {
 }
 
 // TestPipelineUpdateOmitsUnsetFields covers `luncur pipeline update`: only
-// flags actually passed are sent, so an omitted --file/--engine keeps the
-// server-side value unchanged.
+// flags actually passed are sent, so an omitted --file/--engine/--cron keeps
+// the server-side value unchanged.
 func TestPipelineUpdateOmitsUnsetFields(t *testing.T) {
 	f := newPipelineFake(t)
 	setCLIConfig(t, f.srv.URL)
@@ -141,6 +178,9 @@ func TestPipelineUpdateOmitsUnsetFields(t *testing.T) {
 	if _, hasYAML := f.updateBody["yaml"]; hasYAML {
 		t.Fatalf("update body must omit yaml when --file wasn't passed: %+v", f.updateBody)
 	}
+	if _, hasCron := f.updateBody["cron"]; hasCron {
+		t.Fatalf("update body must omit cron when --cron wasn't passed: %+v", f.updateBody)
+	}
 	if f.updateBody["engine"] != "argo" {
 		t.Fatalf("update body engine = %v, want argo", f.updateBody["engine"])
 	}
@@ -149,22 +189,41 @@ func TestPipelineUpdateOmitsUnsetFields(t *testing.T) {
 	}
 }
 
+// TestPipelineUpdateEmptyCronClearsSchedule covers the documented escape
+// hatch: passing --cron "" explicitly sends an empty string (clears the
+// schedule), distinct from omitting the flag entirely.
+func TestPipelineUpdateEmptyCronClearsSchedule(t *testing.T) {
+	f := newPipelineFake(t)
+	setCLIConfig(t, f.srv.URL)
+	f.updateResp = map[string]any{"id": "pl1", "name": "pipe"}
+
+	out, err := run(t, "pipeline", "update", "pipe", "--project", "ml", "--cron", "")
+	if err != nil {
+		t.Fatalf("pipeline update: %v (%s)", err, out)
+	}
+	cron, hasCron := f.updateBody["cron"]
+	if !hasCron || cron != "" {
+		t.Fatalf("update body cron = %v (present=%v), want present and empty", cron, hasCron)
+	}
+}
+
 // TestPipelineLsShowsEngineAndLastRun covers `luncur pipeline ls`: one row
-// per pipeline with NAME/ENGINE/LAST RUN/STATUS, "-" for a pipeline that has
-// never run, and "native" for a pipeline with no engine pinned.
+// per pipeline with NAME/ENGINE/CRON/LAST RUN/STATUS, "-" for a pipeline
+// that has never run (or has no cron), and "native" for a pipeline with no
+// engine pinned.
 func TestPipelineLsShowsEngineAndLastRun(t *testing.T) {
 	f := newPipelineFake(t)
 	setCLIConfig(t, f.srv.URL)
 	f.lsResp = []map[string]any{
-		{"id": "pl1", "name": "train-pipe", "engine": "", "last_run": map[string]any{"id": "run1", "status": "done", "started_at": "2026-01-01 00:00:00"}},
-		{"id": "pl2", "name": "empty-pipe", "engine": "argo", "last_run": nil},
+		{"id": "pl1", "name": "train-pipe", "engine": "", "cron": "0 3 * * *", "last_run": map[string]any{"id": "run1", "status": "done", "started_at": "2026-01-01 00:00:00"}},
+		{"id": "pl2", "name": "empty-pipe", "engine": "argo", "cron": "", "last_run": nil},
 	}
 
 	out, err := run(t, "pipeline", "ls", "--project", "ml")
 	if err != nil {
 		t.Fatalf("pipeline ls: %v (%s)", err, out)
 	}
-	for _, want := range []string{"train-pipe", "native", "run1", "done", "empty-pipe", "argo", "-"} {
+	for _, want := range []string{"CRON", "train-pipe", "native", "0 3 * * *", "run1", "done", "empty-pipe", "argo", "-"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("want %q in pipeline ls output, got %q", want, out)
 		}
@@ -256,5 +315,73 @@ func TestPipelineRmDeletes(t *testing.T) {
 	}
 	if !strings.Contains(out, "pipeline pipe deleted") {
 		t.Fatalf("want rm confirmation, got %q", out)
+	}
+}
+
+// TestPipelineWebhookGenerate covers `luncur pipeline webhook <name>`: the
+// full URL (server base + path), the secret, and the one-time notice.
+func TestPipelineWebhookGenerate(t *testing.T) {
+	f := newPipelineFake(t)
+	setCLIConfig(t, f.srv.URL)
+	f.webhookGenerateResp = map[string]any{"url": "/hooks/pipelines/pl1", "secret": "abc123"}
+
+	out, err := run(t, "pipeline", "webhook", "pipe", "--project", "ml")
+	if err != nil {
+		t.Fatalf("pipeline webhook: %v (%s)", err, out)
+	}
+	if f.webhookGeneratePath != "/v1/projects/ml/pipelines/pipe/webhook-secret" {
+		t.Fatalf("webhook generate path = %q", f.webhookGeneratePath)
+	}
+	if !strings.Contains(out, f.srv.URL+"/hooks/pipelines/pl1") {
+		t.Fatalf("want full URL in output, got %q", out)
+	}
+	if !strings.Contains(out, "secret: abc123") {
+		t.Fatalf("want secret in output, got %q", out)
+	}
+	if !strings.Contains(out, "shown once") {
+		t.Fatalf("want one-time notice, got %q", out)
+	}
+}
+
+// TestPipelineWebhookGenerateRotates covers repeat calls: each one hits the
+// generate endpoint again (server-side rotation), not some cached value.
+func TestPipelineWebhookGenerateRotates(t *testing.T) {
+	f := newPipelineFake(t)
+	setCLIConfig(t, f.srv.URL)
+	f.webhookGenerateResp = map[string]any{"url": "/hooks/pipelines/pl1", "secret": "first"}
+
+	if _, err := run(t, "pipeline", "webhook", "pipe", "--project", "ml"); err != nil {
+		t.Fatal(err)
+	}
+	f.webhookGenerateResp = map[string]any{"url": "/hooks/pipelines/pl1", "secret": "second"}
+	out, err := run(t, "pipeline", "webhook", "pipe", "--project", "ml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.webhookGenerateCalls != 2 {
+		t.Fatalf("webhook generate calls = %d, want 2 (each invocation rotates)", f.webhookGenerateCalls)
+	}
+	if !strings.Contains(out, "secret: second") {
+		t.Fatalf("want rotated secret in output, got %q", out)
+	}
+}
+
+// TestPipelineWebhookDisable covers `luncur pipeline webhook <name> --disable`.
+func TestPipelineWebhookDisable(t *testing.T) {
+	f := newPipelineFake(t)
+	setCLIConfig(t, f.srv.URL)
+
+	out, err := run(t, "pipeline", "webhook", "pipe", "--project", "ml", "--disable")
+	if err != nil {
+		t.Fatalf("pipeline webhook --disable: %v (%s)", err, out)
+	}
+	if f.webhookDeletePath != "/v1/projects/ml/pipelines/pipe/webhook-secret" {
+		t.Fatalf("webhook delete path = %q", f.webhookDeletePath)
+	}
+	if !strings.Contains(out, "disabled") {
+		t.Fatalf("want disabled confirmation, got %q", out)
+	}
+	if f.webhookGenerateCalls != 0 {
+		t.Fatalf("webhook generate must not be called when --disable is set, calls = %d", f.webhookGenerateCalls)
 	}
 }
