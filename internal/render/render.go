@@ -295,6 +295,10 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 		l := probe()
 		l.InitialDelaySeconds, l.PeriodSeconds, l.FailureThreshold = 15, 20, 3
 		container.ReadinessProbe, container.LivenessProbe = r, l
+		s := probe()
+		// 60s boot budget (2s x 30); liveness only starts after startup succeeds.
+		s.PeriodSeconds, s.FailureThreshold = 2, 30
+		container.StartupProbe = s
 	}
 	// Model apps rewire the container for their serving runtime; svcPort is
 	// what the Service targets (the runtime's port for models, in.Port
@@ -358,6 +362,9 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			},
 		},
 	}
+	// Explicit (== the K8s default) so the contract is visible in ejected YAML.
+	grace := int64(30)
+	dep.Spec.Template.Spec.TerminationGracePeriodSeconds = &grace
 	dep.Spec.Template.Spec.InitContainers = modelInits
 	applyGPU(&dep.Spec.Template.Spec, in.GPU)
 	hasPVC := kind != "cron" && len(in.Volumes) > 0
@@ -366,6 +373,18 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 		// at once, and a GPU model's replacement pod can't schedule while
 		// the old pod holds the node's GPU — Recreate instead of rolling.
 		dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+	} else {
+		// Zero-downtime rolling update: the replacement pod must be Ready
+		// (readiness probe, when set) before the old one is terminated.
+		zero := intstr.FromInt32(0)
+		one := intstr.FromInt32(1)
+		dep.Spec.Strategy = appsv1.DeploymentStrategy{
+			Type: appsv1.RollingUpdateDeploymentStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxUnavailable: &zero,
+				MaxSurge:       &one,
+			},
+		}
 	}
 
 	switch kind {

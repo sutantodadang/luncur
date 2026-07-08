@@ -536,7 +536,7 @@ func TestRenderVolumes(t *testing.T) {
 	}
 }
 
-func TestRenderNoVolumesMeansNoStrategyNoPVC(t *testing.T) {
+func TestRenderNoVolumesMeansRollingStrategyNoPVC(t *testing.T) {
 	r := mustRender(t, testInput(), nil)
 	for _, o := range r.Objects {
 		if o.Kind == "PersistentVolumeClaim" {
@@ -545,8 +545,12 @@ func TestRenderNoVolumesMeansNoStrategyNoPVC(t *testing.T) {
 	}
 	var d appsv1.Deployment
 	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
-	if d.Spec.Strategy.Type != "" {
-		t.Fatalf("strategy should be unset without volumes, got %q", d.Spec.Strategy.Type)
+	if d.Spec.Strategy.Type != appsv1.RollingUpdateDeploymentStrategyType {
+		t.Fatalf("strategy should be RollingUpdate without volumes, got %q", d.Spec.Strategy.Type)
+	}
+	ru := d.Spec.Strategy.RollingUpdate
+	if ru == nil || ru.MaxUnavailable.IntValue() != 0 || ru.MaxSurge.IntValue() != 1 {
+		t.Fatalf("rollingUpdate: %+v", ru)
 	}
 }
 
@@ -643,4 +647,71 @@ func TestRenderInternalIgnoredForWorkerAndCron(t *testing.T) {
 	if len(rc.Objects) != 1 || rc.Objects[0].Kind != "CronJob" {
 		t.Fatalf("internal=true must not change cron's object set, got %+v", rc.Objects)
 	}
+}
+
+// TestZeroDowntimeDeploy covers D1: rolling-update strategy (0 unavailable, 1
+// surge) on Deployments that don't require Recreate, a startupProbe when a
+// health path is set, and an explicit 30s termination grace period.
+func TestZeroDowntimeDeploy(t *testing.T) {
+	t.Run("web with health path", func(t *testing.T) {
+		in := testInput()
+		in.HealthPath = "/healthz"
+		r := mustRender(t, in, nil)
+		var d appsv1.Deployment
+		json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+
+		if d.Spec.Strategy.Type != appsv1.RollingUpdateDeploymentStrategyType {
+			t.Fatalf("strategy = %q, want RollingUpdate", d.Spec.Strategy.Type)
+		}
+		ru := d.Spec.Strategy.RollingUpdate
+		if ru == nil || ru.MaxUnavailable.IntValue() != 0 || ru.MaxSurge.IntValue() != 1 {
+			t.Fatalf("rollingUpdate: %+v", ru)
+		}
+
+		c := d.Spec.Template.Spec.Containers[0]
+		sp := c.StartupProbe
+		if sp == nil || sp.HTTPGet == nil || sp.HTTPGet.Path != "/healthz" {
+			t.Fatalf("startupProbe: %+v", sp)
+		}
+		if sp.PeriodSeconds != 2 || sp.FailureThreshold != 30 {
+			t.Fatalf("startupProbe timing: period=%d failureThreshold=%d", sp.PeriodSeconds, sp.FailureThreshold)
+		}
+
+		pod := d.Spec.Template.Spec
+		if pod.TerminationGracePeriodSeconds == nil || *pod.TerminationGracePeriodSeconds != 30 {
+			t.Fatalf("terminationGracePeriodSeconds: %v", pod.TerminationGracePeriodSeconds)
+		}
+	})
+
+	t.Run("web with volume forces Recreate", func(t *testing.T) {
+		in := testInput()
+		in.Volumes = []Volume{{Name: "data", Path: "/data", SizeGB: 10}}
+		r := mustRender(t, in, nil)
+		var d appsv1.Deployment
+		json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+
+		if d.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
+			t.Fatalf("strategy = %q, want Recreate", d.Spec.Strategy.Type)
+		}
+		if d.Spec.Strategy.RollingUpdate != nil {
+			t.Fatalf("rollingUpdate should be nil for Recreate, got %+v", d.Spec.Strategy.RollingUpdate)
+		}
+	})
+
+	t.Run("worker without health path", func(t *testing.T) {
+		r := mustRender(t, workerInput(), nil)
+		var d appsv1.Deployment
+		json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+
+		if d.Spec.Strategy.Type != appsv1.RollingUpdateDeploymentStrategyType {
+			t.Fatalf("strategy = %q, want RollingUpdate", d.Spec.Strategy.Type)
+		}
+		ru := d.Spec.Strategy.RollingUpdate
+		if ru == nil || ru.MaxUnavailable.IntValue() != 0 || ru.MaxSurge.IntValue() != 1 {
+			t.Fatalf("rollingUpdate: %+v", ru)
+		}
+		if d.Spec.Template.Spec.Containers[0].StartupProbe != nil {
+			t.Fatalf("startupProbe should be nil without health path")
+		}
+	})
 }
