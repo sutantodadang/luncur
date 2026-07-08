@@ -204,6 +204,18 @@ func TestFinishTrialValidation(t *testing.T) {
 	} else if err.Error() != "trial not running" {
 		t.Fatalf("err = %v, want %q", err, "trial not running")
 	}
+	// Except pending -> failed: a permanently unlaunchable trial must not
+	// stay pending (it would be retried every tick forever).
+	if err := st.FinishTrial(trials[0].ID, "failed", nil, nil); err != nil {
+		t.Fatalf("pending -> failed: %v", err)
+	}
+	got, err := st.ListTrials(sw.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].State != "failed" {
+		t.Fatalf("state = %q, want failed", got[0].State)
+	}
 }
 
 func TestFinishSweepValidation(t *testing.T) {

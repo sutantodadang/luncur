@@ -241,6 +241,9 @@ func (s *Store) MarkTrialLaunched(trialID string, runID int64) error {
 
 // FinishTrial transitions a running trial to done, failed, or pruned. value
 // and step are nullable (e.g. a pruned trial killed before it reported).
+// A pending trial may also go straight to failed: a launch that errors
+// permanently (app no longer deployed, render failure) never reaches
+// running, and leaving it pending would retry it every tick forever.
 func (s *Store) FinishTrial(trialID, state string, value *float64, step *int64) error {
 	if state != "done" && state != "failed" && state != "pruned" {
 		return errors.New("finish state must be done, failed, or pruned")
@@ -253,8 +256,9 @@ func (s *Store) FinishTrial(trialID, state string, value *float64, step *int64) 
 		st = *step
 	}
 	res, err := s.db.Exec(
-		`UPDATE sweep_trials SET state = ?, metric_value = ?, metric_step = ? WHERE id = ? AND state = 'running'`,
-		state, v, st, trialID)
+		`UPDATE sweep_trials SET state = ?, metric_value = ?, metric_step = ? WHERE id = ?
+		 AND (state = 'running' OR (state = 'pending' AND ? = 'failed'))`,
+		state, v, st, trialID, state)
 	if err != nil {
 		return err
 	}

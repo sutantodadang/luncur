@@ -331,16 +331,12 @@ func (s *server) sweepLaunchTrial(ctx context.Context, sw store.Sweep, tr store.
 		return
 	case err != nil:
 		log.Printf("sweep %s: launch trial %s: %v", sw.ID, tr.ID, err)
-		// FinishTrial requires state "running"; startRun's failure paths
-		// (errNotDeployed, or a create/render/apply failure before a run
-		// row's id ever reaches this caller — see runs.go) don't hand back
-		// a run id here, so a trial that never got MarkTrialLaunched can't
-		// satisfy that guard. Attempt it anyway (it succeeds whenever a run
-		// row did get created and marked launched by a previous partial
-		// tick); a no-op here just leaves the trial pending for retry next
-		// tick, the same outcome as the over-budget case.
+		// A non-budget launch error is permanent (errNotDeployed, render or
+		// apply failure) — mark the trial failed so it isn't retried every
+		// tick forever. FinishTrial allows pending -> failed for exactly
+		// this path.
 		if e := s.st.FinishTrial(tr.ID, "failed", nil, nil); e != nil {
-			log.Printf("sweep %s: trial %s not transitioned to failed (staying pending, retried next tick): %v", sw.ID, tr.ID, e)
+			log.Printf("sweep %s: trial %s -> failed: %v", sw.ID, tr.ID, e)
 		}
 		return
 	}
