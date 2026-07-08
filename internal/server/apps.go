@@ -77,7 +77,7 @@ func (s *server) appJSON(p store.Project, a store.App) map[string]any {
 	if a.Internal {
 		out["internal_url"] = internalURLFor(a.Name, p.Namespace)
 	} else {
-		out["url"] = "http://" + hostFor(a.Name, s.externalIP)
+		out["url"] = s.appURL(a)
 	}
 	return out
 }
@@ -480,7 +480,7 @@ func (s *server) applyImageDeploy(ctx context.Context, p store.Project, a store.
 	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
 		log.Printf("mark deploy %s live (apply already succeeded): %v", d.ID, err)
 	}
-	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: "http://" + hostFor(a.Name, s.externalIP)})
+	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: s.appURL(a)})
 	return nil
 }
 
@@ -504,7 +504,7 @@ func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Pro
 		"deployment_id": d.ID,
 		"seq":           d.Seq,
 		"status":        "live",
-		"url":           "http://" + hostFor(a.Name, s.externalIP),
+		"url":           s.appURL(a),
 	})
 }
 
@@ -582,7 +582,7 @@ func (s *server) handleGetDeploy(w http.ResponseWriter, r *http.Request, u store
 		"seq":           d.Seq,
 		"status":        d.Status,
 		"image":         d.ImageRef,
-		"url":           "http://" + hostFor(a.Name, s.externalIP),
+		"url":           s.appURL(a),
 	})
 }
 

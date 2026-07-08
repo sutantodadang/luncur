@@ -21,6 +21,25 @@ func hostFor(app, externalIP string) string {
 	return app + "." + strings.ReplaceAll(externalIP, ".", "-") + ".sslip.io"
 }
 
+// appURL is the app's public URL shown in the UI/API and sent in deploy
+// notifications: its first non-wildcard custom domain when one exists
+// (https once the cert is issued or externally managed), else the assigned
+// sslip.io host over plain HTTP.
+func (s *server) appURL(a store.App) string {
+	if domains, err := s.st.ListDomains(a.ID); err == nil {
+		for _, d := range domains {
+			if strings.HasPrefix(d.Hostname, "*.") {
+				continue
+			}
+			if d.CertStatus == "issued" || d.CertStatus == "external" {
+				return "https://" + d.Hostname
+			}
+			return "http://" + d.Hostname
+		}
+	}
+	return "http://" + hostFor(a.Name, s.externalIP)
+}
+
 // internalURLFor is the cluster-internal address an internal web app is
 // reachable at: the ClusterIP Service's in-cluster DNS name (same as the
 // Service name render.go assigns — in.AppName), port 80 (the Service port;
@@ -149,6 +168,7 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 	var extraHosts []string
 	var tls []netv1.IngressTLS
 	annotations := map[string]string{}
+	host := hostFor(a.Name, s.externalIP)
 	// Domains/TLS/cert-provider annotations only apply to web apps: worker
 	// and cron kinds render no Service/Ingress to attach them to.
 	if a.Kind == "web" {
@@ -172,6 +192,16 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 				})
 			}
 		}
+		// A custom domain replaces the assigned sslip.io host entirely once a
+		// routable (non-wildcard) one exists; wildcard-only apps keep the sslip
+		// host because appURL still points there.
+		for i, h := range extraHosts {
+			if !strings.HasPrefix(h, "*.") {
+				host = h
+				extraHosts = append(extraHosts[:i], extraHosts[i+1:]...)
+				break
+			}
+		}
 		if len(domains) > 0 {
 			switch provider {
 			case "traefik":
@@ -190,7 +220,7 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 		AppName:            a.Name,
 		Namespace:          p.Namespace,
 		Image:              imageRef,
-		Host:               hostFor(a.Name, s.externalIP),
+		Host:               host,
 		Port:               int32(a.Port),
 		Replicas:           int32(a.Replicas),
 		Kind:               a.Kind,
