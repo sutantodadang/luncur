@@ -79,6 +79,9 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/scale", s.uiPage(s.handleUIScale))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/runs", s.uiPage(s.handleUIRunCreate))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/training", s.uiPage(s.handleUITraining))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/sweeps", s.uiPage(s.handleUISweepCreate))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/sweeps/{id}/stop", s.uiPage(s.handleUISweepStop))
+	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/sweeps/{id}/trials", s.uiPage(s.handleUISweepTrials))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/health", s.uiPage(s.handleUIHealth))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook", s.uiPage(s.handleUIWebhookEnable))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook/disable", s.uiPage(s.handleUIWebhookDisable))
@@ -1043,6 +1046,35 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		runRows = uiRunRows(runs)
 	}
 
+	// Sweeps card, likewise job-only: sweepRows is the history table (newest
+	// first); sweep is the most recent sweep's live detail (nil when the app
+	// has none yet) — the card only ever shows one sweep's trial table, not
+	// every past sweep's.
+	var sweepRows []uiSweepRow
+	var sweep *uiSweepData
+	if a.Kind == "job" {
+		sweeps, err := s.st.ListSweeps(a.ID)
+		if err != nil {
+			log.Printf("ui app sweeps: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		sweepRows = make([]uiSweepRow, 0, len(sweeps))
+		for _, sw := range sweeps {
+			trials, err := s.st.ListTrials(sw.ID)
+			if err != nil {
+				log.Printf("ui app sweep %s trials: %v", sw.ID, err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			sweepRows = append(sweepRows, uiSweepRowFrom(sw, trials))
+			if sweep == nil {
+				d := uiSweepDataFrom(sw, trials)
+				sweep = &d
+			}
+		}
+	}
+
 	url := "http://" + hostFor(a.Name, s.externalIP)
 	internalURL := ""
 	if a.Internal {
@@ -1050,6 +1082,10 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 	}
 
 	chip := chipData(p.Name, a.Name, status)
+	csrf := s.csrf(w, r)
+	if sweep != nil {
+		sweep.ProjectName, sweep.AppName, sweep.CSRF = p.Name, a.Name, csrf
+	}
 	data := map[string]any{
 		"User": u, "Project": p, "App": a,
 		"Status": status, "LatestID": latestID, "URL": url, "InternalURL": internalURL,
@@ -1061,7 +1097,8 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"Domains": domains, "Volumes": volumes, "Warning": firstNonEmpty(r.URL.Query().Get("warn"), r.URL.Query().Get("err")),
 		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics, "Pods": pods,
 		"Runs": runRows, "TrainFrameworks": render.TrainFrameworks,
-		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
+		"Sweeps": sweepRows, "Sweep": sweep,
+		"CSRF": csrf, "IsAdmin": u.Role == "admin",
 	}
 	for k, v := range extra {
 		data[k] = v
