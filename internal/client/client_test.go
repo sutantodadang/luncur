@@ -100,6 +100,28 @@ func TestClientProjectAppEnvRawFlow(t *testing.T) {
 	}
 }
 
+// TestRuntimeLogsRequestParams checks that follow/tail/since are encoded as
+// query params on the runtime-logs request.
+func TestRuntimeLogsRequestParams(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: hi\n\n")
+	}))
+	defer srv.Close()
+	var buf bytes.Buffer
+	c := New(srv.URL, "tok")
+	if err := c.RuntimeLogs("p", "a", true, 200, "15m", &buf); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"follow=1", "tail=200", "since=15m"} {
+		if !strings.Contains(gotQuery, want) {
+			t.Fatalf("query %q missing %q", gotQuery, want)
+		}
+	}
+}
+
 func TestStreamSSE(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

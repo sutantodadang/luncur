@@ -364,6 +364,11 @@ func (s *server) handleRunLogs(w http.ResponseWriter, r *http.Request, u store.U
 	}
 
 	follow := r.URL.Query().Get("follow") == "1"
+	tail, since, err := logBounds(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
 	pods, err := s.kube.JobPods(r.Context(), p.Namespace, jobRunName(a.Name, run.ID))
 	if err != nil {
 		log.Printf("list run pods: %v", err)
@@ -393,7 +398,7 @@ func (s *server) handleRunLogs(w http.ResponseWriter, r *http.Request, u store.U
 		wg.Add(1)
 		go func(pod string) {
 			defer wg.Done()
-			rc, err := s.kube.PodLogStream(r.Context(), p.Namespace, pod, follow)
+			rc, err := s.kube.PodLogStream(r.Context(), p.Namespace, pod, follow, tail, since)
 			if err != nil {
 				send("[" + pod + "] error: " + err.Error())
 				return
