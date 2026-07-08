@@ -120,7 +120,7 @@ Full operator manual: **[sutantodadang.github.io/luncur](https://sutantodadang.g
 - [Getting started](docs/getting-started.md) — install, first deploy, multi-node
 - [Deploying](docs/guides/deploying.md) · [Apps & projects](docs/guides/apps-and-projects.md) · [Domains & TLS](docs/guides/domains-and-tls.md)
 - [Addons](docs/guides/addons.md) · [Volumes](docs/guides/volumes.md) · [Backups](docs/guides/backups.md)
-- [GPU cloud](docs/ml/gpu-cloud.md) · [Training](docs/ml/training.md) · [Model serving](docs/ml/model-serving.md) · [Sweeps](docs/ml/sweeps.md)
+- [GPU cloud](docs/ml/gpu-cloud.md) · [Training](docs/ml/training.md) · [Model serving](docs/ml/model-serving.md) · [Sweeps](docs/ml/sweeps.md) · [Pipelines](docs/ml/pipelines.md)
 - [Operations](docs/operations/audit.md) · [Reference](docs/reference/build-pipeline.md)
 
 ## 🗺️ Roadmap

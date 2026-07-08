@@ -69,6 +69,13 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/gpu-quota", s.uiPage(s.handleUIGPUQuota))
 	mux.HandleFunc("POST /ui/projects/{project}/addons/upgrade", s.uiPage(s.handleUIAddonUpgrade))
 	mux.HandleFunc("GET /ui/projects/{project}/addons/url", s.uiPage(s.handleUIAddonURL))
+	mux.HandleFunc("GET /ui/projects/{project}/pipelines/{name}", s.uiPage(s.handleUIPipeline))
+	mux.HandleFunc("POST /ui/projects/{project}/pipelines", s.uiPage(s.handleUIPipelineCreate))
+	mux.HandleFunc("POST /ui/projects/{project}/pipelines/{name}", s.uiPage(s.handleUIPipelineUpdate))
+	mux.HandleFunc("POST /ui/projects/{project}/pipelines/{name}/run", s.uiPage(s.handleUIPipelineRun))
+	mux.HandleFunc("POST /ui/projects/{project}/pipelines/{name}/webhook-secret", s.uiPage(s.handleUIPipelineWebhookSecret))
+	mux.HandleFunc("POST /ui/projects/{project}/pipelines/{name}/runs/{id}/stop", s.uiPage(s.handleUIPipelineRunStop))
+	mux.HandleFunc("GET /ui/projects/{project}/pipelines/{name}/runs/{id}/steps", s.uiPage(s.handleUIPipelineRunSteps))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}", s.uiPage(s.handleUIApp))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/chip", s.uiPage(s.handleUIChip))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/chart", s.uiPage(s.handleUIAppChart))
@@ -607,6 +614,12 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	pipelines, err := s.uiPipelineCardRows(p)
+	if err != nil {
+		log.Printf("ui pipelines: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	var banner string
 	if e := r.URL.Query().Get("err"); e != "" {
 		banner = "error: " + e
@@ -626,7 +639,7 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	s.renderPage(w, "apps.html", map[string]any{
 		"User": u, "Project": p, "Apps": rows, "Addons": addons, "Members": members, "Banner": banner,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin", "PErrNote": perrNote,
-		"GPUQuota": p.GPUQuota,
+		"GPUQuota": p.GPUQuota, "Pipelines": pipelines,
 	})
 }
 
