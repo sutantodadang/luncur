@@ -104,27 +104,70 @@
 <div class="card mb-6">
 <h2>Logs</h2>
 <p class="mb-2 text-xs text-mut">streaming build/runtime logs</p>
+<div id="log-controls" class="mb-2 flex flex-wrap items-end gap-2">
+  <label class="flex flex-col gap-1 text-xs text-mut">tail<select id="log-tail" class="input w-auto">
+    <option value="200" selected>200 lines</option>
+    <option value="1000">1000 lines</option>
+    <option value="">all</option>
+  </select></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">filter<input id="log-filter" class="input w-auto" type="text" placeholder="filter lines&hellip;"></label>
+</div>
 <pre id="logs" class="term max-h-96 overflow-auto" data-project="{{.Project.Name}}" data-app="{{.App.Name}}"></pre>
-<div class="cli-echo">$ <b>luncur logs {{.App.Name}} -f</b></div>
+<div class="cli-echo">$ <b>luncur logs {{.App.Name}} -f --tail 200</b></div>
 <script>
 (function () {
   var pre = document.getElementById("logs");
+  var tailSel = document.getElementById("log-tail");
+  var filterInput = document.getElementById("log-filter");
   var p = pre.dataset.project, a = pre.dataset.app;
   var status = "{{.Status}}", latest = "{{.LatestID}}";
-  var url = "/v1/projects/" + p + "/apps/" + a + "/logs?follow=1";
-  if ((status === "building" || status === "deploying") && latest !== "") {
-    url = "/v1/projects/" + p + "/apps/" + a + "/deploys/" + latest + "/logs?follow=1";
-  }
-  var es = new EventSource(url);
-  es.onmessage = function (e) {
-    pre.textContent += e.data + "\n";
+  var isBuildLog = (status === "building" || status === "deploying") && latest !== "";
+  var lines = [];
+  var es = null;
+
+  function render() {
+    var f = filterInput.value.toLowerCase();
+    var shown = f === "" ? lines : lines.filter(function (l) {
+      return l.toLowerCase().indexOf(f) !== -1;
+    });
+    pre.textContent = shown.join("\n") + (shown.length ? "\n" : "");
     pre.scrollTop = pre.scrollHeight;
-  };
-  es.addEventListener("end", function (e) {
-    pre.textContent += "--- " + e.data + " ---\n";
-    es.close();
-  });
-  es.onerror = function () { es.close(); };
+  }
+
+  function connect() {
+    if (es) { es.close(); }
+    lines = [];
+    var url;
+    if (isBuildLog) {
+      url = "/v1/projects/" + p + "/apps/" + a + "/deploys/" + latest + "/logs?follow=1";
+    } else {
+      url = "/v1/projects/" + p + "/apps/" + a + "/logs?follow=1";
+      var tail = tailSel.value;
+      if (tail !== "") {
+        url += "&tail=" + encodeURIComponent(tail);
+      }
+    }
+    es = new EventSource(url);
+    es.onmessage = function (e) {
+      lines.push(e.data);
+      render();
+    };
+    es.addEventListener("end", function (e) {
+      lines.push("--- " + e.data + " ---");
+      render();
+      es.close();
+    });
+    es.onerror = function () { es.close(); };
+  }
+
+  if (isBuildLog) {
+    document.getElementById("log-controls").style.display = "none";
+  } else {
+    tailSel.addEventListener("change", connect);
+  }
+  filterInput.addEventListener("input", render);
+
+  connect();
 })();
 </script>
 </div>

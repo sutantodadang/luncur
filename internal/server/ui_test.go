@@ -872,6 +872,15 @@ func TestUIAppDetailContainsEventSourceScript(t *testing.T) {
 	if !strings.Contains(bodyStr, `id="logs"`) {
 		t.Fatalf("app detail page: body missing 'id=\"logs\"', got: %s", bodyStr)
 	}
+	if !strings.Contains(bodyStr, "log-tail") {
+		t.Fatalf("app detail page: body missing 'log-tail', got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "log-filter") {
+		t.Fatalf("app detail page: body missing 'log-filter', got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "tail=") {
+		t.Fatalf("app detail page: body missing 'tail=', got: %s", bodyStr)
+	}
 }
 
 // TestUIDomainAddAndDelete exercises the Domains section end to end: a
