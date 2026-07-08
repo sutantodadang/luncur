@@ -41,6 +41,7 @@ nav:
   - Machine learning:
       - GPU cloud: ml/gpu-cloud.md
       - Training: ml/training.md
+      - Sweeps: ml/sweeps.md
       - Model serving: ml/model-serving.md
   - Operations:
       - Audit log: operations/audit.md
