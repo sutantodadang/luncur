@@ -237,3 +237,44 @@ CREATE TABLE IF NOT EXISTS gpu_instances (
   status      TEXT NOT NULL CHECK (status IN ('renting','active','destroyed')),
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS pipelines (
+  id             TEXT PRIMARY KEY,          -- nanoid
+  project_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name           TEXT NOT NULL,             -- DNS-1123, unique per project
+  yaml           TEXT NOT NULL,
+  cron           TEXT NOT NULL DEFAULT '',  -- 5-field, '' = no schedule
+  webhook_secret BLOB,                      -- sealed, NULL until generated
+  engine         TEXT NOT NULL DEFAULT '',  -- ''=follow global setting
+  created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(project_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+  id          TEXT PRIMARY KEY,
+  pipeline_id TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+  status      TEXT NOT NULL CHECK (status IN ('running','done','failed','stopped')),
+  spec_json   TEXT NOT NULL,                -- compiled snapshot; immutable
+  trigger     TEXT NOT NULL CHECK (trigger IN ('manual','cron','webhook')),
+  warning     TEXT NOT NULL DEFAULT '',     -- sticky operator note
+  started_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_pipeline ON pipeline_runs(pipeline_id);
+
+CREATE TABLE IF NOT EXISTS pipeline_run_steps (
+  id          TEXT PRIMARY KEY,
+  run_id      TEXT NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  kind        TEXT NOT NULL CHECK (kind IN ('app','image','deploy','scale','notify')),
+  state       TEXT NOT NULL CHECK (state IN ('pending','running','done','failed','skipped')),
+  job_run_id  INTEGER REFERENCES job_runs(id) ON DELETE SET NULL,  -- kind=app
+  attempt     INTEGER NOT NULL DEFAULT 0,
+  detail      TEXT NOT NULL DEFAULT '',     -- error text / action result
+  started_at  TEXT,
+  finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_run_steps_run ON pipeline_run_steps(run_id);
