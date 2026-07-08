@@ -769,6 +769,17 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 		if err := s.syncApp(ctx, p, a); err != nil {
 			return store.App{}, err
 		}
+		// Sync only upserts; when the replica floor drops below 2 the stale
+		// PDB must be deleted or it blocks node drains.
+		floor := a.Replicas
+		if a.AutoMin > 0 {
+			floor = a.AutoMin
+		}
+		if floor < 2 {
+			if err := s.kube.DeleteObject(ctx, p.Namespace, "PodDisruptionBudget", a.Name); err != nil {
+				log.Printf("delete pdb %s/%s: %v", p.Namespace, a.Name, err)
+			}
+		}
 	}
 
 	return a, nil
@@ -898,6 +909,17 @@ func (s *server) autoscaleApp(ctx context.Context, p store.Project, a store.App,
 		}
 		if err := s.syncApp(ctx, p, a); err != nil {
 			return store.App{}, err
+		}
+		// Sync only upserts; when the replica floor drops below 2 the stale
+		// PDB must be deleted or it blocks node drains.
+		floor := a.Replicas
+		if a.AutoMin > 0 {
+			floor = a.AutoMin
+		}
+		if floor < 2 {
+			if err := s.kube.DeleteObject(ctx, p.Namespace, "PodDisruptionBudget", a.Name); err != nil {
+				log.Printf("delete pdb %s/%s: %v", p.Namespace, a.Name, err)
+			}
 		}
 	}
 

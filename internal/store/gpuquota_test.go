@@ -34,6 +34,41 @@ func TestProjectGPUQuota(t *testing.T) {
 	}
 }
 
+func TestProjectResourceQuota(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+
+	// Default: 0/0 = unlimited.
+	got, err := s.GetProject(p.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CPUQuotaMilli != 0 || got.MemQuotaMB != 0 {
+		t.Fatalf("default quota = %d/%d, want 0/0", got.CPUQuotaMilli, got.MemQuotaMB)
+	}
+
+	if err := s.SetProjectResourceQuota(p.ID, 4000, 8192); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetProject(p.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CPUQuotaMilli != 4000 || got.MemQuotaMB != 8192 {
+		t.Fatalf("quota = %d/%d, want 4000/8192", got.CPUQuotaMilli, got.MemQuotaMB)
+	}
+
+	if err := s.SetProjectResourceQuota(p.ID, -1, 0); err == nil {
+		t.Fatal("negative cpu quota accepted")
+	}
+	if err := s.SetProjectResourceQuota(p.ID, 0, -1); err == nil {
+		t.Fatal("negative memory quota accepted")
+	}
+	if err := s.SetProjectResourceQuota(99999, 1, 1); err == nil {
+		t.Fatal("unknown project accepted")
+	}
+}
+
 func TestSumProjectGPURequests(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)

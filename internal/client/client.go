@@ -1487,3 +1487,11 @@ func (c *Client) DestroyGPUInstance(id int64) error {
 func (c *Client) SetProjectGPUQuota(project string, quota int64) error {
 	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/gpu-quota", map[string]int64{"quota": quota}, nil)
 }
+
+// SetProjectQuota sets a project's namespace CPU/memory budget; 0 for either
+// means unlimited for that resource.
+func (c *Client) SetProjectQuota(project string, cpuMilli, memMB int64) error {
+	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/quota", map[string]int64{
+		"cpu_milli": cpuMilli, "memory_mb": memMB,
+	}, nil)
+}

@@ -14,6 +14,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -244,6 +245,32 @@ func buildHPA(in Input) *autoscalingv2.HorizontalPodAutoscaler {
 			}},
 		},
 	}
+}
+
+// buildPDB caps voluntary disruption for multi-replica web/worker apps so a
+// node drain always leaves at least one pod. Rendered only when the app's
+// floor (autoscale min when autoscaling, replicas otherwise) is >= 2 — a
+// maxUnavailable:1 PDB on a single-replica app would block drains forever.
+func buildPDB(in Input) *policyv1.PodDisruptionBudget {
+	maxUnavailable := intstr.FromInt32(1)
+	return &policyv1.PodDisruptionBudget{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "policy/v1", Kind: "PodDisruptionBudget"},
+		ObjectMeta: meta(in, in.AppName),
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MaxUnavailable: &maxUnavailable,
+			Selector:       &metav1.LabelSelector{MatchLabels: selector(in.AppName)},
+		},
+	}
+}
+
+// pdbFloor is the replica floor buildPDB's threshold is judged against: the
+// autoscale minimum when autoscaling is on, the static replica count
+// otherwise.
+func pdbFloor(in Input) int32 {
+	if in.AutoMin > 0 {
+		return in.AutoMin
+	}
+	return in.Replicas
 }
 
 // Render builds the manifest set for one app. env is plaintext (the caller
@@ -496,6 +523,12 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			}
 		}
 
+		if kind == "web" && pdbFloor(in) >= 2 {
+			if err := add("PodDisruptionBudget", buildPDB(in)); err != nil {
+				return Rendered{}, err
+			}
+		}
+
 	case "worker":
 		if err := add("Deployment", dep); err != nil {
 			return Rendered{}, err
@@ -503,6 +536,12 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 
 		if in.AutoMin > 0 {
 			if err := add("HorizontalPodAutoscaler", buildHPA(in)); err != nil {
+				return Rendered{}, err
+			}
+		}
+
+		if pdbFloor(in) >= 2 {
+			if err := add("PodDisruptionBudget", buildPDB(in)); err != nil {
 				return Rendered{}, err
 			}
 		}

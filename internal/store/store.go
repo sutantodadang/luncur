@@ -116,6 +116,8 @@ func migrate(db *sql.DB) error {
 		{"job_runs", "framework", `ALTER TABLE job_runs ADD COLUMN framework TEXT NOT NULL DEFAULT ''`},
 		{"gpu_instances", "external_ref", `ALTER TABLE gpu_instances ADD COLUMN external_ref TEXT NOT NULL DEFAULT ''`},
 		{"projects", "gpu_quota", `ALTER TABLE projects ADD COLUMN gpu_quota INTEGER NOT NULL DEFAULT 0`},
+		{"projects", "cpu_quota_milli", `ALTER TABLE projects ADD COLUMN cpu_quota_milli INTEGER NOT NULL DEFAULT 0`},
+		{"projects", "mem_quota_mb", `ALTER TABLE projects ADD COLUMN mem_quota_mb INTEGER NOT NULL DEFAULT 0`},
 	} {
 		var n int
 		if err := db.QueryRow(

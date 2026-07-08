@@ -67,6 +67,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/projects/{project}", s.uiPage(s.handleUIApps))
 	mux.HandleFunc("POST /ui/projects/{project}/apps", s.uiPage(s.handleUICreateApp))
 	mux.HandleFunc("POST /ui/projects/{project}/gpu-quota", s.uiPage(s.handleUIGPUQuota))
+	mux.HandleFunc("POST /ui/projects/{project}/quota", s.uiPage(s.handleUIQuota))
 	mux.HandleFunc("POST /ui/projects/{project}/addons/upgrade", s.uiPage(s.handleUIAddonUpgrade))
 	mux.HandleFunc("GET /ui/projects/{project}/addons/url", s.uiPage(s.handleUIAddonURL))
 	mux.HandleFunc("GET /ui/projects/{project}/pipelines/{name}", s.uiPage(s.handleUIPipeline))
@@ -646,6 +647,7 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		"User": u, "Project": p, "Apps": rows, "Addons": addons, "Members": members, "Banner": banner,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin", "PErrNote": perrNote,
 		"GPUQuota": p.GPUQuota, "Pipelines": pipelines,
+		"CPUQuotaMilli": p.CPUQuotaMilli, "MemQuotaMB": p.MemQuotaMB,
 	})
 }
 
@@ -674,6 +676,46 @@ func (s *server) handleUIGPUQuota(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 	flash(w, "ok", "gpu quota updated")
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
+}
+
+// handleUIQuota is setProjectQuota's UI twin: same shared store+kube core as
+// handleSetProjectQuota, form-POST instead of JSON, redirect back to the
+// project page with ?err= on failure (mirrors handleUIGPUQuota). Blank or 0
+// in either field means unlimited for that resource.
+func (s *server) handleUIQuota(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !s.uiAdmin(w, u) {
+		return
+	}
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	parseOr0 := func(v string) (int64, error) {
+		if v == "" {
+			return 0, nil
+		}
+		return strconv.ParseInt(v, 10, 64)
+	}
+	cpu, err := parseOr0(r.PostFormValue("cpu"))
+	if err != nil {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"?err="+url.QueryEscape("invalid cpu quota"), http.StatusSeeOther)
+		return
+	}
+	mem, err := parseOr0(r.PostFormValue("memory"))
+	if err != nil {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"?err="+url.QueryEscape("invalid memory quota"), http.StatusSeeOther)
+		return
+	}
+	if err := s.setProjectQuota(r.Context(), p, cpu, mem); err != nil {
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	flash(w, "ok", "quota saved")
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
