@@ -5,12 +5,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"math/rand"
+	"net/http"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/sutantodadang/luncur/internal/addon"
+	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
 	"github.com/sutantodadang/luncur/internal/sweep"
 )
@@ -469,4 +475,365 @@ func (s *server) startSweepLoop(ctx context.Context) {
 			s.sweepTick(ctx)
 		}
 	}
+}
+
+// --- endpoints --------------------------------------------------------
+
+// sweepCreateRequest is the JSON body of POST .../sweeps.
+type sweepCreateRequest struct {
+	ParamsYAML string `json:"params_yaml"`
+	Metric     string `json:"metric"`
+	Direction  string `json:"direction"`
+	MaxTrials  int    `json:"max_trials"`
+	Parallel   int    `json:"parallel"`
+	EarlyStop  bool   `json:"early_stop"`
+	Nodes      int    `json:"nodes"`
+	Framework  string `json:"framework"`
+}
+
+// errBadSweepRequest wraps every validation failure inside startSweep (bad
+// params.yaml, out-of-range metric/direction/bounds, unknown framework, a
+// param key that wouldn't survive LUNCUR_PARAM_<UPPER> as an env name) so
+// handleCreateSweep can map it to 400 without string-sniffing the error —
+// same convention as errNotDeployed/errRunOverBudget in runs.go.
+var errBadSweepRequest = errors.New("bad sweep request")
+
+// paramKeyRe is the env-safe param key guard: LUNCUR_PARAM_<UPPER> must
+// always be a legal env var name (see trialEnv). Enforced at create time so
+// the orchestrator loop can assume it holds.
+var paramKeyRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+// startSweep is handleCreateSweep's shared core: validate the request,
+// parse+expand the param space, and create the sweep plus its all-pending
+// trials in one store transaction. Kept separate from the handler so a
+// future UI start form can share it (same convention as startRun in
+// runs.go). Returns whether the param grid was truncated to max_trials.
+func (s *server) startSweep(a store.App, req sweepCreateRequest, createdBy sql.NullInt64) (store.Sweep, []store.SweepTrial, bool, error) {
+	if strings.TrimSpace(req.Metric) == "" {
+		return store.Sweep{}, nil, false, fmt.Errorf("%w: metric is required", errBadSweepRequest)
+	}
+	if req.Direction != "min" && req.Direction != "max" {
+		return store.Sweep{}, nil, false, fmt.Errorf("%w: direction must be min or max, got %q", errBadSweepRequest, req.Direction)
+	}
+	if req.MaxTrials < 1 || req.MaxTrials > 500 {
+		return store.Sweep{}, nil, false, fmt.Errorf("%w: max_trials must be 1..500, got %d", errBadSweepRequest, req.MaxTrials)
+	}
+	if req.Parallel < 1 || req.Parallel > 50 {
+		return store.Sweep{}, nil, false, fmt.Errorf("%w: parallel must be 1..50, got %d", errBadSweepRequest, req.Parallel)
+	}
+	if req.Framework != "" && !slices.Contains(render.TrainFrameworks, req.Framework) {
+		return store.Sweep{}, nil, false, fmt.Errorf("%w: unknown framework %q (valid: %s)",
+			errBadSweepRequest, req.Framework, strings.Join(render.TrainFrameworks, ", "))
+	}
+
+	d, err := s.st.LatestDeployment(a.ID)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && d.Status != "live") {
+		return store.Sweep{}, nil, false, errNotDeployed
+	}
+	if err != nil {
+		return store.Sweep{}, nil, false, fmt.Errorf("latest deployment: %w", err)
+	}
+
+	space, err := sweep.ParseParams([]byte(req.ParamsYAML))
+	if err != nil {
+		return store.Sweep{}, nil, false, fmt.Errorf("%w: %v", errBadSweepRequest, err)
+	}
+	for key := range space {
+		if !paramKeyRe.MatchString(key) {
+			return store.Sweep{}, nil, false, fmt.Errorf("%w: param %q: keys must match %s",
+				errBadSweepRequest, key, paramKeyRe.String())
+		}
+	}
+
+	seed := time.Now().UnixNano()
+	sets, truncated, err := sweep.Expand(space, req.MaxTrials, rand.New(rand.NewSource(seed)))
+	if err != nil {
+		return store.Sweep{}, nil, false, fmt.Errorf("%w: %v", errBadSweepRequest, err)
+	}
+	trialParams := make([]string, len(sets))
+	for i, set := range sets {
+		b, err := json.Marshal(set)
+		if err != nil {
+			return store.Sweep{}, nil, false, fmt.Errorf("encode trial params: %w", err)
+		}
+		trialParams[i] = string(b)
+	}
+
+	sw, trials, err := s.st.CreateSweep(store.Sweep{
+		AppID: a.ID, Metric: req.Metric, Direction: req.Direction,
+		MaxTrials: req.MaxTrials, Parallel: req.Parallel, EarlyStop: req.EarlyStop,
+		Nodes: req.Nodes, Framework: req.Framework, Seed: seed, CreatedBy: createdBy,
+	}, trialParams)
+	if err != nil {
+		return store.Sweep{}, nil, false, fmt.Errorf("create sweep: %w", err)
+	}
+	return sw, trials, truncated, nil
+}
+
+// stopSweep is handleStopSweep's (and a future UI stop button's) shared
+// core: a running sweep has its running trials' Jobs deleted and marked
+// pruned — reusing sweepPruneTrial's pod-level/sweep-level truth split, just
+// without a live metric observation to record — while pending trials are
+// left alone (a stopped sweep never launches anything: the loop only drives
+// status=running sweeps), and the sweep itself finishes "stopped". Callers
+// must check sw.Status == "running" first; a non-running sweep is already
+// the idempotent no-op case and this must not be called again for it.
+func (s *server) stopSweep(ctx context.Context, sw store.Sweep, app store.App, project store.Project) error {
+	trials, err := s.st.ListTrials(sw.ID)
+	if err != nil {
+		return fmt.Errorf("list trials: %w", err)
+	}
+	for _, tr := range trials {
+		if tr.State != "running" {
+			continue
+		}
+		s.sweepPruneTrial(ctx, sw, trialView{Trial: tr}, app, project)
+	}
+	return s.st.FinishSweep(sw.ID, "stopped")
+}
+
+// sweepSummary computes per-state trial counts and the best (by sw.Direction)
+// done trial with a recorded metric — shared by the list endpoint (counts +
+// best only) and the detail endpoint (which also includes the full trial
+// list).
+func sweepSummary(sw store.Sweep, trials []store.SweepTrial) (counts map[string]int, best *store.SweepTrial) {
+	counts = map[string]int{}
+	for i := range trials {
+		tr := trials[i]
+		counts[tr.State]++
+		if tr.State != "done" || !tr.MetricValue.Valid {
+			continue
+		}
+		switch {
+		case best == nil:
+			b := tr
+			best = &b
+		case sw.Direction == "min" && tr.MetricValue.Float64 < best.MetricValue.Float64:
+			b := tr
+			best = &b
+		case sw.Direction == "max" && tr.MetricValue.Float64 > best.MetricValue.Float64:
+			b := tr
+			best = &b
+		}
+	}
+	return counts, best
+}
+
+func sweepBaseJSON(sw store.Sweep) map[string]any {
+	out := map[string]any{
+		"id":         sw.ID,
+		"app_id":     sw.AppID,
+		"metric":     sw.Metric,
+		"direction":  sw.Direction,
+		"max_trials": sw.MaxTrials,
+		"parallel":   sw.Parallel,
+		"early_stop": sw.EarlyStop,
+		"nodes":      sw.Nodes,
+		"status":     sw.Status,
+		"created_at": sw.CreatedAt,
+	}
+	if sw.Framework != "" {
+		out["framework"] = sw.Framework
+	}
+	if sw.Warning != "" {
+		out["warning"] = sw.Warning
+	}
+	return out
+}
+
+// sweepListJSON is one row of GET .../sweeps: id/status/metric plus counts
+// by state and the best trial's value (no per-trial detail).
+func sweepListJSON(sw store.Sweep, trials []store.SweepTrial) map[string]any {
+	out := sweepBaseJSON(sw)
+	counts, best := sweepSummary(sw, trials)
+	out["counts"] = counts
+	if best != nil {
+		out["best_trial_id"] = best.ID
+		out["best_value"] = best.MetricValue.Float64
+	}
+	return out
+}
+
+func trialJSON(tr store.SweepTrial) map[string]any {
+	out := map[string]any{
+		"id":    tr.ID,
+		"state": tr.State,
+	}
+	var params map[string]string
+	if err := json.Unmarshal([]byte(tr.ParamsJSON), &params); err == nil {
+		out["params"] = params
+	}
+	if tr.RunID.Valid {
+		out["run_id"] = tr.RunID.Int64
+	}
+	if tr.MetricValue.Valid {
+		out["metric_value"] = tr.MetricValue.Float64
+	}
+	if tr.MetricStep.Valid {
+		out["metric_step"] = tr.MetricStep.Int64
+	}
+	return out
+}
+
+// sweepJSON is the detail shape returned by create/get/stop: sweepListJSON's
+// summary plus every trial (params, metric, state, run id).
+func sweepJSON(sw store.Sweep, trials []store.SweepTrial) map[string]any {
+	out := sweepListJSON(sw, trials)
+	trialsOut := make([]map[string]any, 0, len(trials))
+	for _, tr := range trials {
+		trialsOut = append(trialsOut, trialJSON(tr))
+	}
+	out["trials"] = trialsOut
+	return out
+}
+
+// handleCreateSweep starts a hyperparameter sweep over a kind=job app.
+func (s *server) handleCreateSweep(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	if !ok {
+		return
+	}
+	if s.refuseEjected(w, a) {
+		return
+	}
+
+	var req sweepCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+
+	var createdBy sql.NullInt64
+	if u.ID != 0 {
+		createdBy = sql.NullInt64{Int64: u.ID, Valid: true}
+	}
+	sw, trials, truncated, err := s.startSweep(a, req, createdBy)
+	switch {
+	case errors.Is(err, errNotDeployed):
+		writeError(w, http.StatusConflict, "not_deployed", err.Error())
+		return
+	case errors.Is(err, errBadSweepRequest):
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	case err != nil:
+		log.Printf("create sweep: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+
+	out := sweepJSON(sw, trials)
+	if truncated {
+		out["truncated"] = true
+	}
+	writeJSON(w, http.StatusAccepted, out)
+}
+
+func (s *server) handleListSweeps(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	if !ok {
+		return
+	}
+	sweeps, err := s.st.ListSweeps(a.ID)
+	if err != nil {
+		log.Printf("list sweeps: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]map[string]any, 0, len(sweeps))
+	for _, sw := range sweeps {
+		trials, err := s.st.ListTrials(sw.ID)
+		if err != nil {
+			log.Printf("list trials for sweep %s: %v", sw.ID, err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		out = append(out, sweepListJSON(sw, trials))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// requireSweep loads a sweep by id, verifying it belongs to app a.
+func (s *server) requireSweep(w http.ResponseWriter, a store.App, id string) (store.Sweep, bool) {
+	sw, err := s.st.GetSweep(id)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && sw.AppID != a.ID) {
+		writeError(w, http.StatusNotFound, "not_found", "no such sweep")
+		return store.Sweep{}, false
+	}
+	if err != nil {
+		log.Printf("get sweep: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return store.Sweep{}, false
+	}
+	return sw, true
+}
+
+func (s *server) handleGetSweep(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	if !ok {
+		return
+	}
+	sw, ok := s.requireSweep(w, a, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	trials, err := s.st.ListTrials(sw.ID)
+	if err != nil {
+		log.Printf("list trials: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, sweepJSON(sw, trials))
+}
+
+// handleStopSweep idempotently stops a sweep: a running sweep has its
+// running trials killed and finishes "stopped"; an already-stopped (or
+// done/failed) sweep is a 200 no-op that just reports current state.
+func (s *server) handleStopSweep(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	if !ok {
+		return
+	}
+	sw, ok := s.requireSweep(w, a, r.PathValue("id"))
+	if !ok {
+		return
+	}
+
+	if sw.Status == "running" {
+		if err := s.stopSweep(r.Context(), sw, a, p); err != nil {
+			log.Printf("stop sweep %s: %v", sw.ID, err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		got, err := s.st.GetSweep(sw.ID)
+		if err != nil {
+			log.Printf("get sweep %s: %v", sw.ID, err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		sw = got
+	}
+
+	trials, err := s.st.ListTrials(sw.ID)
+	if err != nil {
+		log.Printf("list trials: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, sweepJSON(sw, trials))
 }

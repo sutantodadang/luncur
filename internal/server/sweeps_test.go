@@ -3,13 +3,17 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 
 	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/secret"
@@ -404,4 +408,251 @@ func TestSweepReconcileLeavesRunningJobAlone(t *testing.T) {
 	if len(gotTrials) != 1 || gotTrials[0].State != "running" {
 		t.Fatalf("trials = %+v, want 1 trial state=running", gotTrials)
 	}
+}
+
+// --- HTTP endpoints (Task 5) ------------------------------------------
+
+// sweepAPIServer builds a full HTTP test server with both the dynamic and
+// typed-clientset halves of the fake kube layer wired (DeleteJob, used by
+// the stop endpoint, goes through the typed clientset — see
+// kube.Client.DeleteJob), recording every action verb+resource.
+func sweepAPIServer(t *testing.T) (*httptestServer, *store.Store, *[]string) {
+	t.Helper()
+	st := newTestStore(t)
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	var actions []string
+	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		actions = append(actions, a.GetVerb()+" "+a.GetResource().Resource)
+		return true, nil, nil
+	})
+	cs := k8sfake.NewSimpleClientset()
+	cs.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		actions = append(actions, a.GetVerb()+" "+a.GetResource().Resource)
+		return false, nil, nil
+	})
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newHTTPTest(t, Deps{Store: st, Kube: kube.NewForTest(dyn, cs), Sealer: sealer, ExternalIP: "1.2.3.4"})
+	return srv, st, &actions
+}
+
+func TestCreateSweepHappyPath(t *testing.T) {
+	srv, st, _ := sweepAPIServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/deploy", admin, `{"image":"trainer:1"}`).Body.Close()
+
+	body := `{"params_yaml":"a: [\"1\",\"2\"]","metric":"val_loss","direction":"min","max_trials":10,"parallel":1}`
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/sweeps", admin, body)
+	respBody := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("create sweep: want 202, got %d (%s)", resp.StatusCode, respBody)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(respBody, &got); err != nil {
+		t.Fatal(err)
+	}
+	trials, _ := got["trials"].([]any)
+	if len(trials) != 2 {
+		t.Fatalf("trials = %+v, want 2 (grid of a=[1,2])", got["trials"])
+	}
+	for _, tr := range trials {
+		m := tr.(map[string]any)
+		if m["state"] != "pending" {
+			t.Fatalf("trial state = %v, want pending", m["state"])
+		}
+	}
+	if got["status"] != "running" {
+		t.Fatalf("sweep status = %v, want running", got["status"])
+	}
+}
+
+func TestCreateSweepOnWebAppKindMismatch(t *testing.T) {
+	srv, st, _ := sweepAPIServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/api/sweeps", admin, `{}`)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, mustReadBody(t, resp)) != "kind_mismatch" {
+		t.Fatalf("sweep on web app: want 400 kind_mismatch, got %d", resp.StatusCode)
+	}
+}
+
+func TestCreateSweepBadYAML(t *testing.T) {
+	srv, st, _ := sweepAPIServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/deploy", admin, `{"image":"trainer:1"}`).Body.Close()
+
+	body := `{"params_yaml":"lr: 0.1","metric":"val_loss","direction":"min","max_trials":10,"parallel":1}`
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/sweeps", admin, body)
+	respBody := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || errCode(t, respBody) != "bad_request" {
+		t.Fatalf("bad params.yaml: want 400 bad_request, got %d (%s)", resp.StatusCode, respBody)
+	}
+	if !bytesContains(respBody, `lr`) {
+		t.Fatalf("bad params.yaml error should name the offending key, got %s", respBody)
+	}
+}
+
+func TestCreateSweepNotDeployed(t *testing.T) {
+	srv, st, _ := sweepAPIServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+
+	body := `{"params_yaml":"a: [\"1\"]","metric":"val_loss","direction":"min","max_trials":10,"parallel":1}`
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/sweeps", admin, body)
+	if resp.StatusCode != http.StatusConflict || errCode(t, mustReadBody(t, resp)) != "not_deployed" {
+		t.Fatalf("undeployed sweep: want 409 not_deployed, got %d", resp.StatusCode)
+	}
+}
+
+func TestGetSweepReturnsBestTrial(t *testing.T) {
+	srv, st, _ := sweepAPIServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/deploy", admin, `{"image":"trainer:1"}`).Body.Close()
+
+	body := `{"params_yaml":"a: [\"1\",\"2\",\"3\"]","metric":"val_loss","direction":"min","max_trials":10,"parallel":1}`
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/sweeps", admin, body)
+	var created map[string]any
+	json.Unmarshal(mustReadBody(t, resp), &created)
+	sweepID := created["id"].(string)
+	trials := created["trials"].([]any)
+
+	// Finish two trials done with distinct values; direction min -> the
+	// lower value must win as best. FinishTrial only accepts running ->
+	// done, so launch each trial (a fake run row) first.
+	appID := appID(t, st, "ml", "train")
+	vals := []float64{0.5, 0.2}
+	for i, v := range vals {
+		trID := trials[i].(map[string]any)["id"].(string)
+		run, err := st.CreateJobRun(appID, 1, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.MarkTrialLaunched(trID, run.ID); err != nil {
+			t.Fatal(err)
+		}
+		val := v
+		if err := st.FinishTrial(trID, "done", &val, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resp = doAuthed(t, "GET", srv.URL+"/v1/projects/ml/apps/train/sweeps/"+sweepID, admin, "")
+	var got map[string]any
+	respBody := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get sweep: want 200, got %d (%s)", resp.StatusCode, respBody)
+	}
+	json.Unmarshal(respBody, &got)
+	bestTrialID := trials[1].(map[string]any)["id"].(string) // value 0.2, the lower of the two
+	if got["best_trial_id"] != bestTrialID {
+		t.Fatalf("best_trial_id = %v, want %v (lowest value for direction min)", got["best_trial_id"], bestTrialID)
+	}
+	if got["best_value"] != 0.2 {
+		t.Fatalf("best_value = %v, want 0.2", got["best_value"])
+	}
+}
+
+func TestStopSweepKillsRunningTrialsAndIsIdempotent(t *testing.T) {
+	srv, st, actions := sweepAPIServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/deploy", admin, `{"image":"trainer:1"}`).Body.Close()
+
+	body := `{"params_yaml":"a: [\"1\"]","metric":"val_loss","direction":"min","max_trials":10,"parallel":1}`
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/sweeps", admin, body)
+	var created map[string]any
+	json.Unmarshal(mustReadBody(t, resp), &created)
+	sweepID := created["id"].(string)
+	trialID := created["trials"].([]any)[0].(map[string]any)["id"].(string)
+
+	appID := appID(t, st, "ml", "train")
+	run, err := st.CreateJobRun(appID, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkTrialLaunched(trialID, run.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/sweeps/"+sweepID+"/stop", admin, "")
+	respBody := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stop sweep: want 200, got %d (%s)", resp.StatusCode, respBody)
+	}
+	var got map[string]any
+	json.Unmarshal(respBody, &got)
+	if got["status"] != "stopped" {
+		t.Fatalf("sweep status = %v, want stopped", got["status"])
+	}
+
+	gotTrial, err := st.ListTrials(sweepID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotTrial) != 1 || gotTrial[0].State != "pruned" {
+		t.Fatalf("trials = %+v, want 1 trial state=pruned", gotTrial)
+	}
+	gotRun, err := st.GetJobRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRun.Status != "failed" {
+		t.Fatalf("run status = %q, want failed (killed by stop)", gotRun.Status)
+	}
+
+	var deletes int
+	for _, a := range *actions {
+		if a == "delete jobs" {
+			deletes++
+		}
+	}
+	if deletes != 1 {
+		t.Fatalf("delete job actions = %d, want 1", deletes)
+	}
+
+	// Second stop is an idempotent no-op: no further deletes, still 200.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps/train/sweeps/"+sweepID+"/stop", admin, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("second stop: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	deletes = 0
+	for _, a := range *actions {
+		if a == "delete jobs" {
+			deletes++
+		}
+	}
+	if deletes != 1 {
+		t.Fatalf("delete job actions after second stop = %d, want still 1 (idempotent)", deletes)
+	}
+}
+
+func TestSweepEndpointsNonMemberForbidden(t *testing.T) {
+	srv, st, _ := sweepAPIServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/ml/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+
+	outsider := seedUserToken(t, st, "outsider@b.co", "member")
+	resp := doAuthed(t, "GET", srv.URL+"/v1/projects/ml/apps/train/sweeps", outsider, "")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-member list sweeps: want 403, got %d", resp.StatusCode)
+	}
+}
+
+func bytesContains(b []byte, sub string) bool {
+	return strings.Contains(string(b), sub)
 }
