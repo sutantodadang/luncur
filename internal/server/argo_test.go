@@ -678,3 +678,169 @@ func TestArgoStopDeletesWorkflow(t *testing.T) {
 		t.Fatalf("run status = %q, want stopped", gotRun.Status)
 	}
 }
+
+// --- Task 4: argo install --------------------------------------------------
+
+// argoInstallManifestFixture is a 3-doc install.yaml fixture: a
+// cluster-scoped CRD, an argo-server Deployment (must be dropped), and a
+// namespaced workflow-controller Deployment (must be applied to "argo").
+const argoInstallManifestFixture = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: workflows.argoproj.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argo-server
+  namespace: argo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workflow-controller
+  namespace: argo
+`
+
+// TestArgoSplitManifestDropsArgoServer is a pure unit test of the manifest
+// splitter: 3 docs in, 2 out (argo-server dropped), the rest untouched.
+func TestArgoSplitManifestDropsArgoServer(t *testing.T) {
+	docs, err := argoSplitManifest([]byte(argoInstallManifestFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("docs = %d, want 2 (argo-server dropped)", len(docs))
+	}
+	for _, d := range docs {
+		var meta struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		}
+		if err := json.Unmarshal(d.JSON, &meta); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(meta.Metadata.Name, "argo-server") {
+			t.Fatalf("argo-server doc leaked through: %+v", docs)
+		}
+	}
+}
+
+// argoAction is one recorded dynamic-client call, for installArgo's
+// cluster-scoped-vs-namespaced apply assertions.
+type argoAction struct {
+	verb, resource, namespace, name string
+}
+
+func argoRecordingDyn(t *testing.T) (*dynamicfake.FakeDynamicClient, *[]argoAction) {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	var recs []argoAction
+	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		rec := argoAction{verb: a.GetVerb(), resource: a.GetResource().Resource, namespace: a.GetNamespace()}
+		if pa, ok := a.(ktesting.PatchAction); ok {
+			rec.name = pa.GetName()
+		}
+		recs = append(recs, rec)
+		return true, nil, nil
+	})
+	return dyn, &recs
+}
+
+// TestInstallArgoAppliesManifestDroppingArgoServer covers installArgo end
+// to end: download (httptest), split, ensure namespace, apply — the CRD
+// lands cluster-scoped (no namespace on the recorded action), the
+// controller Deployment lands in "argo", and argo-server never gets
+// applied at all.
+func TestInstallArgoAppliesManifestDroppingArgoServer(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, argoInstallManifestFixture)
+	}))
+	t.Cleanup(ts.Close)
+	old := argoManifestURL
+	argoManifestURL = ts.URL
+	t.Cleanup(func() { argoManifestURL = old })
+
+	dyn, recs := argoRecordingDyn(t)
+	s := pipelineTestServer(t, dyn, nil)
+
+	if err := s.installArgo(context.Background()); err != nil {
+		t.Fatalf("installArgo: %v", err)
+	}
+
+	var sawCRD, sawController, sawArgoServer bool
+	for _, r := range *recs {
+		if r.resource == "customresourcedefinitions" && r.name == "workflows.argoproj.io" {
+			sawCRD = true
+			if r.namespace != "" {
+				t.Fatalf("CRD apply carried a namespace: %+v", r)
+			}
+		}
+		if r.resource == "deployments" && r.name == "workflow-controller" {
+			sawController = true
+			if r.namespace != "argo" {
+				t.Fatalf("controller apply namespace = %q, want argo", r.namespace)
+			}
+		}
+		if r.name == "argo-server" {
+			sawArgoServer = true
+		}
+	}
+	if !sawCRD || !sawController {
+		t.Fatalf("missing expected applies: %+v", *recs)
+	}
+	if sawArgoServer {
+		t.Fatalf("argo-server was applied, want dropped: %+v", *recs)
+	}
+}
+
+// TestHandleArgoInstallDownloadErrorReturns502 covers the manifest-download
+// failure path through the HTTP handler.
+func TestHandleArgoInstallDownloadErrorReturns502(t *testing.T) {
+	old := argoManifestURL
+	argoManifestURL = "http://127.0.0.1:1/does-not-exist" // connection refused
+	t.Cleanup(func() { argoManifestURL = old })
+
+	srv, st, _ := kubeServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	resp := doAuthed(t, "POST", srv.URL+"/v1/system/argo-install", admin, "")
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("install with unreachable manifest url: want 502, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+// TestHandleArgoInstallNonAdminForbidden covers the adminOnly gate.
+func TestHandleArgoInstallNonAdminForbidden(t *testing.T) {
+	srv, st, _ := kubeServer(t)
+	member := seedUserToken(t, st, "member@b.co", "member")
+	resp := doAuthed(t, "POST", srv.URL+"/v1/system/argo-install", member, "")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-admin install: want 403, got %d", resp.StatusCode)
+	}
+}
+
+// TestHandleArgoInstallHappyPath covers the 200 response shape.
+func TestHandleArgoInstallHappyPath(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: workflows.argoproj.io\n")
+	}))
+	t.Cleanup(ts.Close)
+	old := argoManifestURL
+	argoManifestURL = ts.URL
+	t.Cleanup(func() { argoManifestURL = old })
+
+	srv, st, _ := kubeServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	resp := doAuthed(t, "POST", srv.URL+"/v1/system/argo-install", admin, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("install: want 200, got %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if out["installed"] != true || out["version"] != argoVersion {
+		t.Fatalf("install response = %+v", out)
+	}
+}

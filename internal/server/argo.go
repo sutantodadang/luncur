@@ -1,15 +1,21 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/yaml"
 
 	"github.com/sutantodadang/luncur/internal/pipeline"
 	"github.com/sutantodadang/luncur/internal/render"
@@ -497,4 +503,154 @@ func (s *server) pipelineTickArgoRun(ctx context.Context, run store.PipelineRun,
 			Message: fmt.Sprintf("pipeline %s run %s: %s", pl.Name, run.ID, finish),
 		})
 	}
+}
+
+// --- Task 4: argo install (server + CLI) ------------------------------------
+
+// argoVersion pins the installed Argo Workflows release; bumped
+// deliberately (builder-image convention: never silently drifts).
+const argoVersion = "v3.6.2" // VERIFY(argo-field): confirm latest stable at field-test time
+
+// argoManifestURL is the upstream install manifest for argoVersion — a
+// package var (not const) so tests can point it at an httptest server.
+// // VERIFY(argo-field): URL shape assumed from the argo-workflows release
+// convention (one combined controller+CRD+RBAC+argo-server manifest).
+var argoManifestURL = fmt.Sprintf("https://github.com/argoproj/argo-workflows/releases/download/%s/install.yaml", argoVersion)
+
+// argoManifestMaxBytes caps the downloaded manifest — generous for a
+// controller install.yaml (normally a few hundred KB).
+const argoManifestMaxBytes = 10 << 20
+
+// argoManifestTimeout bounds the manifest download — the ONLY network call
+// this package makes, and only on this explicit admin action (k3s-download
+// convention: no background/implicit network access).
+const argoManifestTimeout = 60 * time.Second
+
+// argoServerNameContains marks the docs installArgo drops: the Argo
+// Workflows UI/API server. Spec scope is the workflow controller only — no
+// UI, no Argo Events (out of scope, plan's Global Constraints). Every
+// object install.yaml carries for argo-server (Deployment, Service,
+// ServiceAccount, ...) has "argo-server" somewhere in its metadata.name.
+const argoServerNameContains = "argo-server"
+
+// argoNamespace is where installArgo puts every namespaced object that
+// doesn't carry its own metadata.namespace.
+const argoNamespace = "argo"
+
+// installArgo downloads the pinned install manifest, drops every
+// argo-server (UI/API) object, and server-side-applies the rest —
+// controller only, no UI. Cluster-scoped docs (CustomResourceDefinition,
+// ClusterRole, ClusterRoleBinding, PriorityClass) apply without a
+// namespace (kube.Apply's clusterScoped table already handles this); every
+// other doc applies to argoNamespace unless it carries its own
+// metadata.namespace.
+func (s *server) installArgo(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, argoManifestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, argoManifestURL, nil)
+	if err != nil {
+		return fmt.Errorf("build manifest request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("download argo manifest: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download argo manifest: unexpected status %s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, argoManifestMaxBytes+1))
+	if err != nil {
+		return fmt.Errorf("read argo manifest: %w", err)
+	}
+	if len(body) > argoManifestMaxBytes {
+		return fmt.Errorf("argo manifest exceeds %d byte limit", argoManifestMaxBytes)
+	}
+
+	docs, err := argoSplitManifest(body)
+	if err != nil {
+		return fmt.Errorf("parse argo manifest: %w", err)
+	}
+
+	if err := s.kube.EnsureNamespace(ctx, argoNamespace); err != nil {
+		return fmt.Errorf("ensure argo namespace: %w", err)
+	}
+
+	for _, obj := range docs {
+		if err := s.kube.Apply(ctx, argoDocNamespace(obj), []render.Object{obj}); err != nil {
+			return fmt.Errorf("apply argo manifest: %w", err)
+		}
+	}
+	return nil
+}
+
+// argoSplitManifest splits a multi-document install.yaml (documents
+// separated by "\n---", same convention render.ExtractDoc uses) into
+// render.Objects, dropping every doc whose metadata.name contains
+// "argo-server" (the UI/API server — out of scope) and every blank doc
+// (trailing separators, comment-only blocks).
+// // VERIFY(argo-field): install.yaml's exact document set/kinds are
+// assumed from the upstream release convention.
+func argoSplitManifest(manifest []byte) ([]render.Object, error) {
+	var out []render.Object
+	for _, doc := range bytes.Split(manifest, []byte("\n---")) {
+		doc = bytes.TrimSpace(doc)
+		if len(doc) == 0 {
+			continue
+		}
+		j, err := yaml.YAMLToJSON(doc)
+		if err != nil {
+			return nil, fmt.Errorf("convert doc to json: %w", err)
+		}
+		var meta struct {
+			Kind     string `json:"kind"`
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		}
+		if err := json.Unmarshal(j, &meta); err != nil {
+			return nil, fmt.Errorf("parse doc metadata: %w", err)
+		}
+		if meta.Kind == "" || meta.Metadata.Name == "" {
+			continue // blank doc (e.g. a lone "---" or a comment-only block)
+		}
+		if strings.Contains(meta.Metadata.Name, argoServerNameContains) {
+			continue
+		}
+		out = append(out, render.Object{Kind: meta.Kind, JSON: j})
+	}
+	return out, nil
+}
+
+// argoDocNamespace returns a manifest doc's own metadata.namespace, or
+// argoNamespace when it doesn't carry one (cluster-scoped kinds ignore
+// whatever namespace kube.Apply is called with, so this is safe to compute
+// unconditionally).
+func argoDocNamespace(obj render.Object) string {
+	var meta struct {
+		Metadata struct {
+			Namespace string `json:"namespace"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(obj.JSON, &meta); err == nil && meta.Metadata.Namespace != "" {
+		return meta.Metadata.Namespace
+	}
+	return argoNamespace
+}
+
+// handleArgoInstall installs the pinned Argo Workflows controller. The
+// manifest download is the ONLY network call this endpoint makes, and only
+// on this explicit admin action (k3s-download convention: no
+// background/implicit network access).
+func (s *server) handleArgoInstall(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !s.requireKube(w) {
+		return
+	}
+	if err := s.installArgo(r.Context()); err != nil {
+		log.Printf("argo install: %v", err)
+		writeError(w, http.StatusBadGateway, "argo_install_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"installed": true, "version": argoVersion})
 }
