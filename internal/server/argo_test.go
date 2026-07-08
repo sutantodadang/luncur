@@ -1,10 +1,24 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 
 	"github.com/sutantodadang/luncur/internal/pipeline"
+	"github.com/sutantodadang/luncur/internal/store"
 )
 
 func TestArgoWorkflowName(t *testing.T) {
@@ -281,5 +295,386 @@ func TestArgoNodeStatesMissingNodes(t *testing.T) {
 	}
 	if len(steps) != 0 {
 		t.Fatalf("steps = %+v, want empty", steps)
+	}
+}
+
+// --- Task 3: engine wiring test helpers -------------------------------
+
+// pipelineSeedArgoPipeline is pipelineSeedPipeline's argo-engine twin
+// (pipelines_test.go).
+func pipelineSeedArgoPipeline(t *testing.T, st *store.Store, projectID int64, name, yamlStr string) store.Pipeline {
+	t.Helper()
+	pl, err := st.CreatePipeline(store.Pipeline{ProjectID: projectID, Name: name, YAML: yamlStr, Engine: "argo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pl
+}
+
+// pipelineSeedArgoRun seeds a run whose spec_json is the argo-engine
+// envelope (pipelines_test.go's pipelineSeedRun writes the bare/native
+// shape) — for tests that drive pipelineTick/stopPipelineRun directly
+// without going through startPipelineRun's preflight+apply.
+func pipelineSeedArgoRun(t *testing.T, st *store.Store, pl store.Pipeline, steps []pipeline.Step) store.PipelineRun {
+	t.Helper()
+	b, err := json.Marshal(struct {
+		Engine string        `json:"engine"`
+		Spec   pipeline.Spec `json:"spec"`
+	}{Engine: "argo", Spec: pipeline.Spec{Steps: steps}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nk := make([][2]string, len(steps))
+	for i, s := range steps {
+		nk[i] = [2]string{s.Name, s.Kind}
+	}
+	run, _, err := st.CreatePipelineRun(store.PipelineRun{PipelineID: pl.ID, SpecJSON: string(b), Trigger: "manual"}, nk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return run
+}
+
+// argoApplyingDyn is a fake dynamic client whose "patch" reactor for the
+// workflows resource actually persists the applied object into the
+// tracker, working around the fake's documented SSA-merge limitation for
+// unstructured/empty-scheme kinds (kube_test.go's
+// TestApplyWorkflowPatchesTheWorkflowGVR: the tracker's default apply-patch
+// handling can't merge a type it has no registered struct for — and this
+// package's test scheme registers nothing, so even EnsureNamespace's plain
+// Namespace patch would hit the same wall). Every non-patch verb (including
+// plain Get, used by GetWorkflow/HasWorkflowCRD) falls through to the
+// tracker's normal, real behavior — so a test using this fake can Apply a
+// Workflow (and EnsureNamespace) via kube.Apply and then really read them
+// back, unlike a blanket-success recorder.
+func argoApplyingDyn(t *testing.T) *dynamicfake.FakeDynamicClient {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	dyn.PrependReactor("patch", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		pa := a.(ktesting.PatchAction)
+		obj := &unstructured.Unstructured{}
+		if err := json.Unmarshal(pa.GetPatch(), &obj.Object); err != nil {
+			return true, nil, err
+		}
+		obj.SetName(pa.GetName())
+		obj.SetNamespace(pa.GetNamespace())
+		gvr := pa.GetResource()
+		if err := dyn.Tracker().Create(gvr, obj, pa.GetNamespace()); err != nil {
+			if uerr := dyn.Tracker().Update(gvr, obj, pa.GetNamespace()); uerr != nil {
+				return true, nil, uerr
+			}
+		}
+		return true, obj, nil
+	})
+	return dyn
+}
+
+// --- Task 3: start preflight --------------------------------------------
+
+// TestArgoStartRejectedWithoutCRD covers the CRD preflight: a plain fake
+// dynamic client (real tracker, nothing seeded) reports the Argo Workflows
+// CRD absent, and startPipelineRun must 400 (errArgoNotInstalled) before
+// touching the store any further.
+func TestArgoStartRejectedWithoutCRD(t *testing.T) {
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	s := pipelineTestServer(t, dyn, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pipelineSeedApp(t, s.st, p.ID, "train", "job", "trainer:1")
+	pl := pipelineSeedArgoPipeline(t, s.st, p.ID, "pipe", "steps:\n  train:\n    app: train\n")
+
+	_, _, err := s.startPipelineRun(context.Background(), pl, "manual")
+	if !errors.Is(err, errArgoNotInstalled) {
+		t.Fatalf("start without CRD: err = %v, want errArgoNotInstalled", err)
+	}
+}
+
+// TestArgoStartRejectsComputeAfterAction covers the terminal-actions
+// validation (spec's 2026-07-08 amendment): a compute step needing an
+// action step must 400 naming both steps. recordingDyn's blanket-success
+// reactor reads as "CRD present" (kube.HasWorkflowCRD's nil-Get doc
+// comment), so this test reaches past the CRD gate to the DAG check.
+func TestArgoStartRejectsComputeAfterAction(t *testing.T) {
+	dyn := recordingDyn(t)
+	s := pipelineTestServer(t, dyn, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pipelineSeedApp(t, s.st, p.ID, "train", "job", "trainer:1")
+	pl := pipelineSeedArgoPipeline(t, s.st, p.ID, "pipe",
+		"steps:\n  note:\n    notify: hi\n  train:\n    app: train\n    needs:\n      - note\n")
+
+	_, _, err := s.startPipelineRun(context.Background(), pl, "manual")
+	if !errors.Is(err, errBadPipelineRequest) {
+		t.Fatalf("compute-after-action: err = %v, want errBadPipelineRequest", err)
+	}
+	if !strings.Contains(err.Error(), "train") || !strings.Contains(err.Error(), "note") {
+		t.Fatalf("error must name both steps: %v", err)
+	}
+}
+
+// TestArgoStartRejectsOverBudget covers the static whole-DAG GPU budget
+// check: an image step declaring more gpu than the project's quota must
+// 400, before any run/step state is created.
+func TestArgoStartRejectsOverBudget(t *testing.T) {
+	dyn := recordingDyn(t)
+	s := pipelineTestServer(t, dyn, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	if err := s.st.SetProjectGPUQuota(p.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	pl := pipelineSeedArgoPipeline(t, s.st, p.ID, "pipe", "steps:\n  train:\n    image: trainer:1\n    gpu: 2\n")
+
+	_, _, err := s.startPipelineRun(context.Background(), pl, "manual")
+	if !errors.Is(err, errBadPipelineRequest) {
+		t.Fatalf("over budget: err = %v, want errBadPipelineRequest", err)
+	}
+}
+
+// TestArgoStartAppliesWorkflowAndMarksRunning covers the happy start path
+// end to end: CRD present, DAG/budget/image resolution all pass, the
+// Workflow CR is really applied (argoApplyingDyn round-trips it, unlike a
+// blanket-success recorder), the run's spec_json envelope records
+// engine=argo, and the compute step row is marked running with attempt 0
+// and no job_run_id (Argo owns it, not job_runs) — and stays running
+// through the immediate post-start tick, since the freshly-applied
+// Workflow has no populated status yet (argoNodeStates reports nothing for
+// it, so the tick makes no transition).
+func TestArgoStartAppliesWorkflowAndMarksRunning(t *testing.T) {
+	dyn := argoApplyingDyn(t)
+	// HasWorkflowCRD preflights on a real Get for the CRD object — seed it
+	// directly into the tracker (kube_test.go's TestHasWorkflowCRDPresent
+	// fixture) so the preflight actually passes under this real (non
+	// blanket-success) fake.
+	crd := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+		"metadata": map[string]any{"name": "workflows.argoproj.io"},
+	}}
+	if err := dyn.Tracker().Add(crd); err != nil {
+		t.Fatal(err)
+	}
+	s := pipelineTestServer(t, dyn, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pipelineSeedApp(t, s.st, p.ID, "train", "job", "trainer:1")
+	pl := pipelineSeedArgoPipeline(t, s.st, p.ID, "pipe", "steps:\n  train:\n    app: train\n")
+
+	run, steps, err := s.startPipelineRun(context.Background(), pl, "manual")
+	if err != nil {
+		t.Fatalf("start argo run: %v", err)
+	}
+	if run.Status != "running" {
+		t.Fatalf("run status = %q, want running", run.Status)
+	}
+	if len(steps) != 1 || steps[0].State != "running" || steps[0].JobRunID.Valid {
+		t.Fatalf("step = %+v, want running with no job_run_id", steps[0])
+	}
+	if steps[0].Attempt != 0 {
+		t.Fatalf("step attempt = %d, want 0 (MarkStepRunning(nil, 0))", steps[0].Attempt)
+	}
+
+	wf, found, err := s.kube.GetWorkflow(context.Background(), p.Namespace, argoWorkflowName(run.ID))
+	if err != nil || !found {
+		t.Fatalf("GetWorkflow after start = (found=%v, err=%v), want found", found, err)
+	}
+	if wf["kind"] != "Workflow" {
+		t.Fatalf("applied object kind = %v, want Workflow", wf["kind"])
+	}
+
+	_, engine, err := decodePipelineRunSpec(run.SpecJSON)
+	if err != nil || engine != "argo" {
+		t.Fatalf("decodePipelineRunSpec engine = %q, err = %v, want argo", engine, err)
+	}
+}
+
+// --- Task 3: tick ---------------------------------------------------------
+
+// argoWorkflowStatusObj builds an unstructured Workflow CR with a canned
+// status.nodes shape, for seeding directly into a fake dynamic tracker
+// (dyn.Tracker().Add) so GetWorkflow reads real content without going
+// through kube.Apply's SSA-merge limitation.
+func argoWorkflowStatusObj(name, namespace, phase string, nodes map[string]map[string]string) *unstructured.Unstructured {
+	nodesMap := map[string]any{}
+	for id, n := range nodes {
+		nodesMap[id] = map[string]any{
+			"displayName": n["displayName"],
+			"type":        n["type"],
+			"phase":       n["phase"],
+		}
+	}
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "argoproj.io/v1alpha1", "kind": "Workflow",
+		"metadata": map[string]any{"name": name, "namespace": namespace},
+		"status":   map[string]any{"phase": phase, "nodes": nodesMap},
+	}}
+}
+
+// TestArgoTickMapsNodeStatesToSteps covers the core tick mapping: a
+// Succeeded Pod node finishes its step done, a Failed one finishes it
+// failed, each with detail "argo node <state>".
+func TestArgoTickMapsNodeStatesToSteps(t *testing.T) {
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	s := pipelineTestServer(t, dyn, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pipelineSeedApp(t, s.st, p.ID, "train", "job", "trainer:1")
+	pl := pipelineSeedArgoPipeline(t, s.st, p.ID, "pipe",
+		"steps:\n  a:\n    app: train\n  b:\n    image: busybox\n    needs:\n      - a\n")
+	run := pipelineSeedArgoRun(t, s.st, pl, []pipeline.Step{
+		{Name: "a", Kind: "app", App: "train"},
+		{Name: "b", Kind: "image", Image: "busybox", Needs: []string{"a"}},
+	})
+	rowA := pipelineFindStep(t, s.st, run.ID, "a")
+	rowB := pipelineFindStep(t, s.st, run.ID, "b")
+	if err := s.st.MarkStepRunning(rowA.ID, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.MarkStepRunning(rowB.ID, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	wf := argoWorkflowStatusObj(argoWorkflowName(run.ID), p.Namespace, "Running", map[string]map[string]string{
+		"n1": {"displayName": "a", "type": "Pod", "phase": "Succeeded"},
+		"n2": {"displayName": "b", "type": "Pod", "phase": "Failed"},
+	})
+	if err := dyn.Tracker().Add(wf); err != nil {
+		t.Fatal(err)
+	}
+
+	s.pipelineTick(context.Background())
+
+	gotA := pipelineFindStep(t, s.st, run.ID, "a")
+	if gotA.State != "done" || gotA.Detail != "argo node done" {
+		t.Fatalf("step a = %+v, want done/argo node done", gotA)
+	}
+	gotB := pipelineFindStep(t, s.st, run.ID, "b")
+	if gotB.State != "failed" || gotB.Detail != "argo node failed" {
+		t.Fatalf("step b = %+v, want failed/argo node failed", gotB)
+	}
+}
+
+// TestArgoTickWorkflowMissingFailsRunningRowsAndWarns covers the vanished-
+// Workflow branch: every running compute row fails with detail "argo node
+// missing", and the run gets a sticky one-time warning.
+func TestArgoTickWorkflowMissingFailsRunningRowsAndWarns(t *testing.T) {
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()) // nothing seeded
+	s := pipelineTestServer(t, dyn, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pl := pipelineSeedArgoPipeline(t, s.st, p.ID, "pipe", "steps:\n  a:\n    image: busybox\n")
+	run := pipelineSeedArgoRun(t, s.st, pl, []pipeline.Step{{Name: "a", Kind: "image", Image: "busybox"}})
+	rowA := pipelineFindStep(t, s.st, run.ID, "a")
+	if err := s.st.MarkStepRunning(rowA.ID, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	s.pipelineTick(context.Background())
+
+	gotA := pipelineFindStep(t, s.st, run.ID, "a")
+	if gotA.State != "failed" || gotA.Detail != "argo node missing" {
+		t.Fatalf("step a = %+v, want failed/argo node missing", gotA)
+	}
+	gotRun, err := s.st.GetPipelineRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRun.Warning != "argo workflow missing" {
+		t.Fatalf("run warning = %q, want %q", gotRun.Warning, "argo workflow missing")
+	}
+	if gotRun.Status != "failed" {
+		t.Fatalf("run status = %q, want failed", gotRun.Status)
+	}
+}
+
+// TestArgoTickNotifyActionFiresAfterComputeDone covers the terminal-action
+// launch path: a notify step whose only need is an already-done compute
+// step fires (reusing the native action path) and finishes the step.
+func TestArgoTickNotifyActionFiresAfterComputeDone(t *testing.T) {
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	s := pipelineTestServer(t, dyn, nil)
+	ch := make(chan []byte, 4)
+	ts := httptest.NewServer(captureHandler(ch))
+	t.Cleanup(ts.Close)
+	setSealedNotifyURL(t, s, ts.URL)
+	if err := s.st.SetSetting("notify_events", "pipeline"); err != nil {
+		t.Fatal(err)
+	}
+
+	p := pipelineSeedProject(t, s.st, "ml")
+	pl := pipelineSeedArgoPipeline(t, s.st, p.ID, "pipe",
+		"steps:\n  a:\n    image: busybox\n  n:\n    notify: done training\n    needs:\n      - a\n")
+	run := pipelineSeedArgoRun(t, s.st, pl, []pipeline.Step{
+		{Name: "a", Kind: "image", Image: "busybox"},
+		{Name: "n", Kind: "notify", Notify: "done training", Needs: []string{"a"}},
+	})
+	rowA := pipelineFindStep(t, s.st, run.ID, "a")
+	if err := s.st.MarkStepRunning(rowA.ID, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.FinishStep(rowA.ID, "done", "argo node done"); err != nil {
+		t.Fatal(err)
+	}
+
+	s.pipelineTick(context.Background())
+
+	gotN := pipelineFindStep(t, s.st, run.ID, "n")
+	if gotN.State != "done" || gotN.Detail != "notified" {
+		t.Fatalf("step n = %+v, want done/notified", gotN)
+	}
+	b := recvNotify(t, ch, 2*time.Second)
+	if !bytesContains(b, "done training") {
+		t.Fatalf("notify body = %s", b)
+	}
+}
+
+// --- Task 3: stop ----------------------------------------------------------
+
+// TestArgoStopDeletesWorkflow covers stopPipelineRun's argo branch:
+// DeleteWorkflow fires alongside the existing running/pending state sweep.
+func TestArgoStopDeletesWorkflow(t *testing.T) {
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	var actions []string
+	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		actions = append(actions, a.GetVerb()+" "+a.GetResource().Resource)
+		return true, nil, nil
+	})
+	// cs (typed clientset) must be non-nil: the step is kind=image, and
+	// stopPipelineRun's existing sweep calls kube.DeleteJob for running
+	// image rows regardless of engine (harmless no-op here — this run
+	// never created a native Job), which needs the typed half wired
+	// (TestStopPipelineRunKillsRunningAndSkipsPending's convention).
+	cs := k8sfake.NewSimpleClientset()
+	s := pipelineTestServer(t, dyn, cs)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pl := pipelineSeedArgoPipeline(t, s.st, p.ID, "pipe", "steps:\n  a:\n    image: busybox\n")
+	run := pipelineSeedArgoRun(t, s.st, pl, []pipeline.Step{{Name: "a", Kind: "image", Image: "busybox"}})
+	rowA := pipelineFindStep(t, s.st, run.ID, "a")
+	if err := s.st.MarkStepRunning(rowA.ID, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.st.GetPipelineRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.stopPipelineRun(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, a := range actions {
+		if a == "delete workflows" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no delete workflows action recorded: %v", actions)
+	}
+	gotA := pipelineFindStep(t, s.st, run.ID, "a")
+	if gotA.State != "failed" || gotA.Detail != "stopped" {
+		t.Fatalf("step a = %+v, want failed/stopped", gotA)
+	}
+	gotRun, err := s.st.GetPipelineRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRun.Status != "stopped" {
+		t.Fatalf("run status = %q, want stopped", gotRun.Status)
 	}
 }
