@@ -176,6 +176,53 @@ func TestMigrateBackfillsDeploymentSeq(t *testing.T) {
 	}
 }
 
+// TestSeedNetworkIsolationFreshInstall covers seedNetworkIsolation's fresh
+// path: a brand-new DB (no projects yet) seeds network_isolation=on.
+func TestSeedNetworkIsolationFreshInstall(t *testing.T) {
+	s := openTest(t)
+	v, err := s.GetSetting("network_isolation")
+	if err != nil {
+		t.Fatalf("GetSetting: %v", err)
+	}
+	if v != "on" {
+		t.Fatalf("fresh install network_isolation = %q, want on", v)
+	}
+}
+
+// TestSeedNetworkIsolationExistingInstall covers the upgrade path: a DB that
+// already has a project (simulating an existing install) but is missing the
+// network_isolation row must seed it to "off" so an upgrade never changes
+// live traffic.
+func TestSeedNetworkIsolationExistingInstall(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "existing.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := s.CreateProject("demo"); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if _, err := s.DB().Exec(`DELETE FROM settings WHERE key = 'network_isolation'`); err != nil {
+		t.Fatalf("delete setting: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+	v, err := s2.GetSetting("network_isolation")
+	if err != nil {
+		t.Fatalf("GetSetting: %v", err)
+	}
+	if v != "off" {
+		t.Fatalf("existing install network_isolation = %q, want off", v)
+	}
+}
+
 func TestOpenIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	for i := 0; i < 2; i++ {

@@ -511,7 +511,7 @@ func (s *server) pipelineLaunchImage(ctx context.Context, run store.PipelineRun,
 	}
 	objs := render.PipelineStepJob(project.Namespace, run.ID, v.Row.Name, attempt, v.Spec.Image, v.Spec.Command, env, v.Spec.GPU)
 
-	err := s.kube.EnsureNamespace(ctx, project.Namespace)
+	err := s.ensureProjectNamespace(ctx, project.Namespace)
 	if err == nil {
 		err = s.kube.Apply(ctx, project.Namespace, objs)
 	}
@@ -1044,7 +1044,7 @@ func (s *server) startPipelineRun(ctx context.Context, pl store.Pipeline, trigge
 			})
 		}
 		obj := buildWorkflowCR(project.Namespace, run.ID, computeSteps)
-		applyErr := s.kube.EnsureNamespace(ctx, project.Namespace)
+		applyErr := s.ensureProjectNamespace(ctx, project.Namespace)
 		if applyErr == nil {
 			applyErr = s.kube.Apply(ctx, project.Namespace, []render.Object{obj})
 		}

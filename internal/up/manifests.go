@@ -87,7 +87,7 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 			rule([]string{"apps"}, []string{"deployments", "statefulsets", "daemonsets"}, full...),
 			rule([]string{"apps"}, []string{"replicasets"}, read...),
 			rule([]string{"batch"}, []string{"jobs", "cronjobs"}, full...),
-			rule([]string{"networking.k8s.io"}, []string{"ingresses"}, full...),
+			rule([]string{"networking.k8s.io"}, []string{"ingresses", "networkpolicies"}, full...),
 			rule([]string{"helm.cattle.io"}, []string{"helmchartconfigs"}, manage...),
 			rule([]string{"node.k8s.io"}, []string{"runtimeclasses"}, manage...),
 			rule([]string{"cert-manager.io"}, []string{"clusterissuers"}, manage...),

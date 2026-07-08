@@ -469,7 +469,7 @@ func (s *server) deployGitApp(p store.Project, a store.App, userID int64) (store
 func (s *server) applyImageDeploy(ctx context.Context, p store.Project, a store.App, d store.Deployment, image string) error {
 	rendered, err := s.renderApp(p, a, image, true)
 	if err == nil {
-		if err = s.kube.EnsureNamespace(ctx, p.Namespace); err == nil {
+		if err = s.ensureProjectNamespace(ctx, p.Namespace); err == nil {
 			err = s.kube.Apply(ctx, p.Namespace, rendered.Objects)
 		}
 	}

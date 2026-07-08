@@ -44,7 +44,36 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := seedNetworkIsolation(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("seed network_isolation: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// seedNetworkIsolation seeds the network_isolation setting once, per
+// install: fresh installs (no projects yet) get isolation on; existing
+// installs stay off so an upgrade never changes live traffic — the admin
+// opts in from Settings. Runs after both schema.sql and migrate() so the
+// settings and projects tables are guaranteed to exist.
+func seedNetworkIsolation(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM settings WHERE key = 'network_isolation'`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	var projects int
+	if err := db.QueryRow(`SELECT count(*) FROM projects`).Scan(&projects); err != nil {
+		return err
+	}
+	value := "off"
+	if projects == 0 {
+		value = "on"
+	}
+	_, err := db.Exec(`INSERT INTO settings (key, value) VALUES ('network_isolation', ?)`, value)
+	return err
 }
 
 func (s *Store) Close() error { return s.db.Close() }

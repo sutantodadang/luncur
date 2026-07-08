@@ -271,7 +271,7 @@ func (s *server) syncApp(ctx context.Context, p store.Project, a store.App) erro
 	if err != nil {
 		return err
 	}
-	if err := s.kube.EnsureNamespace(ctx, p.Namespace); err != nil {
+	if err := s.ensureProjectNamespace(ctx, p.Namespace); err != nil {
 		return err
 	}
 	return s.kube.Apply(ctx, p.Namespace, rendered.Objects)

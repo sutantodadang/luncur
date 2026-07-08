@@ -84,6 +84,11 @@ var settableKeys = map[string]func(string) bool{
 	"pipeline_engine": func(v string) bool {
 		return v == "native" || v == "argo"
 	},
+	// network_isolation: global switch for per-project NetworkPolicy
+	// isolation (see netpolicy.go). Default seeded per-install by
+	// store.seedNetworkIsolation; toggling here fans out to every project
+	// namespace via networkIsolationChanged.
+	"network_isolation": func(v string) bool { return v == "on" || v == "off" },
 }
 
 // sealedKeys are write-only secrets: sealed at rest with the install
@@ -177,6 +182,11 @@ func (s *server) handleSetSetting(w http.ResponseWriter, r *http.Request, _ stor
 	if key == "panel_domain" {
 		if err := s.panelDomainChanged(r.Context()); err != nil {
 			log.Printf("panel domain changed: %v", err)
+		}
+	}
+	if key == "network_isolation" {
+		if err := s.networkIsolationChanged(r.Context()); err != nil {
+			log.Printf("network isolation changed: %v", err)
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)

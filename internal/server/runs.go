@@ -145,7 +145,7 @@ func (s *server) startRun(ctx context.Context, p store.Project, a store.App, opt
 
 	rendered, err := s.renderRunWith(p, a, d.ImageRef, run.ID, nodes, framework, opts.Env)
 	if err == nil {
-		if err = s.kube.EnsureNamespace(ctx, p.Namespace); err == nil {
+		if err = s.ensureProjectNamespace(ctx, p.Namespace); err == nil {
 			err = s.kube.Apply(ctx, p.Namespace, rendered.Objects)
 		}
 	}

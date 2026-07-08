@@ -60,6 +60,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"RoleBinding":              {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"},
 	"PriorityClass":            {Group: "scheduling.k8s.io", Version: "v1", Resource: "priorityclasses"},
 	"HorizontalPodAutoscaler":  {Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"},
+	"NetworkPolicy":            {Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"},
 }
 
 // clusterScoped marks kinds Apply must patch without a namespace.
@@ -162,6 +163,43 @@ func (c *Client) EnsureNamespaceWithPolicy(ctx context.Context, name, policy str
 		ctx, name, types.ApplyPatchType, []byte(ns), applyOpts(),
 	)
 	return err
+}
+
+// luncurIsolationPolicy is the project-isolation NetworkPolicy applied to
+// every project namespace when the network_isolation setting is on: ingress
+// only from pods in the same namespace, the ingress controller (kube-system
+// on k3s), and luncur-system (the panel proxies addon UIs, e.g. mlflow).
+// Egress is deliberately untouched.
+const luncurIsolationPolicy = `{"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy",
+ "metadata":{"name":"luncur-isolation","labels":{"app.kubernetes.io/managed-by":"luncur"}},
+ "spec":{"podSelector":{},"policyTypes":["Ingress"],
+   "ingress":[{"from":[
+     {"podSelector":{}},
+     {"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}}},
+     {"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"luncur-system"}}}
+   ]}]}}`
+
+// ApplyIsolation server-side-applies the project-isolation NetworkPolicy
+// named "luncur-isolation" into namespace. See luncurIsolationPolicy for the
+// policy shape.
+func (c *Client) ApplyIsolation(ctx context.Context, namespace string) error {
+	_, err := c.dyn.Resource(gvrByKind["NetworkPolicy"]).Namespace(namespace).Patch(
+		ctx, "luncur-isolation", types.ApplyPatchType, []byte(luncurIsolationPolicy), applyOpts(),
+	)
+	return err
+}
+
+// RemoveIsolation deletes the project-isolation NetworkPolicy. NotFound is
+// fine — toggling network_isolation off must be idempotent.
+func (c *Client) RemoveIsolation(ctx context.Context, namespace string) error {
+	return c.DeleteObject(ctx, namespace, "NetworkPolicy", "luncur-isolation")
+}
+
+// IsNotFound reports whether err is a Kubernetes "not found" API error —
+// exposed so server-package callers can skip projects whose namespace
+// hasn't been created yet without importing apierrors themselves.
+func IsNotFound(err error) bool {
+	return apierrors.IsNotFound(err)
 }
 
 func (c *Client) Apply(ctx context.Context, namespace string, objs []render.Object) error {
