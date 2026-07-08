@@ -417,6 +417,7 @@ func (s *server) handleUIProjectCreate(w http.ResponseWriter, r *http.Request, u
 		http.Redirect(w, r, "/ui/?err="+url.QueryEscape(msg), http.StatusSeeOther)
 		return
 	}
+	flash(w, "ok", "project created")
 	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
 }
 
@@ -450,6 +451,7 @@ func (s *server) handleUIAddMember(w http.ResponseWriter, r *http.Request, u sto
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "member added")
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
@@ -481,6 +483,7 @@ func (s *server) handleUIMemberRemove(w http.ResponseWriter, r *http.Request, u 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "member removed")
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
@@ -513,6 +516,7 @@ func (s *server) handleUIProjectRename(w http.ResponseWriter, r *http.Request, u
 		}
 		return
 	}
+	flash(w, "ok", "project renamed")
 	http.Redirect(w, r, "/ui/projects/"+newName, http.StatusSeeOther)
 }
 
@@ -549,6 +553,7 @@ func (s *server) handleUIProjectDelete(w http.ResponseWriter, r *http.Request, u
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "project deleted")
 	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
 }
 
@@ -667,6 +672,7 @@ func (s *server) handleUIGPUQuota(w http.ResponseWriter, r *http.Request, u stor
 		http.Redirect(w, r, "/ui/projects/"+p.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}
+	flash(w, "ok", "gpu quota updated")
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
@@ -778,6 +784,7 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 	}
 
 	if image == "" {
+		flash(w, "ok", "app created")
 		http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 		return
 	}
@@ -800,6 +807,7 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: "+err.Error()), http.StatusSeeOther)
 		return
 	}
+	flash(w, "ok", "app created")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1176,6 +1184,7 @@ func (s *server) handleUIWebhookDisable(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "webhook disabled")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1183,6 +1192,15 @@ func (s *server) handleUIWebhookDisable(w http.ResponseWriter, r *http.Request, 
 // (scale/env/deploy) was posted from.
 func uiRedirect(w http.ResponseWriter, r *http.Request, p store.Project, a store.App) {
 	http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name, http.StatusSeeOther)
+}
+
+// flash queues a one-shot toast shown by base.html's foot script on the
+// next page load: cookie value "<kind>|<msg>", read+cleared by JS.
+func flash(w http.ResponseWriter, kind, msg string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: "luncur_flash", Value: url.QueryEscape(kind + "|" + msg),
+		Path: "/", MaxAge: 15, SameSite: http.SameSiteLaxMode,
+	})
 }
 
 // firstNonEmpty returns the first non-empty string, or "" if all are empty.
@@ -1250,6 +1268,7 @@ func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.U
 		}
 		return
 	}
+	flash(w, "ok", "scaled")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1298,6 +1317,7 @@ func (s *server) handleUIRunCreate(w http.ResponseWriter, r *http.Request, u sto
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "run started")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1353,6 +1373,7 @@ func (s *server) handleUITraining(w http.ResponseWriter, r *http.Request, u stor
 		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}
+	flash(w, "ok", "training defaults saved")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1379,6 +1400,7 @@ func (s *server) handleUIHealth(w http.ResponseWriter, r *http.Request, u store.
 		}
 		return
 	}
+	flash(w, "ok", "health check saved")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1411,6 +1433,7 @@ func (s *server) handleUIEnvSet(w http.ResponseWriter, r *http.Request, u store.
 		}
 		return
 	}
+	flash(w, "ok", "env saved")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1455,6 +1478,7 @@ func (s *server) handleUIEnvBulk(w http.ResponseWriter, r *http.Request, u store
 		}
 		return
 	}
+	flash(w, "ok", "env vars saved")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1484,6 +1508,7 @@ func (s *server) handleUIEnvUnset(w http.ResponseWriter, r *http.Request, u stor
 		}
 		return
 	}
+	flash(w, "ok", "env var removed")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1515,9 +1540,11 @@ func (s *server) handleUIDomainAdd(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 	if warning != "" {
+		flash(w, "ok", "domain added")
 		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?warn="+url.QueryEscape(warning), http.StatusSeeOther)
 		return
 	}
+	flash(w, "ok", "domain added")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1551,6 +1578,7 @@ func (s *server) handleUIDomainDelete(w http.ResponseWriter, r *http.Request, u 
 		return
 	}
 	s.syncIfLive(r.Context(), p, a)
+	flash(w, "ok", "domain removed")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1594,6 +1622,7 @@ func (s *server) handleUIVolumeAdd(w http.ResponseWriter, r *http.Request, u sto
 		}
 		return
 	}
+	flash(w, "ok", "volume added")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1628,6 +1657,7 @@ func (s *server) handleUIVolumeRemove(w http.ResponseWriter, r *http.Request, u 
 		}
 		return
 	}
+	flash(w, "ok", "volume removed")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1666,6 +1696,7 @@ func (s *server) handleUIAddonCreate(w http.ResponseWriter, r *http.Request, u s
 		}
 		return
 	}
+	flash(w, "ok", "addon created")
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
@@ -1701,6 +1732,7 @@ func (s *server) handleUIAddonDelete(w http.ResponseWriter, r *http.Request, u s
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "addon deleted")
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
@@ -1735,9 +1767,11 @@ func (s *server) handleUIAddonAttach(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 	if warning != "" {
+		flash(w, "ok", "addon attached")
 		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?warn="+url.QueryEscape(warning), http.StatusSeeOther)
 		return
 	}
+	flash(w, "ok", "addon attached")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1771,6 +1805,7 @@ func (s *server) handleUIAddonDetach(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 	s.syncIfLive(r.Context(), p, a)
+	flash(w, "ok", "addon detached")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1806,6 +1841,7 @@ func (s *server) handleUIDeploy(w http.ResponseWriter, r *http.Request, u store.
 		}
 		return
 	}
+	flash(w, "ok", "deploy started")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1861,6 +1897,7 @@ func (s *server) handleUIRollback(w http.ResponseWriter, r *http.Request, u stor
 		}
 		return
 	}
+	flash(w, "ok", "rollback started")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1884,6 +1921,7 @@ func (s *server) handleUIAppDestroy(w http.ResponseWriter, r *http.Request, u st
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "app destroyed")
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
@@ -1907,6 +1945,7 @@ func (s *server) handleUIEject(w http.ResponseWriter, r *http.Request, u store.U
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "app ejected")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1941,6 +1980,7 @@ func (s *server) handleUIDomainRetry(w http.ResponseWriter, r *http.Request, u s
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "domain retry started")
 	uiRedirect(w, r, p, a)
 }
 
@@ -1977,6 +2017,7 @@ func (s *server) handleUIAddonUpgrade(w http.ResponseWriter, r *http.Request, u 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "addon upgrade started")
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
@@ -2133,6 +2174,7 @@ func (s *server) handleUIUserPassword(w http.ResponseWriter, r *http.Request, u 
 		}
 		return
 	}
+	flash(w, "ok", "password reset")
 	http.Redirect(w, r, "/ui/users?pw=ok", http.StatusSeeOther)
 }
 
@@ -2194,6 +2236,7 @@ func (s *server) handleUIAccountPassword(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "password changed")
 	http.Redirect(w, r, "/ui/account?ok=password", http.StatusSeeOther)
 }
 
@@ -2226,6 +2269,7 @@ func (s *server) handleUIAccountEmail(w http.ResponseWriter, r *http.Request, u 
 		}
 		return
 	}
+	flash(w, "ok", "email changed")
 	http.Redirect(w, r, "/ui/account?ok=email", http.StatusSeeOther)
 }
 
@@ -2261,6 +2305,7 @@ func (s *server) handleUITokenRevoke(w http.ResponseWriter, r *http.Request, u s
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "token revoked")
 	http.Redirect(w, r, "/ui/tokens", http.StatusSeeOther)
 }
 
@@ -2290,6 +2335,7 @@ func (s *server) handleUIInviteCreate(w http.ResponseWriter, r *http.Request, u 
 			dest += "?mail=sent"
 		}
 	}
+	flash(w, "ok", "invite created")
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
@@ -2315,6 +2361,7 @@ func (s *server) handleUIAdopt(w http.ResponseWriter, r *http.Request, u store.U
 	}
 	a.Ejected = false
 	s.syncIfLive(r.Context(), p, a)
+	flash(w, "ok", "app adopted")
 	uiRedirect(w, r, p, a)
 }
 
@@ -2331,6 +2378,7 @@ func (s *server) handleUIInviteRevoke(w http.ResponseWriter, r *http.Request, u 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "invite revoked")
 	http.Redirect(w, r, "/ui/users", http.StatusSeeOther)
 }
 
@@ -2356,6 +2404,7 @@ func (s *server) handleUIUserDelete(w http.ResponseWriter, r *http.Request, u st
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "user deleted")
 	http.Redirect(w, r, "/ui/users", http.StatusSeeOther)
 }
 
@@ -2476,5 +2525,6 @@ func (s *server) handleUIEditPost(w http.ResponseWriter, r *http.Request, u stor
 		s.renderEditPage(w, r, u, p, a, kind, submitted, msg)
 		return
 	}
+	flash(w, "ok", "override saved")
 	uiRedirect(w, r, p, a)
 }

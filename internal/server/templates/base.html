@@ -10,6 +10,7 @@
 <script src="/ui/static/htmx.min.js?v={{v}}" defer></script>
 </head>
 <body hx-boost="true" class="bg-bg text-ink min-h-screen antialiased font-sans">
+<div id="hx-bar"></div>
 <div class="flex min-h-screen">
 {{end}}
 
@@ -63,16 +64,77 @@
 </main>
 </div>
 <script>
-document.body.addEventListener("htmx:responseError", function(e){
-  var el = document.getElementById("hx-err");
-  if(!el) return;
-  el.hidden = false;
-  el.textContent = "request failed (" + e.detail.xhr.status + "): " + (e.detail.xhr.responseText || "").slice(0,300);
-});
-document.body.addEventListener("htmx:sendError", function(){
-  var el = document.getElementById("hx-err");
-  if(!el) return; el.hidden = false; el.textContent = "network error — server unreachable";
-});
+// hx-boost swaps body innerHTML, so this script re-runs on every boosted
+// navigation while the body node (and its listeners) survives. Element
+// lookups happen at event time (swapped-in nodes replace old ones), the
+// toast stack re-attaches itself if its node was swapped away, and listener
+// registration runs exactly once per real page load via window.__luncurUX.
+
+// Toast stack: window.toast(msg, kind) creates a bottom-right toast that
+// auto-dismisses after 4s. kind is "ok" or "err" — never orange (accent
+// discipline, see DESIGN.md Motion).
+window.toast = function(msg, kind){
+  var wrap = document.querySelector(".toast-wrap");
+  if(!wrap || !wrap.isConnected){
+    wrap = document.createElement("div");
+    wrap.className = "toast-wrap";
+    document.body.appendChild(wrap);
+  }
+  var el = document.createElement("div");
+  el.className = "toast " + (kind === "err" ? "toast-err" : "toast-ok");
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(function(){
+    el.classList.add("fade-out");
+    setTimeout(function(){ el.remove(); }, 150);
+  }, 4000);
+};
+
+if(!window.__luncurUX){
+  window.__luncurUX = true;
+  document.body.addEventListener("htmx:responseError", function(e){
+    var el = document.getElementById("hx-err");
+    if(el){
+      el.hidden = false;
+      el.textContent = "request failed (" + e.detail.xhr.status + "): " + (e.detail.xhr.responseText || "").slice(0,300);
+    }
+    window.toast("request failed (" + e.detail.xhr.status + ")", "err");
+  });
+  document.body.addEventListener("htmx:sendError", function(){
+    var el = document.getElementById("hx-err");
+    if(el){ el.hidden = false; el.textContent = "network error — server unreachable"; }
+    window.toast("network error", "err");
+  });
+
+  // Global request bar: an indeterminate sweep shown only for hx-boosted
+  // navigations (never background polls — those set hx-trigger="every ..."
+  // and are never boosted), so the 15s chart/table refreshes stay silent.
+  var setBar = function(on){
+    var bar = document.getElementById("hx-bar");
+    if(bar) bar.classList.toggle("on", on);
+  };
+  document.body.addEventListener("htmx:beforeRequest", function(e){
+    if(e.detail.boosted) setBar(true);
+  });
+  ["htmx:afterRequest", "htmx:responseError", "htmx:sendError"].forEach(function(ev){
+    document.body.addEventListener(ev, function(e){
+      if(e.detail.boosted) setBar(false);
+    });
+  });
+}
+
+// Flash cookie ("luncur_flash", "<kind>|<msg>"): the server queues one toast
+// for the next page render; read + cleared on every run so boosted
+// redirects show it too.
+(function(){
+  var m = document.cookie.match(/(?:^|; )luncur_flash=([^;]*)/);
+  if(m){
+    document.cookie = "luncur_flash=; Max-Age=0; path=/";
+    var parts = decodeURIComponent(m[1]).split("|");
+    var kind = parts.shift();
+    window.toast(parts.join("|"), kind);
+  }
+})();
 </script>
 </body>
 </html>

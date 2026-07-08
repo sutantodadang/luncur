@@ -232,6 +232,7 @@ func (s *server) handleUISweepCreate(w http.ResponseWriter, r *http.Request, u s
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "sweep started")
 	uiRedirect(w, r, p, a)
 }
 
@@ -305,6 +306,7 @@ func (s *server) handleUISweepStop(w http.ResponseWriter, r *http.Request, u sto
 			return
 		}
 	}
+	flash(w, "ok", "sweep stopped")
 	uiRedirect(w, r, p, a)
 }
 

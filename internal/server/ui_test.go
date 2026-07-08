@@ -2027,3 +2027,32 @@ func TestUIProjectsPageShowsCardSummary(t *testing.T) {
 		t.Fatalf("GET /ui/ as member: +add member link must be admin-only, got: %s", memberBody)
 	}
 }
+
+// TestFlash asserts flash() sets the one-shot toast cookie with the
+// "<kind>|<msg>" value escaped, root path, and a short expiry — the shape
+// base.html's foot script expects to read and clear on the next page load.
+func TestFlash(t *testing.T) {
+	w := httptest.NewRecorder()
+	flash(w, "ok", "app created")
+
+	resp := w.Result()
+	var ck *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == "luncur_flash" {
+			ck = c
+		}
+	}
+	if ck == nil {
+		t.Fatal("flash: expected Set-Cookie luncur_flash")
+	}
+	want := url.QueryEscape("ok|app created")
+	if ck.Value != want {
+		t.Fatalf("flash: cookie value = %q, want %q", ck.Value, want)
+	}
+	if ck.Path != "/" {
+		t.Fatalf("flash: cookie path = %q, want /", ck.Path)
+	}
+	if ck.MaxAge <= 0 || ck.MaxAge > 15 {
+		t.Fatalf("flash: cookie MaxAge = %d, want short-lived (<=15s)", ck.MaxAge)
+	}
+}

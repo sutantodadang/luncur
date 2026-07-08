@@ -187,6 +187,7 @@ func (s *server) handleUISettingsSet(w http.ResponseWriter, r *http.Request, u s
 			log.Printf("panel domain changed: %v", err)
 		}
 	}
+	flash(w, "ok", "settings saved")
 	http.Redirect(w, r, "/ui/settings?saved="+url.QueryEscape(key), http.StatusSeeOther)
 }
 
@@ -215,6 +216,7 @@ func (s *server) handleUISettingsUpdate(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "update started")
 	http.Redirect(w, r, "/ui/settings?saved=update", http.StatusSeeOther)
 }
 
@@ -231,5 +233,6 @@ func (s *server) handleUIRegistryGC(w http.ResponseWriter, r *http.Request, u st
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "registry gc completed")
 	http.Redirect(w, r, "/ui/settings?gc="+strconv.Itoa(report.DeletedManifests), http.StatusSeeOther)
 }

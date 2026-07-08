@@ -49,9 +49,10 @@ control teaches its CLI command back (see CLI-echo). A user should never be
 - **Empty states:** one muted sentence + the CLI-echo of the command that creates the first item.
 
 ## Motion
-- **Approach:** minimal-functional.
-- **Allowed:** htmx swap fade 120ms ease-out; `building` chip pulse (1.6s ease-in-out); log-cursor blink. Nothing else.
-- **Easing:** enter(ease-out) exit(ease-in). **Duration:** micro(120ms) only.
+- **Approach:** minimal-functional. Motion exists to answer "did my click register?" and "is it still working?" — never decoration.
+- **Allowed:** htmx swap fade 120ms ease-out; `building` chip pulse (1.6s ease-in-out); log-cursor blink; global request bar (2px, signal orange, top of viewport, indeterminate sweep, boosted navigations only — never on background polls); button busy state (spinner rotation + 60% opacity + pointer-events none while `.htmx-request`); toast slide-in 120ms ease-out / fade-out 120ms ease-in, auto-dismiss 4s. Nothing else.
+- **Toasts:** bottom-right stack, panel-raised bg, 2px left border — phosphor green for success, fail red for error. Text 13px Plex Sans; never orange (accent discipline). One line, no titles, no icons.
+- **Easing:** enter(ease-out) exit(ease-in). **Duration:** micro(120ms) only; spinner/bar loops excepted.
 
 ## Parity Contract (functional design rule)
 The UI is incomplete while any CLI verb lacks a UI control. Known gaps to close
@@ -71,3 +72,4 @@ description must say why not.
 | 2026-07-05 | Dark-only, no light theme | Operator tool; halves CSS surface; matches category expectation |
 | 2026-07-05 | Light theme + toggle added | Owner request (field feedback); tokens moved to CSS variables |
 | 2026-07-06 | Content column centered + 1600px cap on 2xl | Owner field feedback: 2K monitor left content hugging the sidebar with a dead right half; was max-w-5xl left-aligned |
+| 2026-07-08 | Feedback motion added: toasts, request bar, button busy | Owner field feedback: no click feedback, no loading state anywhere; motion allowlist extended, still functional-only |

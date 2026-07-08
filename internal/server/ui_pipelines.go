@@ -315,6 +315,7 @@ func (s *server) handleUIPipelineCreate(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "pipeline created")
 	http.Redirect(w, r, "/ui/projects/"+p.Name+"/pipelines/"+pl.Name, http.StatusSeeOther)
 }
 
@@ -346,6 +347,7 @@ func (s *server) handleUIPipelineUpdate(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "pipeline saved")
 	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 }
 
@@ -374,6 +376,7 @@ func (s *server) handleUIPipelineRun(w http.ResponseWriter, r *http.Request, u s
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "run started")
 	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 }
 
@@ -400,6 +403,7 @@ func (s *server) handleUIPipelineRunStop(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
+	flash(w, "ok", "run stopped")
 	http.Redirect(w, r, "/ui/projects/"+p.Name+"/pipelines/"+pl.Name, http.StatusSeeOther)
 }
 

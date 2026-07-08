@@ -101,6 +101,7 @@ func (s *server) handleUIGPUKey(w http.ResponseWriter, r *http.Request, u store.
 		http.Redirect(w, r, "/ui/nodes?gpu_err="+url.QueryEscape("could not store key"), http.StatusSeeOther)
 		return
 	}
+	flash(w, "ok", "gpu key saved")
 	http.Redirect(w, r, "/ui/nodes", http.StatusSeeOther)
 }
 
@@ -147,6 +148,7 @@ func (s *server) handleUIGPUKeyNebius(w http.ResponseWriter, r *http.Request, u 
 		http.Redirect(w, r, "/ui/nodes?gpu_err="+url.QueryEscape("could not store credentials"), http.StatusSeeOther)
 		return
 	}
+	flash(w, "ok", "gpu key saved")
 	http.Redirect(w, r, "/ui/nodes", http.StatusSeeOther)
 }
 
@@ -186,6 +188,7 @@ func (s *server) handleUIGPURent(w http.ResponseWriter, r *http.Request, u store
 		http.Redirect(w, r, "/ui/nodes?gpu_err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}
+	flash(w, "ok", "gpu instance rented")
 	http.Redirect(w, r, "/ui/nodes", http.StatusSeeOther)
 }
 
@@ -203,5 +206,6 @@ func (s *server) handleUIGPUStop(w http.ResponseWriter, r *http.Request, u store
 		http.Redirect(w, r, "/ui/nodes?gpu_err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}
+	flash(w, "ok", "gpu instance stopped")
 	http.Redirect(w, r, "/ui/nodes", http.StatusSeeOther)
 }

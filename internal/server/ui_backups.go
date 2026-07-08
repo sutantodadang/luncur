@@ -68,6 +68,7 @@ func (s *server) handleUIBackupCreate(w http.ResponseWriter, r *http.Request, u 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "backup created")
 	http.Redirect(w, r, "/ui/backups", http.StatusSeeOther)
 }
 
@@ -82,5 +83,6 @@ func (s *server) handleUIBackupPrune(w http.ResponseWriter, r *http.Request, u s
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "old backups pruned")
 	http.Redirect(w, r, "/ui/backups", http.StatusSeeOther)
 }

@@ -38,6 +38,7 @@ func (s *server) handleUISSHKeyAdd(w http.ResponseWriter, r *http.Request, u sto
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	flash(w, "ok", "ssh key added")
 	http.Redirect(w, r, "/ui/sshkeys", http.StatusSeeOther)
 }
 
@@ -58,5 +59,6 @@ func (s *server) handleUISSHKeyDelete(w http.ResponseWriter, r *http.Request, u 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	flash(w, "ok", "ssh key removed")
 	http.Redirect(w, r, "/ui/sshkeys", http.StatusSeeOther)
 }

@@ -180,4 +180,107 @@
     background-size: 24px 24px;
     background-position: -1px -1px;
   }
+
+  /* Toasts (DESIGN.md §Motion) — bottom-right stack, panel-raised bg, 2px
+     left border. Green for success, fail red for error; never orange
+     (accent discipline). One line, no titles, no icons. */
+  .toast-wrap {
+    @apply fixed bottom-4 right-4 z-50 flex flex-col gap-2;
+  }
+  .toast {
+    @apply rounded-[5px] border border-line bg-panel2 px-4 py-2.5 text-[13px] text-ink shadow-lg;
+    border-left-width: 2px;
+    animation: toast-in 120ms ease-out;
+  }
+  .toast-ok {
+    border-left-color: var(--c-phosphor);
+  }
+  .toast-err {
+    border-left-color: var(--c-fail);
+  }
+  .toast.fade-out {
+    opacity: 0;
+    transition: opacity 120ms ease-in;
+  }
+
+  /* Global request bar (DESIGN.md §Motion) — 2px, signal orange,
+     indeterminate sweep, boosted navigations only (see base.html's
+     htmx:beforeRequest handler — it checks e.detail.boosted so 15s
+     background polls never trigger it). */
+  #hx-bar {
+    @apply fixed left-0 top-0 z-50 h-0.5 w-full bg-signal;
+    transform-origin: left;
+    transform: scaleX(0);
+    pointer-events: none;
+  }
+  #hx-bar.on {
+    animation: hx-bar-sweep 1s ease-in-out infinite;
+  }
+
+  /* Button busy state (DESIGN.md §Motion) — dim + block clicks + spinner
+     while the form/button's own htmx request is in flight. */
+  form.htmx-request button[type="submit"],
+  button.htmx-request {
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  form.htmx-request button[type="submit"]::after,
+  button.htmx-request::after {
+    content: "";
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-left: 8px;
+    vertical-align: middle;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 9999px;
+    animation: spin 0.6s linear infinite;
+  }
+
+  /* Swap fade (DESIGN.md §Motion) — htmx's settle-phase fade-in idiom:
+     new content gets .htmx-added (opacity 0) then .htmx-settling (opacity 1,
+     transitioned) on the next frame, so it fades in over 120ms. Scoped away
+     from any element carrying hx-trigger="every ..." — the self-polling
+     statuschip/sweeptrials/pipelinesteps fragments and the metrics chart —
+     so 15s background refreshes never blink. */
+  .htmx-added:not([hx-trigger*="every"]) {
+    opacity: 0;
+  }
+  .htmx-settling:not([hx-trigger*="every"]) {
+    opacity: 1;
+    transition: opacity 120ms ease-out;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes hx-bar-sweep {
+  0% {
+    transform: scaleX(0);
+    opacity: 1;
+  }
+  50% {
+    transform: scaleX(0.7);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

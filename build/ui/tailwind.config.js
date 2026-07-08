@@ -13,6 +13,10 @@ module.exports = {
     "status-live", "status-failed", "status-building", "status-deploying",
     "status-issued", "status-pending", "status-none", "status-external",
     "chip-ok", "chip-warn", "chip-bad", "chip-muted",
+    // htmx adds these classes itself at runtime (request in-flight / swap
+    // settle) — they never appear literally in the template source, so the
+    // content scanner would otherwise purge their CSS rules.
+    "htmx-request", "htmx-added", "htmx-settling",
   ],
   theme: {
     extend: {
