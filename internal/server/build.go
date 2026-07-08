@@ -325,7 +325,7 @@ func (s *server) finishDeploy(ctx context.Context, p store.Project, a store.App,
 	if err != nil {
 		return err
 	}
-	if err := s.kube.EnsureNamespace(ctx, p.Namespace); err != nil {
+	if err := s.ensureProjectNamespace(ctx, p.Namespace); err != nil {
 		return err
 	}
 	if err := s.kube.Apply(ctx, p.Namespace, rendered.Objects); err != nil {

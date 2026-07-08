@@ -74,6 +74,9 @@ var settingGroups = []settingGroup{
 	{Title: "Audit", Fields: []settingField{
 		{Key: "audit_retention_days"},
 	}},
+	{Title: "Network", Fields: []settingField{
+		{Key: "network_isolation", Options: []string{"on", "off"}},
+	}},
 }
 
 // settingRow is one field's rendered view: Value carries the current
@@ -185,6 +188,11 @@ func (s *server) handleUISettingsSet(w http.ResponseWriter, r *http.Request, u s
 	if key == "panel_domain" {
 		if err := s.panelDomainChanged(r.Context()); err != nil {
 			log.Printf("panel domain changed: %v", err)
+		}
+	}
+	if key == "network_isolation" {
+		if err := s.networkIsolationChanged(r.Context()); err != nil {
+			log.Printf("network isolation changed: %v", err)
 		}
 	}
 	flash(w, "ok", "settings saved")

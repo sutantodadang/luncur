@@ -252,7 +252,7 @@ func (s *server) createAddon(ctx context.Context, p store.Project, typ, name, ve
 	if err != nil {
 		return store.Addon{}, err
 	}
-	if err := s.kube.EnsureNamespace(ctx, p.Namespace); err != nil {
+	if err := s.ensureProjectNamespace(ctx, p.Namespace); err != nil {
 		return store.Addon{}, err
 	}
 	if err := s.kube.Apply(ctx, p.Namespace, objs); err != nil {
@@ -633,7 +633,7 @@ func (s *server) upgradeAddon(ctx context.Context, p store.Project, a store.Addo
 	if err != nil {
 		return store.Addon{}, fmt.Errorf("render: %w", err)
 	}
-	if err := s.kube.EnsureNamespace(ctx, p.Namespace); err != nil {
+	if err := s.ensureProjectNamespace(ctx, p.Namespace); err != nil {
 		return store.Addon{}, fmt.Errorf("namespace: %w", err)
 	}
 	if err := s.kube.Apply(ctx, p.Namespace, objs); err != nil {

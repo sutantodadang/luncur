@@ -38,7 +38,7 @@ func (s *server) setGPUQuota(ctx context.Context, p store.Project, n int64) erro
 		if err != nil {
 			return &gpuQuotaKubeError{err}
 		}
-		if err := s.kube.EnsureNamespace(ctx, p.Namespace); err != nil {
+		if err := s.ensureProjectNamespace(ctx, p.Namespace); err != nil {
 			return &gpuQuotaKubeError{err}
 		}
 		if err := s.kube.Apply(ctx, p.Namespace, []render.Object{obj}); err != nil {

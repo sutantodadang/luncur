@@ -184,6 +184,42 @@ func TestEnsureNamespaceWithPolicyBaseline(t *testing.T) {
 	}
 }
 
+func TestApplyIsolation(t *testing.T) {
+	c, log := fakeClient(t)
+	if err := c.ApplyIsolation(context.Background(), "luncur-web"); err != nil {
+		t.Fatal(err)
+	}
+	rec := (*log)[0]
+	if rec.verb != "patch" || rec.resource != "networkpolicies" || rec.namespace != "luncur-web" || rec.name != "luncur-isolation" {
+		t.Fatalf("bad action: %+v", rec)
+	}
+	if rec.patchType != "application/apply-patch+yaml" {
+		t.Fatalf("want SSA patch, got %q", rec.patchType)
+	}
+	var body struct {
+		Spec struct {
+			PolicyTypes []string `json:"policyTypes"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(rec.patch, &body); err != nil {
+		t.Fatalf("unmarshal patch body: %v", err)
+	}
+	if len(body.Spec.PolicyTypes) != 1 || body.Spec.PolicyTypes[0] != "Ingress" {
+		t.Fatalf("want Ingress-only policyTypes, got %+v", body.Spec.PolicyTypes)
+	}
+}
+
+func TestRemoveIsolationIgnoresNotFound(t *testing.T) {
+	// Same empty-tracker shape as TestDeleteAppObjectsIgnoresNotFound: no
+	// NetworkPolicy was ever applied, so the delete hits NotFound, which
+	// RemoveIsolation (via DeleteObject) must swallow.
+	scheme := runtime.NewScheme()
+	c := NewFromDynamic(dynamicfake.NewSimpleDynamicClient(scheme))
+	if err := c.RemoveIsolation(context.Background(), "luncur-web"); err != nil {
+		t.Fatalf("NotFound should be ignored: %v", err)
+	}
+}
+
 func TestDeleteAppObjectsIgnoresNotFound(t *testing.T) {
 	// Default reactor chain (no short-circuit): deleting non-existent
 	// objects from the empty fake tracker returns NotFound, which
