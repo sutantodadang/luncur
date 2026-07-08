@@ -23,6 +23,7 @@ var notifyEventNames = map[string]bool{
 	"deploy_failed":  true,
 	"cert_issued":    true,
 	"cert_failed":    true,
+	"pipeline":       true,
 }
 
 // notifyFormats are the valid values for notify_format.
@@ -60,16 +61,17 @@ func parseNotifyEvents(csv string) map[string]bool {
 	return out
 }
 
-// notifyEvent describes one deploy/cert outcome to report to the configured
-// notification webhook (see the notify_* settings).
+// notifyEvent describes one deploy/cert/pipeline outcome to report to the
+// configured notification webhook (see the notify_* settings).
 type notifyEvent struct {
-	Event    string // deploy_success|deploy_failed|cert_issued|cert_failed
+	Event    string // deploy_success|deploy_failed|cert_issued|cert_failed|pipeline
 	Project  string
 	App      string
-	DeployID string // "" for cert events — internal id, kept for API consumers
-	Seq      int64  // 0 for cert events — per-app deploy number shown in human-readable text
+	DeployID string // "" for cert/pipeline events — internal id, kept for API consumers
+	Seq      int64  // 0 for cert/pipeline events — per-app deploy number shown in human-readable text
 	URL      string // app URL (deploy events) or hostname (cert events)
 	Err      string // error detail; truncated to errTailLimit chars before sending
+	Message  string // free-form text for event "pipeline" (notify actions + run finish summaries)
 }
 
 // notify is the best-effort entry point: it reads notify_url/notify_events,
@@ -149,17 +151,22 @@ type genericNotifyPayload struct {
 	Status   string `json:"status"`
 	URL      string `json:"url,omitempty"`
 	Error    string `json:"error,omitempty"`
+	Message  string `json:"message,omitempty"`
 	Time     string `json:"time"`
 }
 
 // notifyStatus maps an event name to the short status word the generic
-// payload's "status" field carries.
+// payload's "status" field carries. "pipeline" carries its own outcome in
+// Message (a run can finish done or failed, and a notify-action fires
+// mid-run) rather than in this field, so it reports the neutral "info".
 func notifyStatus(event string) string {
 	switch event {
 	case "deploy_success":
 		return "live"
 	case "cert_issued":
 		return "issued"
+	case "pipeline":
+		return "info"
 	default:
 		return "failed"
 	}
@@ -177,6 +184,8 @@ func notifyMessage(ev notifyEvent) string {
 		return fmt.Sprintf("🔒 %s cert issued", ev.URL)
 	case "cert_failed":
 		return fmt.Sprintf("⚠️ %s cert failed: %s", ev.URL, ev.Err)
+	case "pipeline":
+		return fmt.Sprintf("🔧 %s/%s: %s", ev.Project, ev.App, ev.Message)
 	default:
 		return fmt.Sprintf("%s: %s/%s", ev.Event, ev.Project, ev.App)
 	}
@@ -195,6 +204,7 @@ func buildNotifyPayload(format, chat string, ev notifyEvent, now time.Time) ([]b
 			Status:   notifyStatus(ev.Event),
 			URL:      ev.URL,
 			Error:    ev.Err,
+			Message:  ev.Message,
 			Time:     now.UTC().Format(time.RFC3339),
 		})
 	case "discord":

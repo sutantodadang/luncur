@@ -931,6 +931,134 @@ func (c *Client) StopSweep(project, app, id string) (SweepInfo, error) {
 	return out, err
 }
 
+// PipelineLastRun is the newest-run summary embedded in a ListPipelines row.
+type PipelineLastRun struct {
+	ID        string `json:"id"`
+	Status    string `json:"status"`
+	StartedAt string `json:"started_at"`
+}
+
+// PipelineInfo is a stored pipeline as returned by the API. YAML is present
+// on create/update/get responses; ListPipelines rows omit it in favor of
+// LastRun.
+type PipelineInfo struct {
+	ID        string           `json:"id"`
+	Name      string           `json:"name"`
+	Engine    string           `json:"engine,omitempty"`
+	YAML      string           `json:"yaml,omitempty"`
+	CreatedAt string           `json:"created_at"`
+	LastRun   *PipelineLastRun `json:"last_run,omitempty"`
+}
+
+// PipelineStepInfo is one step row within a pipeline run, as returned by the
+// API. StartedAt/FinishedAt are SQLite's datetime('now') format
+// ("2006-01-02 15:04:05", UTC) when set.
+type PipelineStepInfo struct {
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`
+	State      string `json:"state"`
+	Attempt    int    `json:"attempt"`
+	Detail     string `json:"detail,omitempty"`
+	JobRunID   int64  `json:"job_run_id,omitempty"`
+	StartedAt  string `json:"started_at,omitempty"`
+	FinishedAt string `json:"finished_at,omitempty"`
+}
+
+// PipelineRunInfo is one pipeline run, as returned by the API. Steps is
+// populated by StartPipelineRun/GetPipelineRun/StopPipelineRun;
+// ListPipelineRuns omits it (a run history listing doesn't need per-step
+// detail).
+type PipelineRunInfo struct {
+	ID         string             `json:"id"`
+	PipelineID string             `json:"pipeline_id"`
+	Status     string             `json:"status"`
+	Trigger    string             `json:"trigger"`
+	Warning    string             `json:"warning,omitempty"`
+	StartedAt  string             `json:"started_at"`
+	FinishedAt string             `json:"finished_at,omitempty"`
+	Steps      []PipelineStepInfo `json:"steps,omitempty"`
+}
+
+// CreatePipeline compiles+validates and stores a pipeline.yaml. yamlStr is
+// the raw file contents; engine is "" (follow the install's pipeline_engine
+// setting), "native", or "argo".
+//
+// Step env in pipeline.yaml is stored in plaintext — put secrets in app env
+// instead.
+func (c *Client) CreatePipeline(project, name, yamlStr, engine string) (PipelineInfo, error) {
+	var out PipelineInfo
+	body := map[string]any{"name": name, "yaml": yamlStr, "engine": engine}
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/pipelines", body, &out)
+	return out, err
+}
+
+// UpdatePipeline replaces a pipeline's yaml and/or engine; a nil pointer
+// leaves that field's current value unchanged.
+func (c *Client) UpdatePipeline(project, name string, yamlStr, engine *string) (PipelineInfo, error) {
+	var out PipelineInfo
+	body := map[string]any{}
+	if yamlStr != nil {
+		body["yaml"] = *yamlStr
+	}
+	if engine != nil {
+		body["engine"] = *engine
+	}
+	err := c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/pipelines/"+url.PathEscape(name), body, &out)
+	return out, err
+}
+
+// ListPipelines fetches a project's pipelines, name ascending.
+func (c *Client) ListPipelines(project string) ([]PipelineInfo, error) {
+	var out []PipelineInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/pipelines", nil, &out)
+	return out, err
+}
+
+// GetPipeline fetches one pipeline's detail, including its yaml.
+func (c *Client) GetPipeline(project, name string) (PipelineInfo, error) {
+	var out PipelineInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/pipelines/"+url.PathEscape(name), nil, &out)
+	return out, err
+}
+
+// DeletePipeline deletes a pipeline; the API 409s (pipeline_busy) if a run is
+// still in progress.
+func (c *Client) DeletePipeline(project, name string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/pipelines/"+url.PathEscape(name), nil, nil)
+}
+
+// StartPipelineRun manually triggers a pipeline run; its root steps are
+// already launching by the time this returns (the server fires one
+// orchestrator tick inline before responding).
+func (c *Client) StartPipelineRun(project, name string) (PipelineRunInfo, error) {
+	var out PipelineRunInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/pipelines/"+url.PathEscape(name)+"/runs", nil, &out)
+	return out, err
+}
+
+// ListPipelineRuns fetches a pipeline's run history (newest first, capped at
+// 50 by the server).
+func (c *Client) ListPipelineRuns(project, name string) ([]PipelineRunInfo, error) {
+	var out []PipelineRunInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/pipelines/"+url.PathEscape(name)+"/runs", nil, &out)
+	return out, err
+}
+
+// GetPipelineRun fetches one run plus its steps in topo order.
+func (c *Client) GetPipelineRun(project, name, id string) (PipelineRunInfo, error) {
+	var out PipelineRunInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/pipelines/"+url.PathEscape(name)+"/runs/"+url.PathEscape(id), nil, &out)
+	return out, err
+}
+
+// StopPipelineRun stops a running pipeline run; idempotent — a second call
+// is a no-op that just reports current state.
+func (c *Client) StopPipelineRun(project, name, id string) (PipelineRunInfo, error) {
+	var out PipelineRunInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/pipelines/"+url.PathEscape(name)+"/runs/"+url.PathEscape(id)+"/stop", nil, &out)
+	return out, err
+}
+
 type TokenInfo struct {
 	ID         int64  `json:"id"`
 	Name       string `json:"name"`

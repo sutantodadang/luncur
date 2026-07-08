@@ -240,6 +240,54 @@ func TestJobExists(t *testing.T) {
 	}
 }
 
+func jobWithStatus(name string, status map[string]any) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "batch/v1", "kind": "Job",
+		"metadata": map[string]any{"name": name, "namespace": "luncur-system"},
+		"status":    status,
+	}}
+}
+
+func TestJobDoneSucceeded(t *testing.T) {
+	dyn := newFakeDyn(t, jobWithStatus("pl-run1-train-a1", map[string]any{"succeeded": int64(1)}))
+	c := NewForTest(dyn, nil)
+
+	done, failed, err := c.JobDone(context.Background(), "luncur-system", "pl-run1-train-a1")
+	if err != nil || !done || failed {
+		t.Fatalf("JobDone(succeeded) = (%v, %v, %v), want (true, false, nil)", done, failed, err)
+	}
+}
+
+func TestJobDoneFailed(t *testing.T) {
+	dyn := newFakeDyn(t, jobWithStatus("pl-run1-train-a1", map[string]any{"failed": int64(1)}))
+	c := NewForTest(dyn, nil)
+
+	done, failed, err := c.JobDone(context.Background(), "luncur-system", "pl-run1-train-a1")
+	if err != nil || !done || !failed {
+		t.Fatalf("JobDone(failed) = (%v, %v, %v), want (true, true, nil)", done, failed, err)
+	}
+}
+
+func TestJobDoneStillRunning(t *testing.T) {
+	dyn := newFakeDyn(t, jobWithStatus("pl-run1-train-a1", map[string]any{"active": int64(1)}))
+	c := NewForTest(dyn, nil)
+
+	done, failed, err := c.JobDone(context.Background(), "luncur-system", "pl-run1-train-a1")
+	if err != nil || done || failed {
+		t.Fatalf("JobDone(running) = (%v, %v, %v), want (false, false, nil)", done, failed, err)
+	}
+}
+
+func TestJobDoneNotFound(t *testing.T) {
+	dyn := newFakeDyn(t)
+	c := NewForTest(dyn, nil)
+
+	done, failed, err := c.JobDone(context.Background(), "luncur-system", "does-not-exist")
+	if err != nil || done || failed {
+		t.Fatalf("JobDone(missing) = (%v, %v, %v), want (false, false, nil)", done, failed, err)
+	}
+}
+
 func TestJobPodStatusPending(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "build-1-abcde", Namespace: "luncur-system",

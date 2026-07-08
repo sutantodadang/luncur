@@ -381,6 +381,36 @@ func (c *Client) JobExists(ctx context.Context, namespace, name string) (bool, e
 	return true, nil
 }
 
+// JobDone reports whether a Job has reached a terminal state: done is true
+// once status.succeeded or status.failed is >=1 (failed distinguishes
+// which); both false means the Job is still running. Unlike WaitJob this
+// is a single non-blocking read — the pipeline engine's 30s tick calls it
+// once per running step rather than blocking the tick on one Job. A
+// missing Job (NotFound) reports done=false, failed=false: callers that
+// need to distinguish "still pending" from "vanished after a restart" use
+// JobExists for that.
+func (c *Client) JobDone(ctx context.Context, namespace, name string) (done, failed bool, err error) {
+	u, getErr := c.dyn.Resource(gvrByKind["Job"]).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(getErr) {
+		return false, false, nil
+	}
+	if getErr != nil {
+		return false, false, fmt.Errorf("get job %s: %w", name, getErr)
+	}
+	if u == nil {
+		// Fake clients with intercept-everything reactors return a nil
+		// object with a nil error; treat it like a missing Job.
+		return false, false, nil
+	}
+	if n, _, _ := unstructured.NestedInt64(u.Object, "status", "succeeded"); n >= 1 {
+		return true, false, nil
+	}
+	if n, _, _ := unstructured.NestedInt64(u.Object, "status", "failed"); n >= 1 {
+		return true, true, nil
+	}
+	return false, false, nil
+}
+
 // JobPodStatus reports the phase (and, if a container is waiting, its
 // reason — e.g. ImagePullBackOff) of the newest pod backing a Job. Used to
 // surface build-in-progress milestones to the deploy log before the Job
