@@ -2,12 +2,39 @@ package server
 
 import (
 	"bufio"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/sutantodadang/luncur/internal/store"
 )
+
+// logBounds parses the optional ?tail= (positive line count) and ?since=
+// (Go duration, e.g. "15m", "2h") query params. Absent params return zero,
+// which streams unbounded — the behavior before these params existed.
+func logBounds(r *http.Request) (tail, since int64, err error) {
+	if v := r.URL.Query().Get("tail"); v != "" {
+		n, perr := strconv.ParseInt(v, 10, 64)
+		if perr != nil || n <= 0 {
+			return 0, 0, fmt.Errorf("tail must be a positive integer")
+		}
+		tail = n
+	}
+	if v := r.URL.Query().Get("since"); v != "" {
+		d, perr := time.ParseDuration(v)
+		if perr != nil || d <= 0 {
+			return 0, 0, fmt.Errorf("since must be a positive duration like 15m or 2h")
+		}
+		since = int64(d.Seconds())
+		if since < 1 {
+			since = 1
+		}
+	}
+	return tail, since, nil
+}
 
 // handleRuntimeLogs streams the app's pod logs as SSE, each line prefixed
 // with its pod name. Follow mode holds the kube streams open.
@@ -25,6 +52,11 @@ func (s *server) handleRuntimeLogs(w http.ResponseWriter, r *http.Request, u sto
 	}
 
 	follow := r.URL.Query().Get("follow") == "1"
+	tail, since, err := logBounds(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
 	pods, err := s.kube.AppPods(r.Context(), p.Namespace, a.Name)
 	if err != nil {
 		log.Printf("list app pods: %v", err)
@@ -59,7 +91,7 @@ func (s *server) handleRuntimeLogs(w http.ResponseWriter, r *http.Request, u sto
 		wg.Add(1)
 		go func(pod string) {
 			defer wg.Done()
-			rc, err := s.kube.PodLogStream(r.Context(), p.Namespace, pod, follow)
+			rc, err := s.kube.PodLogStream(r.Context(), p.Namespace, pod, follow, tail, since)
 			if err != nil {
 				send("[" + pod + "] error: " + err.Error())
 				return

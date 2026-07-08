@@ -562,8 +562,17 @@ func (c *Client) AppPodInfos(ctx context.Context, namespace, app string) ([]PodI
 }
 
 // PodLogStream streams a pod's logs, optionally following new output.
-func (c *Client) PodLogStream(ctx context.Context, namespace, pod string, follow bool) (io.ReadCloser, error) {
-	return c.cs.CoreV1().Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Follow: follow}).Stream(ctx)
+// tailLines > 0 limits output to the last N lines; sinceSeconds > 0 limits
+// it to the trailing time window. Zero values mean unbounded (full history).
+func (c *Client) PodLogStream(ctx context.Context, namespace, pod string, follow bool, tailLines, sinceSeconds int64) (io.ReadCloser, error) {
+	opts := &corev1.PodLogOptions{Follow: follow}
+	if tailLines > 0 {
+		opts.TailLines = &tailLines
+	}
+	if sinceSeconds > 0 {
+		opts.SinceSeconds = &sinceSeconds
+	}
+	return c.cs.CoreV1().Pods(namespace).GetLogs(pod, opts).Stream(ctx)
 }
 
 // ExecPod implements PodExecer via the pods/exec subresource.

@@ -54,6 +54,10 @@ luncur logs myapp --project myproj --deploy 1 -f
 
 # Stream runtime (pod) logs — omit --deploy
 luncur logs myapp --project myproj -f
+
+# Bound runtime logs to the last 200 lines, or the last 15 minutes
+luncur logs myapp --project myproj -f --tail 200
+luncur logs myapp --project myproj -f --since 15m
 ```
 
 **Monorepo builds (`--path`):** one git repo can back several apps by

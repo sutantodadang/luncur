@@ -1,6 +1,10 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+)
 
 // logsCmd prints or follows logs. With --deploy it reads that deployment's
 // build log (add -f to follow a build in progress); without it, it streams
@@ -9,6 +13,8 @@ func logsCmd() *cobra.Command {
 	var project string
 	var deploy string
 	var follow bool
+	var tail int64
+	var since string
 	cmd := &cobra.Command{
 		Use:   "logs <app>",
 		Short: "Print build or runtime logs",
@@ -17,6 +23,9 @@ func logsCmd() *cobra.Command {
 			c, err := apiClient()
 			if err != nil {
 				return err
+			}
+			if deploy != "" && (tail > 0 || since != "") {
+				return fmt.Errorf("--tail/--since apply to runtime logs only, not --deploy build logs")
 			}
 			switch {
 			case deploy != "" && follow:
@@ -29,7 +38,7 @@ func logsCmd() *cobra.Command {
 				cmd.Print(string(b))
 				return nil
 			default:
-				return c.RuntimeLogs(project, args[0], follow, cmd.OutOrStdout())
+				return c.RuntimeLogs(project, args[0], follow, tail, since, cmd.OutOrStdout())
 			}
 		},
 	}
@@ -37,5 +46,7 @@ func logsCmd() *cobra.Command {
 	cmd.MarkFlagRequired("project")
 	cmd.Flags().StringVar(&deploy, "deploy", "", "deployment id (build log; omit for runtime logs)")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "stream live")
+	cmd.Flags().Int64Var(&tail, "tail", 0, "only the last N log lines (0 = all)")
+	cmd.Flags().StringVar(&since, "since", "", "only logs newer than this duration, e.g. 15m, 2h")
 	return cmd
 }

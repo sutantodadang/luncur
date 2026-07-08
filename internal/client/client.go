@@ -514,11 +514,22 @@ func (c *Client) FollowDeployLogs(project, app string, id string, w io.Writer) e
 }
 
 // RuntimeLogs streams (or, with follow=false, fetches once via SSE) the
-// app's runtime pod logs.
-func (c *Client) RuntimeLogs(project, app string, follow bool, w io.Writer) error {
+// app's runtime pod logs. tail > 0 limits to the last N lines; since (a Go
+// duration string like "15m") limits to a trailing time window.
+func (c *Client) RuntimeLogs(project, app string, follow bool, tail int64, since string, w io.Writer) error {
 	p := fmt.Sprintf("/v1/projects/%s/apps/%s/logs", url.PathEscape(project), url.PathEscape(app))
+	q := url.Values{}
 	if follow {
-		p += "?follow=1"
+		q.Set("follow", "1")
+	}
+	if tail > 0 {
+		q.Set("tail", strconv.FormatInt(tail, 10))
+	}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if len(q) > 0 {
+		p += "?" + q.Encode()
 	}
 	return c.stream(p, w)
 }
@@ -825,11 +836,23 @@ func (c *Client) GetRun(project, app string, id int64) (RunInfo, error) {
 	return out, err
 }
 
-// FollowRunLogs streams a run's pod logs (SSE) until the stream ends.
-func (c *Client) FollowRunLogs(project, app string, id int64, follow bool, w io.Writer) error {
+// FollowRunLogs streams a run's pod logs (SSE) until the stream ends. tail > 0
+// limits to the last N lines; since (a Go duration string like "15m") limits
+// to a trailing time window.
+func (c *Client) FollowRunLogs(project, app string, id int64, follow bool, tail int64, since string, w io.Writer) error {
 	p := fmt.Sprintf("/v1/projects/%s/apps/%s/runs/%d/logs", url.PathEscape(project), url.PathEscape(app), id)
+	q := url.Values{}
 	if follow {
-		p += "?follow=1"
+		q.Set("follow", "1")
+	}
+	if tail > 0 {
+		q.Set("tail", strconv.FormatInt(tail, 10))
+	}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if len(q) > 0 {
+		p += "?" + q.Encode()
 	}
 	return c.stream(p, w)
 }

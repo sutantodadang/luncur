@@ -37,7 +37,7 @@ func runCmd() *cobra.Command {
 			// the stream a few times before giving up on logs (the run
 			// itself keeps going either way).
 			for attempt := 0; attempt < 20; attempt++ {
-				err = c.FollowRunLogs(project, args[0], run.ID, true, cmd.OutOrStdout())
+				err = c.FollowRunLogs(project, args[0], run.ID, true, 0, "", cmd.OutOrStdout())
 				if err == nil {
 					break
 				}
@@ -126,6 +126,8 @@ func runLogsCmd() *cobra.Command {
 	var project string
 	var id int64
 	var follow bool
+	var tail int64
+	var since string
 	cmd := &cobra.Command{
 		Use:   "logs <app>",
 		Short: "Print (or follow) one run's logs",
@@ -135,7 +137,7 @@ func runLogsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return c.FollowRunLogs(project, args[0], id, follow, cmd.OutOrStdout())
+			return c.FollowRunLogs(project, args[0], id, follow, tail, since, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project name")
@@ -143,5 +145,7 @@ func runLogsCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&id, "id", 0, "run id (see: luncur run ls)")
 	cmd.MarkFlagRequired("id")
 	cmd.Flags().BoolVar(&follow, "follow", false, "keep streaming while the run produces output")
+	cmd.Flags().Int64Var(&tail, "tail", 0, "only the last N log lines (0 = all)")
+	cmd.Flags().StringVar(&since, "since", "", "only logs newer than this duration, e.g. 15m, 2h")
 	return cmd
 }
