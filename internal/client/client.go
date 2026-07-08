@@ -212,6 +212,15 @@ type AppInfo struct {
 	ModelSource string `json:"model_source,omitempty"`
 	Runtime     string `json:"runtime,omitempty"`
 	Seq         int64  `json:"seq,omitempty"`
+	Autoscale   *AutoscaleInfo `json:"autoscale,omitempty"`
+}
+
+// AutoscaleInfo mirrors appJSON's "autoscale" block, present only when
+// autoscale is on (min > 0).
+type AutoscaleInfo struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+	CPU int `json:"cpu"`
 }
 
 type DeployResult struct {
@@ -403,6 +412,13 @@ func (c *Client) Scale(project, app string, replicas *int, cpu, memory *string, 
 	}
 	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/scale",
 		body, nil)
+}
+
+// Autoscale sets (min, max, cpu all > 0) or clears (all 0) the app's
+// autoscaling/v2 HPA parameters.
+func (c *Client) Autoscale(project, app string, min, max, cpu int) error {
+	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/autoscale",
+		map[string]any{"min": min, "max": max, "cpu": cpu}, nil)
 }
 
 // SetHealth sets (or, with path == "", clears) the app's HTTP health check

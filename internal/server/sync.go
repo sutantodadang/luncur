@@ -241,6 +241,9 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 		Nodes:              int32(nodes),
 		Framework:          framework,
 		RunEnv:             runEnv,
+		AutoMin:            int32(a.AutoMin),
+		AutoMax:            int32(a.AutoMax),
+		AutoCPU:            int32(a.AutoCPU),
 	}
 	return render.Render(in, env)
 }

@@ -243,12 +243,40 @@
 <h2>Scale</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/scale" class="flex flex-wrap items-end gap-2">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  {{if ne .App.Kind "cron"}}<label class="flex flex-col gap-1 text-xs text-mut">replicas<input class="input w-24" type="number" name="replicas" min="0" value="{{.App.Replicas}}"></label>{{end}}
+  {{if ne .App.Kind "cron"}}<label class="flex flex-col gap-1 text-xs text-mut">replicas<input class="input w-24" type="number" name="replicas" min="0" value="{{.App.Replicas}}"></label>{{if gt .App.AutoMin 0}}<span class="text-xs text-mut">autoscale manages replicas</span>{{end}}{{end}}
   <label class="flex flex-col gap-1 text-xs text-mut">cpu<input class="input w-28" name="cpu" placeholder="250m" value="{{if .App.CPUMilli}}{{.App.CPUMilli}}m{{end}}"></label>
   <label class="flex flex-col gap-1 text-xs text-mut">memory<input class="input w-28" name="memory" placeholder="256Mi" value="{{if .App.MemoryMB}}{{.App.MemoryMB}}Mi{{end}}"></label>
   <button type="submit" class="btn">scale</button>
 </form>
 <div class="cli-echo">$ <b>luncur scale {{.App.Name}} &lt;n&gt;</b></div>
+
+{{if or (eq .App.Kind "web") (eq .App.Kind "worker")}}
+<hr class="my-3">
+{{if gt .App.AutoMin 0}}
+<p class="mb-2 text-sm"><span class="font-mono">autoscale {{.App.AutoMin}}&ndash;{{.App.AutoMax}} @{{.App.AutoCPU}}% cpu</span></p>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/autoscale" class="flex flex-wrap items-end gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <label class="flex flex-col gap-1 text-xs text-mut">min<input class="input w-24" type="number" name="min" min="1" value="{{.App.AutoMin}}"></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">max<input class="input w-24" type="number" name="max" min="1" value="{{.App.AutoMax}}"></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">cpu %<input class="input w-24" type="number" name="cpu" min="1" max="100" value="{{.App.AutoCPU}}"></label>
+  <button type="submit" class="btn">save</button>
+</form>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/autoscale" class="mt-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input type="hidden" name="off" value="1">
+  <button type="submit" class="btn-danger" hx-confirm="Turn off autoscale for {{.App.Name}}?">turn off</button>
+</form>
+{{else}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/autoscale" class="flex flex-wrap items-end gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <label class="flex flex-col gap-1 text-xs text-mut">min<input class="input w-24" type="number" name="min" min="1" placeholder="1"></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">max<input class="input w-24" type="number" name="max" min="1" placeholder="5"></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">cpu %<input class="input w-24" type="number" name="cpu" min="1" max="100" placeholder="70"></label>
+  <button type="submit" class="btn">enable autoscale</button>
+</form>
+{{end}}
+<div class="cli-echo">$ <b>luncur autoscale {{.App.Name}} --min {{if gt .App.AutoMin 0}}{{.App.AutoMin}}{{else}}1{{end}} --max {{if gt .App.AutoMax 0}}{{.App.AutoMax}}{{else}}5{{end}} --cpu {{if gt .App.AutoCPU 0}}{{.App.AutoCPU}}{{else}}70{{end}}</b></div>
+{{end}}
 </div>
 
 {{if eq .App.Kind "web"}}

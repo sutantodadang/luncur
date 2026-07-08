@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
@@ -84,6 +85,10 @@ type Input struct {
 	// Deployment's strategy to Recreate (RWO/node-local storage can't be
 	// rolling-updated across nodes).
 	Volumes []Volume
+	// AutoMin, AutoMax, AutoCPU: AutoMin > 0 enables an autoscaling/v2 HPA
+	// for web/worker Deployments; the Deployment then omits spec.replicas so
+	// the HPA owns scale under server-side apply.
+	AutoMin, AutoMax, AutoCPU int32
 }
 
 // Volume is a single per-app persistent volume: a name (becomes the PVC's
@@ -210,6 +215,35 @@ func selector(app string) map[string]string {
 
 func meta(in Input, name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{Name: name, Namespace: in.Namespace, Labels: labels(in.AppName)}
+}
+
+// buildHPA renders the autoscaling/v2 HorizontalPodAutoscaler for a web or
+// worker app with AutoMin > 0, targeting the app's Deployment on CPU
+// utilization.
+func buildHPA(in Input) *autoscalingv2.HorizontalPodAutoscaler {
+	min := in.AutoMin
+	cpu := in.AutoCPU
+	return &autoscalingv2.HorizontalPodAutoscaler{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "autoscaling/v2", Kind: "HorizontalPodAutoscaler"},
+		ObjectMeta: meta(in, in.AppName),
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+				APIVersion: "apps/v1", Kind: "Deployment", Name: in.AppName,
+			},
+			MinReplicas: &min,
+			MaxReplicas: in.AutoMax,
+			Metrics: []autoscalingv2.MetricSpec{{
+				Type: autoscalingv2.ResourceMetricSourceType,
+				Resource: &autoscalingv2.ResourceMetricSource{
+					Name: corev1.ResourceCPU,
+					Target: autoscalingv2.MetricTarget{
+						Type:               autoscalingv2.UtilizationMetricType,
+						AverageUtilization: &cpu,
+					},
+				},
+			}},
+		},
+	}
 }
 
 // Render builds the manifest set for one app. env is plaintext (the caller
@@ -354,13 +388,17 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: meta(in, in.AppName),
 		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: selector(in.AppName)},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels(in.AppName)},
 				Spec:       corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: podVolumes},
 			},
 		},
+	}
+	// Autoscale on for web/worker: omit spec.replicas entirely so
+	// server-side apply releases the field to the HPA controller.
+	if !(in.AutoMin > 0 && (kind == "web" || kind == "worker")) {
+		dep.Spec.Replicas = &replicas
 	}
 	// Explicit (== the K8s default) so the contract is visible in ejected YAML.
 	grace := int64(30)
@@ -452,9 +490,21 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			}
 		}
 
+		if kind == "web" && in.AutoMin > 0 {
+			if err := add("HorizontalPodAutoscaler", buildHPA(in)); err != nil {
+				return Rendered{}, err
+			}
+		}
+
 	case "worker":
 		if err := add("Deployment", dep); err != nil {
 			return Rendered{}, err
+		}
+
+		if in.AutoMin > 0 {
+			if err := add("HorizontalPodAutoscaler", buildHPA(in)); err != nil {
+				return Rendered{}, err
+			}
 		}
 
 	case "job":

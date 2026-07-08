@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
@@ -714,4 +715,91 @@ func TestZeroDowntimeDeploy(t *testing.T) {
 			t.Fatalf("startupProbe should be nil without health path")
 		}
 	})
+}
+
+// TestRenderAutoscaleWeb covers D2: a web app with AutoMin>0 gets an
+// autoscaling/v2 HPA targeting its Deployment, and the Deployment's
+// spec.replicas key is omitted entirely (released to the HPA controller).
+func TestRenderAutoscaleWeb(t *testing.T) {
+	in := testInput()
+	in.AutoMin, in.AutoMax, in.AutoCPU = 1, 5, 70
+	r := mustRender(t, in, nil)
+
+	var hpa autoscalingv2.HorizontalPodAutoscaler
+	if err := json.Unmarshal(objByKind(t, r, "HorizontalPodAutoscaler"), &hpa); err != nil {
+		t.Fatal(err)
+	}
+	if hpa.Spec.ScaleTargetRef.Kind != "Deployment" || hpa.Spec.ScaleTargetRef.Name != "api" {
+		t.Fatalf("scaleTargetRef: %+v", hpa.Spec.ScaleTargetRef)
+	}
+	if hpa.Spec.MinReplicas == nil || *hpa.Spec.MinReplicas != 1 || hpa.Spec.MaxReplicas != 5 {
+		t.Fatalf("min/max: %+v %d", hpa.Spec.MinReplicas, hpa.Spec.MaxReplicas)
+	}
+	if len(hpa.Spec.Metrics) != 1 || hpa.Spec.Metrics[0].Resource == nil ||
+		hpa.Spec.Metrics[0].Resource.Name != corev1.ResourceCPU ||
+		hpa.Spec.Metrics[0].Resource.Target.AverageUtilization == nil ||
+		*hpa.Spec.Metrics[0].Resource.Target.AverageUtilization != 70 {
+		t.Fatalf("metrics: %+v", hpa.Spec.Metrics)
+	}
+
+	depJSON := objByKind(t, r, "Deployment")
+	if strings.Contains(string(depJSON), `"replicas"`) {
+		t.Fatalf("deployment must omit replicas when autoscale is on: %s", depJSON)
+	}
+}
+
+// TestRenderAutoscaleOffMeansNoHPA pins the default (AutoMin 0, the zero
+// value): no HPA rendered, and the Deployment keeps its explicit replicas.
+func TestRenderAutoscaleOffMeansNoHPA(t *testing.T) {
+	r := mustRender(t, testInput(), nil)
+	if _, err := findKind(r, "HorizontalPodAutoscaler"); err == nil {
+		t.Fatalf("autoscale off must not render an HPA, got %+v", r.Objects)
+	}
+	var d appsv1.Deployment
+	json.Unmarshal(objByKind(t, r, "Deployment"), &d)
+	if d.Spec.Replicas == nil || *d.Spec.Replicas != 2 {
+		t.Fatalf("replicas: %v", d.Spec.Replicas)
+	}
+}
+
+// TestRenderAutoscaleWorker mirrors the web case for worker apps.
+func TestRenderAutoscaleWorker(t *testing.T) {
+	in := workerInput()
+	in.AutoMin, in.AutoMax, in.AutoCPU = 2, 8, 60
+	r := mustRender(t, in, nil)
+
+	var hpa autoscalingv2.HorizontalPodAutoscaler
+	if err := json.Unmarshal(objByKind(t, r, "HorizontalPodAutoscaler"), &hpa); err != nil {
+		t.Fatal(err)
+	}
+	if hpa.Spec.ScaleTargetRef.Name != "worker" || *hpa.Spec.MinReplicas != 2 || hpa.Spec.MaxReplicas != 8 {
+		t.Fatalf("hpa: %+v", hpa.Spec)
+	}
+
+	depJSON := objByKind(t, r, "Deployment")
+	if strings.Contains(string(depJSON), `"replicas"`) {
+		t.Fatalf("deployment must omit replicas when autoscale is on: %s", depJSON)
+	}
+}
+
+// TestRenderAutoscaleIgnoredForModelAndCron checks AutoMin has no effect
+// outside web/worker: model and cron apps never render an HPA even with
+// AutoMin set.
+func TestRenderAutoscaleIgnoredForModelAndCron(t *testing.T) {
+	m := Input{
+		AppName: "llm", Namespace: "ns", Image: "ignored:0", Host: "llm.example.com",
+		Kind: "model", Replicas: 1, ModelSource: "hf:org/name/model.gguf",
+		AutoMin: 1, AutoMax: 5, AutoCPU: 70,
+	}
+	rm := mustRender(t, m, nil)
+	if _, err := findKind(rm, "HorizontalPodAutoscaler"); err == nil {
+		t.Fatalf("model apps must never render an HPA, got %+v", rm.Objects)
+	}
+
+	c := cronInput()
+	c.AutoMin, c.AutoMax, c.AutoCPU = 1, 5, 70
+	rc := mustRender(t, c, nil)
+	if _, err := findKind(rc, "HorizontalPodAutoscaler"); err == nil {
+		t.Fatalf("cron apps must never render an HPA, got %+v", rc.Objects)
+	}
 }

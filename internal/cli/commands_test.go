@@ -275,6 +275,72 @@ func TestScaleCommand(t *testing.T) {
 	}
 }
 
+// TestAutoscaleCommand exercises autoscaleCmd's flag matrix: set, show, and
+// --off.
+func TestAutoscaleCommand(t *testing.T) {
+	srv := testEnv(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "p"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "app", "create", "web", "--project", "p", "--port", "8080"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "scale", "web", "--project", "p", "--cpu", "250m"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Show, off by default.
+	out, err := run(t, "autoscale", "web", "--project", "p")
+	if err != nil {
+		t.Fatalf("show: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "autoscale: off") {
+		t.Fatalf("want 'autoscale: off', got %q", out)
+	}
+
+	// Set.
+	out, err = run(t, "autoscale", "web", "--project", "p", "--min", "1", "--max", "5", "--cpu", "70")
+	if err != nil {
+		t.Fatalf("set: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "1-5") || !strings.Contains(out, "70%") {
+		t.Fatalf("set output: %q", out)
+	}
+
+	// Show after set.
+	out, err = run(t, "autoscale", "web", "--project", "p")
+	if err != nil {
+		t.Fatalf("show after set: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "1-5") || !strings.Contains(out, "70%") {
+		t.Fatalf("show after set output: %q", out)
+	}
+
+	// Partial flags (missing --cpu) rejected.
+	if _, err := run(t, "autoscale", "web", "--project", "p", "--min", "1", "--max", "5"); err == nil {
+		t.Fatal("want error when min/max/cpu aren't all set together")
+	}
+
+	// Off.
+	out, err = run(t, "autoscale", "web", "--project", "p", "--off")
+	if err != nil {
+		t.Fatalf("off: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "autoscale off") {
+		t.Fatalf("off output: %q", out)
+	}
+	out, err = run(t, "autoscale", "web", "--project", "p")
+	if err != nil {
+		t.Fatalf("show after off: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "autoscale: off") {
+		t.Fatalf("want 'autoscale: off' after --off, got %q", out)
+	}
+}
+
 // TestHealthCommand exercises healthCmd's flag matrix: --path sets, --off
 // clears, and neither/both are rejected before hitting the API.
 func TestHealthCommand(t *testing.T) {
