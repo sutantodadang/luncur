@@ -49,15 +49,27 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"StatefulSet":           {Group: "apps", Version: "v1", Resource: "statefulsets"},
 	"PodMetrics":            {Group: "metrics.k8s.io", Version: "v1beta1", Resource: "pods"},
 	"NodeMetrics":           {Group: "metrics.k8s.io", Version: "v1beta1", Resource: "nodes"},
+	// Argo Workflows engine (PR-C3): the Workflow CR and the manifest kinds
+	// its pinned install.yaml carries (CustomResourceDefinition, ConfigMap,
+	// Role, RoleBinding, PriorityClass — Deployment/Service/ServiceAccount
+	// etc. above already cover the rest).
+	"Workflow":                 {Group: "argoproj.io", Version: "v1alpha1", Resource: "workflows"},
+	"CustomResourceDefinition": {Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"},
+	"ConfigMap":                {Group: "", Version: "v1", Resource: "configmaps"},
+	"Role":                     {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"},
+	"RoleBinding":              {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"},
+	"PriorityClass":            {Group: "scheduling.k8s.io", Version: "v1", Resource: "priorityclasses"},
 }
 
 // clusterScoped marks kinds Apply must patch without a namespace.
 var clusterScoped = map[string]bool{
-	"Namespace":          true,
-	"RuntimeClass":       true,
-	"ClusterRole":        true,
-	"ClusterRoleBinding": true,
-	"ClusterIssuer":      true,
+	"Namespace":                true,
+	"RuntimeClass":             true,
+	"ClusterRole":              true,
+	"ClusterRoleBinding":       true,
+	"ClusterIssuer":            true,
+	"CustomResourceDefinition": true,
+	"PriorityClass":            true,
 }
 
 type Client struct {
@@ -174,6 +186,51 @@ func (c *Client) Apply(ctx context.Context, namespace string, objs []render.Obje
 		if err != nil {
 			return fmt.Errorf("apply %s/%s: %w", o.Kind, name, err)
 		}
+	}
+	return nil
+}
+
+// HasWorkflowCRD reports whether the Argo Workflows CRD is installed —
+// the preflight `startPipelineRun` uses before compiling a run onto the
+// argo engine (spec §Argo: friendly "run `luncur argo install`" error
+// instead of a raw apply failure against a missing CRD).
+func (c *Client) HasWorkflowCRD(ctx context.Context) (bool, error) {
+	_, err := c.dyn.Resource(gvrByKind["CustomResourceDefinition"]).Get(
+		ctx, "workflows.argoproj.io", metav1.GetOptions{},
+	)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// GetWorkflow returns a pipeline run's Workflow CR as unstructured content;
+// (nil, false, nil) when it doesn't exist (the run's argo tick treats a
+// vanished Workflow as a distinct case from a transient error).
+func (c *Client) GetWorkflow(ctx context.Context, namespace, name string) (map[string]any, bool, error) {
+	u, err := c.dyn.Resource(gvrByKind["Workflow"]).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if u == nil {
+		return nil, false, nil
+	}
+	return u.Object, true, nil
+}
+
+// DeleteWorkflow removes a pipeline run's Workflow CR. NotFound is fine —
+// stopPipelineRun's argo branch must be idempotent like every other
+// teardown path in this file.
+func (c *Client) DeleteWorkflow(ctx context.Context, namespace, name string) error {
+	err := c.dyn.Resource(gvrByKind["Workflow"]).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete Workflow/%s: %w", name, err)
 	}
 	return nil
 }

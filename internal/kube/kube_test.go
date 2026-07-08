@@ -799,6 +799,112 @@ func TestRunningJobPods(t *testing.T) {
 	}
 }
 
+// TestHasWorkflowCRDAbsent/Present cover the argo engine's install
+// preflight: false on an empty cluster, true once the Argo Workflows CRD
+// object exists.
+func TestHasWorkflowCRDAbsent(t *testing.T) {
+	dyn := newFakeDyn(t)
+	c := NewForTest(dyn, nil)
+	ok, err := c.HasWorkflowCRD(context.Background())
+	if err != nil || ok {
+		t.Fatalf("HasWorkflowCRD(empty) = (%v, %v), want (false, nil)", ok, err)
+	}
+}
+
+func TestHasWorkflowCRDPresent(t *testing.T) {
+	crd := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
+		"metadata": map[string]any{"name": "workflows.argoproj.io"},
+	}}
+	dyn := newFakeDyn(t, crd)
+	c := NewForTest(dyn, nil)
+	ok, err := c.HasWorkflowCRD(context.Background())
+	if err != nil || !ok {
+		t.Fatalf("HasWorkflowCRD(seeded) = (%v, %v), want (true, nil)", ok, err)
+	}
+}
+
+// TestApplyWorkflowPatchesTheWorkflowGVR mirrors
+// TestApplyClusterRoleBindingSkipsNamespace: it asserts on the recorded SSA
+// patch action rather than round-tripping through the fake dynamic
+// client's real ObjectTracker. The tracker's apply-patch handling only
+// computes a merge for types registered in its scheme (see dataStructFor
+// for the typed kinds this package already round-trips); an arbitrary CRD
+// kind like Workflow, decoded as unstructured.Unstructured, fails that
+// merge with "unable to find api field in struct Unstructured" — a
+// fake-client limitation, not a bug in Apply. Get/Delete (exercised below)
+// don't go through that merge path and round-trip fine.
+func TestApplyWorkflowPatchesTheWorkflowGVR(t *testing.T) {
+	c, log := fakeClient(t)
+	wf := []render.Object{{
+		Kind: "Workflow",
+		JSON: json.RawMessage(`{"apiVersion":"argoproj.io/v1alpha1","kind":"Workflow","metadata":{"name":"pl-run1"},"spec":{"entrypoint":"main"}}`),
+	}}
+	if err := c.Apply(context.Background(), "luncur-ci-proj", wf); err != nil {
+		t.Fatal(err)
+	}
+	if len(*log) != 1 {
+		t.Fatalf("want 1 action, got %d: %+v", len(*log), *log)
+	}
+	rec := (*log)[0]
+	if rec.verb != "patch" || rec.patchType != "application/apply-patch+yaml" {
+		t.Fatalf("want SSA patch, got %+v", rec)
+	}
+	if rec.resource != "workflows" || rec.name != "pl-run1" || rec.namespace != "luncur-ci-proj" {
+		t.Fatalf("bad action: %+v", rec)
+	}
+}
+
+func workflowObj(name, namespace string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "argoproj.io/v1alpha1", "kind": "Workflow",
+		"metadata": map[string]any{"name": name, "namespace": namespace},
+		"spec":      map[string]any{"entrypoint": "main"},
+	}}
+}
+
+func TestGetWorkflowFound(t *testing.T) {
+	dyn := newFakeDyn(t, workflowObj("pl-run1", "proj"))
+	c := NewForTest(dyn, nil)
+	got, found, err := c.GetWorkflow(context.Background(), "proj", "pl-run1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("want found=true")
+	}
+	if got["kind"] != "Workflow" {
+		t.Fatalf("got = %+v, want kind=Workflow", got)
+	}
+}
+
+func TestGetWorkflowAbsent(t *testing.T) {
+	dyn := newFakeDyn(t)
+	c := NewForTest(dyn, nil)
+	got, found, err := c.GetWorkflow(context.Background(), "proj", "does-not-exist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found || got != nil {
+		t.Fatalf("GetWorkflow(absent) = (%+v, %v), want (nil, false)", got, found)
+	}
+}
+
+func TestDeleteWorkflowIdempotent(t *testing.T) {
+	dyn := newFakeDyn(t, workflowObj("pl-run1", "proj"))
+	c := NewForTest(dyn, nil)
+	if err := c.DeleteWorkflow(context.Background(), "proj", "pl-run1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := c.GetWorkflow(context.Background(), "proj", "pl-run1"); err != nil || found {
+		t.Fatalf("workflow still present after delete: found=%v err=%v", found, err)
+	}
+	// Idempotent: deleting an already-gone Workflow is not an error.
+	if err := c.DeleteWorkflow(context.Background(), "proj", "pl-run1"); err != nil {
+		t.Fatalf("delete missing workflow: %v", err)
+	}
+}
+
 // TestDeleteJob covers both the happy path (Job is removed) and idempotency
 // (deleting an already-gone Job is not an error).
 func TestDeleteJob(t *testing.T) {
