@@ -61,6 +61,10 @@ type App struct {
 	// "" means the raw contract only. Keep in sync with
 	// render.TrainFrameworks / render's framework validation.
 	Framework string
+	// AutoMin, AutoMax, AutoCPU configure autoscaling/v2 HorizontalPodAutoscaler
+	// for web/worker apps. AutoMin 0 means autoscale is off; when on, the HPA
+	// owns replica count and Replicas is only the value restored on disable.
+	AutoMin, AutoMax, AutoCPU int
 }
 
 // TrainFrameworks are the valid values for apps.framework / job_runs.framework.
@@ -260,9 +264,9 @@ func (s *Store) GetApp(projectID int64, name string) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework FROM apps WHERE project_id = ? AND name = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu FROM apps WHERE project_id = ? AND name = ?`,
 		projectID, name,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -281,9 +285,9 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework FROM apps WHERE id = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu FROM apps WHERE id = ?`,
 		id,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -297,7 +301,7 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 
 func (s *Store) ListApps(projectID int64) ([]App, error) {
 	rows, err := s.db.Query(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework FROM apps WHERE project_id = ? ORDER BY name`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu FROM apps WHERE project_id = ? ORDER BY name`,
 		projectID,
 	)
 	if err != nil {
@@ -308,7 +312,7 @@ func (s *Store) ListApps(projectID int64) ([]App, error) {
 	for rows.Next() {
 		var a App
 		var gitURL, gitBranch sql.NullString
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU); err != nil {
 			return nil, err
 		}
 		a.GitURL = gitURL.String
@@ -478,6 +482,25 @@ func (s *Store) SetGPU(id int64, n int64) error {
 // the already-validated value.
 func (s *Store) SetInternal(id int64, internal bool) error {
 	res, err := s.db.Exec(`UPDATE apps SET internal = ? WHERE id = ?`, internal, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetAutoscale sets the app's HPA parameters. Passing 0/0/0 disables
+// autoscale; otherwise min must be >= 1, max must be >= min and <= 20, and
+// cpu (target average utilization percent) must be 1-100.
+func (s *Store) SetAutoscale(id int64, min, max, cpu int) error {
+	off := min == 0 && max == 0 && cpu == 0
+	valid := off || (min >= 1 && max >= min && max <= 20 && cpu >= 1 && cpu <= 100)
+	if !valid {
+		return fmt.Errorf("invalid autoscale params min=%d max=%d cpu=%d (want min>=1, max>=min<=20, cpu 1-100, or all zero to disable)", min, max, cpu)
+	}
+	res, err := s.db.Exec(`UPDATE apps SET autoscale_min = ?, autoscale_max = ?, autoscale_cpu = ? WHERE id = ?`, min, max, cpu, id)
 	if err != nil {
 		return err
 	}

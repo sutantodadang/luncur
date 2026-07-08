@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS apps (
   runtime       TEXT NOT NULL DEFAULT '',
   nodes         INTEGER NOT NULL DEFAULT 1,
   framework     TEXT NOT NULL DEFAULT '',
+  autoscale_min INTEGER NOT NULL DEFAULT 0,
+  autoscale_max INTEGER NOT NULL DEFAULT 0,
+  autoscale_cpu INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, name)
 );

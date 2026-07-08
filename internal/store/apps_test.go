@@ -267,6 +267,66 @@ func TestSetResources(t *testing.T) {
 	}
 }
 
+func TestSetAutoscale(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	a, err := s.CreateApp(p.ID, "api", 3000, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.AutoMin != 0 || a.AutoMax != 0 || a.AutoCPU != 0 {
+		t.Fatalf("want autoscale off by default, got %+v", a)
+	}
+
+	// off is valid (all zero).
+	if err := s.SetAutoscale(a.ID, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// valid enable.
+	if err := s.SetAutoscale(a.ID, 1, 5, 70); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetApp(p.ID, "api")
+	if err != nil || got.AutoMin != 1 || got.AutoMax != 5 || got.AutoCPU != 70 {
+		t.Fatalf("get after set autoscale: %+v %v", got, err)
+	}
+
+	// min 0 but max/cpu set is invalid (not the all-zero off case).
+	if err := s.SetAutoscale(a.ID, 0, 5, 70); err == nil {
+		t.Fatal("want error for min 0 with max/cpu set")
+	}
+	// max < min is invalid.
+	if err := s.SetAutoscale(a.ID, 5, 1, 70); err == nil {
+		t.Fatal("want error for max < min")
+	}
+	// max 21 exceeds cap.
+	if err := s.SetAutoscale(a.ID, 1, 21, 70); err == nil {
+		t.Fatal("want error for max > 20")
+	}
+	// cpu 0 with min/max set is invalid.
+	if err := s.SetAutoscale(a.ID, 1, 5, 0); err == nil {
+		t.Fatal("want error for cpu 0")
+	}
+	// cpu 101 exceeds cap.
+	if err := s.SetAutoscale(a.ID, 1, 5, 101); err == nil {
+		t.Fatal("want error for cpu > 100")
+	}
+
+	// disable again clears.
+	if err := s.SetAutoscale(a.ID, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetApp(p.ID, "api")
+	if err != nil || got.AutoMin != 0 || got.AutoMax != 0 || got.AutoCPU != 0 {
+		t.Fatalf("get after disable autoscale: %+v %v", got, err)
+	}
+
+	if err := s.SetAutoscale(99999, 1, 5, 70); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+}
+
 func TestCreateAppKindMatrix(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)

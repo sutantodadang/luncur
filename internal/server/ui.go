@@ -84,6 +84,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/eject", s.uiPage(s.handleUIEject))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/retry", s.uiPage(s.handleUIDomainRetry))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/scale", s.uiPage(s.handleUIScale))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/autoscale", s.uiPage(s.handleUIAutoscale))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/runs", s.uiPage(s.handleUIRunCreate))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/training", s.uiPage(s.handleUITraining))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/sweeps", s.uiPage(s.handleUISweepCreate))
@@ -1269,6 +1270,72 @@ func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.U
 		return
 	}
 	flash(w, "ok", "scaled")
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIAutoscale is autoscaleApp's UI twin: an "off=1" field disables
+// (0/0/0); otherwise min/max/cpu configure the HPA. Same shared core and
+// error-mapping shape as handleUIScale.
+func (s *server) handleUIAutoscale(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+
+	var min, max, cpu int
+	var err error
+	if r.PostFormValue("off") == "" {
+		min, err = strconv.Atoi(r.PostFormValue("min"))
+		if err != nil {
+			http.Error(w, "invalid min", http.StatusBadRequest)
+			return
+		}
+		max, err = strconv.Atoi(r.PostFormValue("max"))
+		if err != nil {
+			http.Error(w, "invalid max", http.StatusBadRequest)
+			return
+		}
+		cpu, err = strconv.Atoi(r.PostFormValue("cpu"))
+		if err != nil {
+			http.Error(w, "invalid cpu", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if _, err := s.autoscaleApp(r.Context(), p, a, min, max, cpu); err != nil {
+		var re *scaleReplicasError
+		var ke *kindMismatchError
+		var rc *volumeReplicaConflictError
+		switch {
+		case errors.Is(err, errAppEjected):
+			http.Error(w, err.Error(), http.StatusConflict)
+		case errors.Is(err, errKubeUnavailable):
+			http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		case errors.As(err, &ke):
+			http.Error(w, ke.Error(), http.StatusBadRequest)
+		case errors.As(err, &rc):
+			http.Error(w, rc.Error(), http.StatusConflict)
+		case errors.As(err, &re):
+			http.Error(w, re.Error(), http.StatusBadRequest)
+		default:
+			log.Printf("ui autoscale app: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+	if min > 0 {
+		flash(w, "ok", "autoscale saved")
+	} else {
+		flash(w, "ok", "autoscale off")
+	}
 	uiRedirect(w, r, p, a)
 }
 

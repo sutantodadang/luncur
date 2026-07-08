@@ -92,6 +92,7 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 			rule([]string{"node.k8s.io"}, []string{"runtimeclasses"}, manage...),
 			rule([]string{"cert-manager.io"}, []string{"clusterissuers"}, manage...),
 			rule([]string{"metrics.k8s.io"}, []string{"pods", "nodes"}, read...),
+			rule([]string{"autoscaling"}, []string{"horizontalpodautoscalers"}, full...),
 		},
 	}
 	if err := add("ClusterRole", cr); err != nil {

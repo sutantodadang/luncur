@@ -234,6 +234,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{project}/pipelines/{name}/webhook-secret", s.authed(s.handleGeneratePipelineWebhookSecret))
 	mux.HandleFunc("DELETE /v1/projects/{project}/pipelines/{name}/webhook-secret", s.authed(s.handleDeletePipelineWebhookSecret))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/scale", s.authed(s.handleScaleApp))
+	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/autoscale", s.authed(s.handleAutoscaleApp))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/health", s.authed(s.handleSetHealth))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookEnable))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookShow))

@@ -376,6 +376,141 @@ func mustProjectID(t *testing.T, st *store.Store, project string) int64 {
 	return p.ID
 }
 
+// TestAutoscaleHappyPathAndDisable covers D2's enable/disable round trip: a
+// web app with a CPU request enables autoscale, appJSON reports the
+// autoscale block, and disabling clears it (autoscale key absent).
+func TestAutoscaleHappyPathAndDisable(t *testing.T) {
+	srv, st := testServer(t) // no kube; app never live, so no sync required
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/scale", admin, `{"cpu":"250m"}`).Body.Close()
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/autoscale", admin, `{"min":1,"max":5,"cpu":70}`)
+	if resp.StatusCode != 200 {
+		t.Fatalf("enable: want 200, got %d", resp.StatusCode)
+	}
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	as, _ := out["autoscale"].(map[string]any)
+	if as == nil || fmt.Sprint(as["min"]) != "1" || fmt.Sprint(as["max"]) != "5" || fmt.Sprint(as["cpu"]) != "70" {
+		t.Fatalf("autoscale block: %v", out)
+	}
+
+	a, err := st.GetApp(mustProjectID(t, st, "web"), "api")
+	if err != nil || a.AutoMin != 1 || a.AutoMax != 5 || a.AutoCPU != 70 {
+		t.Fatalf("store after enable: %+v %v", a, err)
+	}
+
+	// Disable.
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/autoscale", admin, `{"min":0,"max":0,"cpu":0}`)
+	if resp.StatusCode != 200 {
+		t.Fatalf("disable: want 200, got %d", resp.StatusCode)
+	}
+	out = nil
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if _, ok := out["autoscale"]; ok {
+		t.Fatalf("autoscale key must be absent after disable: %v", out)
+	}
+	a, err = st.GetApp(mustProjectID(t, st, "web"), "api")
+	if err != nil || a.AutoMin != 0 || a.AutoMax != 0 || a.AutoCPU != 0 {
+		t.Fatalf("store after disable: %+v %v", a, err)
+	}
+}
+
+// TestAutoscaleGuardNoResources checks enabling without a CPU request first
+// is rejected (the HPA needs a CPU request to compute utilization against).
+func TestAutoscaleGuardNoResources(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/autoscale", admin, `{"min":1,"max":5,"cpu":70}`)
+	defer resp.Body.Close()
+	if resp.StatusCode < 400 || resp.StatusCode >= 500 {
+		t.Fatalf("no cpu request: want 4xx, got %d", resp.StatusCode)
+	}
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	errBody, _ := out["error"].(map[string]any)
+	if !strings.Contains(fmt.Sprint(errBody["message"]), "CPU") {
+		t.Fatalf("want CPU mentioned in error, got %v", out)
+	}
+}
+
+// TestAutoscaleGuardKindMismatch checks cron/model apps can't autoscale.
+func TestAutoscaleGuardKindMismatch(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"nightly","kind":"cron","schedule":"0 3 * * *"}`).Body.Close()
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/nightly/autoscale", admin, `{"min":1,"max":5,"cpu":70}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("cron autoscale: want 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestAutoscaleGuardGPU checks GPU apps can't autoscale.
+func TestAutoscaleGuardGPU(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/scale", admin, `{"cpu":"250m","gpu":1}`).Body.Close()
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/autoscale", admin, `{"min":1,"max":5,"cpu":70}`)
+	defer resp.Body.Close()
+	if resp.StatusCode < 400 || resp.StatusCode >= 500 {
+		t.Fatalf("gpu autoscale: want 4xx, got %d", resp.StatusCode)
+	}
+}
+
+// TestAutoscaleGuardVolume checks apps with a volume can't autoscale (RWO
+// node-local storage, same constraint as >1 replica).
+func TestAutoscaleGuardVolume(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/scale", admin, `{"cpu":"250m"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/volumes", admin, `{"name":"data","path":"/data","size_gb":1}`).Body.Close()
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/autoscale", admin, `{"min":1,"max":5,"cpu":70}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != 409 {
+		t.Fatalf("volume autoscale: want 409, got %d", resp.StatusCode)
+	}
+}
+
+// TestScaleReplicasRejectedWhileAutoscaleActive checks D2's coupling with
+// D-scale: once autoscale owns replica count, a plain replicas scale is
+// rejected until autoscale is disabled.
+func TestScaleReplicasRejectedWhileAutoscaleActive(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/scale", admin, `{"cpu":"250m"}`).Body.Close()
+	doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/autoscale", admin, `{"min":1,"max":5,"cpu":70}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/scale", admin, `{"replicas":3}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("scale while autoscale active: want 400, got %d", resp.StatusCode)
+	}
+	var out map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	errBody, _ := out["error"].(map[string]any)
+	if !strings.Contains(fmt.Sprint(errBody["message"]), "autoscale active") {
+		t.Fatalf("want 'autoscale active' in message, got %v", out)
+	}
+}
+
 func TestMemberForbiddenOnForeignProject(t *testing.T) {
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")

@@ -59,6 +59,7 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"Role":                     {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"},
 	"RoleBinding":              {Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"},
 	"PriorityClass":            {Group: "scheduling.k8s.io", Version: "v1", Resource: "priorityclasses"},
+	"HorizontalPodAutoscaler":  {Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"},
 }
 
 // clusterScoped marks kinds Apply must patch without a namespace.
@@ -245,6 +246,7 @@ func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) er
 		{"Service", app},
 		{"Ingress", app},
 		{"CronJob", app},
+		{"HorizontalPodAutoscaler", app},
 		{"Secret", render.SecretName(app)},
 	}
 	for _, t := range targets {

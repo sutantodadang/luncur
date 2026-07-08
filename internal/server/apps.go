@@ -79,6 +79,9 @@ func (s *server) appJSON(p store.Project, a store.App) map[string]any {
 	} else {
 		out["url"] = s.appURL(a)
 	}
+	if a.AutoMin > 0 {
+		out["autoscale"] = map[string]any{"min": a.AutoMin, "max": a.AutoMax, "cpu": a.AutoCPU}
+	}
 	return out
 }
 
@@ -695,6 +698,9 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 	if a.Kind == "cron" && req.Replicas != nil {
 		return store.App{}, &kindMismatchError{fmt.Errorf("cron apps do not scale")}
 	}
+	if req.Replicas != nil && a.AutoMin > 0 {
+		return store.App{}, &scaleReplicasError{fmt.Errorf("autoscale active (%d-%d @%d%% cpu); disable first: luncur autoscale %s --off", a.AutoMin, a.AutoMax, a.AutoCPU, a.Name)}
+	}
 	if req.Replicas != nil && *req.Replicas > 1 {
 		vols, err := s.st.ListVolumes(a.ID)
 		if err != nil {
@@ -838,6 +844,120 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		"memory_mb": updated.MemoryMB,
 		"gpu":       updated.GPUCount,
 	})
+}
+
+// autoscaleApp is the shared core of handleAutoscaleApp and its UI twin
+// (handleUIAutoscale): min 0 disables autoscale, else min/max/cpu configure
+// an autoscaling/v2 HPA. Guards mirror scaleApp's live-check-before-persist
+// pattern; enabling additionally requires a CPU request, no volumes (RWO
+// storage can't be autoscaled the same way it can't run >1 replica), and no
+// GPUs (scale those manually).
+func (s *server) autoscaleApp(ctx context.Context, p store.Project, a store.App, min, max, cpu int) (store.App, error) {
+	if a.Ejected {
+		return store.App{}, errAppEjected
+	}
+	enabling := min > 0
+	if enabling {
+		if a.Kind != "web" && a.Kind != "worker" {
+			return store.App{}, &kindMismatchError{fmt.Errorf("only web and worker apps autoscale")}
+		}
+		if a.CPUMilli <= 0 {
+			return store.App{}, &scaleReplicasError{fmt.Errorf("set CPU resources first (luncur scale <app> --cpu 500m); HPA needs a CPU request")}
+		}
+		vols, err := s.st.ListVolumes(a.ID)
+		if err != nil {
+			return store.App{}, err
+		}
+		if len(vols) > 0 {
+			return store.App{}, &volumeReplicaConflictError{fmt.Errorf("app has a volume (RWO node-local storage); max 1 replica")}
+		}
+		if a.GPUCount > 0 {
+			return store.App{}, &scaleReplicasError{fmt.Errorf("GPU apps can't autoscale; scale manually")}
+		}
+	}
+
+	d, err := s.st.LatestDeployment(a.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return store.App{}, err
+	}
+	live := err == nil && d.Status == "live"
+	if live && s.kube == nil {
+		return store.App{}, errKubeUnavailable
+	}
+
+	if err := s.st.SetAutoscale(a.ID, min, max, cpu); err != nil {
+		return store.App{}, &scaleReplicasError{err}
+	}
+	a.AutoMin, a.AutoMax, a.AutoCPU = min, max, cpu
+
+	if live {
+		if !enabling {
+			if err := s.kube.DeleteObject(ctx, p.Namespace, "HorizontalPodAutoscaler", a.Name); err != nil {
+				return store.App{}, err
+			}
+		}
+		if err := s.syncApp(ctx, p, a); err != nil {
+			return store.App{}, err
+		}
+	}
+
+	return a, nil
+}
+
+func (s *server) handleAutoscaleApp(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Min *int `json:"min"`
+		Max *int `json:"max"`
+		CPU *int `json:"cpu"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	min, max, cpu := 0, 0, 0
+	if body.Min != nil {
+		min = *body.Min
+	}
+	if body.Max != nil {
+		max = *body.Max
+	}
+	if body.CPU != nil {
+		cpu = *body.CPU
+	}
+
+	updated, err := s.autoscaleApp(r.Context(), p, a, min, max, cpu)
+	if err != nil {
+		var re *scaleReplicasError
+		var ke *kindMismatchError
+		var rc *volumeReplicaConflictError
+		switch {
+		case errors.Is(err, errAppEjected):
+			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
+		case errors.Is(err, errKubeUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "kubernetes_unavailable", "kubernetes is not configured")
+		case errors.As(err, &ke):
+			writeError(w, http.StatusBadRequest, "kind_mismatch", ke.Error())
+		case errors.As(err, &rc):
+			writeError(w, http.StatusConflict, "volume_replica_conflict", rc.Error())
+		case errors.As(err, &re):
+			writeError(w, http.StatusBadRequest, "bad_request", re.Error())
+		default:
+			log.Printf("autoscale app: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, s.appJSON(p, updated))
 }
 
 // errTrainingOverBudget wraps a validateGPUBudget failure from setAppTraining
