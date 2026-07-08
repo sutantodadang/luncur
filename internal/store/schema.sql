@@ -194,6 +194,38 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 
+CREATE TABLE IF NOT EXISTS sweeps (
+  id          TEXT PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  metric      TEXT NOT NULL,
+  direction   TEXT NOT NULL CHECK (direction IN ('min','max')),
+  max_trials  INTEGER NOT NULL,
+  parallel    INTEGER NOT NULL,
+  early_stop  INTEGER NOT NULL DEFAULT 0,
+  nodes       INTEGER NOT NULL DEFAULT 1,
+  framework   TEXT NOT NULL DEFAULT '',
+  seed        INTEGER NOT NULL DEFAULT 0,
+  status      TEXT NOT NULL CHECK (status IN ('running','done','stopped','failed')),
+  warning     TEXT NOT NULL DEFAULT '',
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sweeps_app ON sweeps(app_id);
+
+CREATE TABLE IF NOT EXISTS sweep_trials (
+  id           TEXT PRIMARY KEY,
+  sweep_id     TEXT NOT NULL REFERENCES sweeps(id) ON DELETE CASCADE,
+  run_id       INTEGER REFERENCES job_runs(id) ON DELETE SET NULL,
+  params_json  TEXT NOT NULL,
+  metric_value REAL,
+  metric_step  INTEGER,
+  state        TEXT NOT NULL CHECK (state IN ('pending','running','done','failed','pruned')),
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sweep_trials_sweep ON sweep_trials(sweep_id);
+
 CREATE TABLE IF NOT EXISTS gpu_instances (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   provider    TEXT NOT NULL,

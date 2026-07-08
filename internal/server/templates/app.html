@@ -99,6 +99,45 @@
 </table>
 {{else}}<p class="text-sm text-mut">No runs yet. Deploy an image, then trigger the first run.</p>{{end}}
 </div>
+
+<div class="card mb-6">
+<h2>Sweeps</h2>
+{{if not .App.Ejected}}
+<form class="mb-2 flex flex-wrap items-end gap-2" method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/sweeps">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <label class="flex w-full flex-col gap-1 text-xs text-mut">params.yaml<textarea class="input w-full font-mono text-xs" name="params_yaml" rows="3" placeholder="lr: {min: 1e-5, max: 1e-2, log: true}&#10;batch_size: [16, 32]" required></textarea></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">metric<input class="input w-32" name="metric" placeholder="val_loss" required></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">direction<select class="input w-auto" name="direction">
+    <option value="min" selected>min</option>
+    <option value="max">max</option>
+  </select></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">max trials<input class="input w-20" type="number" name="max_trials" min="1" max="500" value="20" required></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">parallel<input class="input w-20" type="number" name="parallel" min="1" max="50" value="2" required></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">nodes<input class="input w-20" type="number" name="nodes" min="0" placeholder="{{.App.Nodes}}"></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">framework<select class="input w-auto" name="framework">
+    <option value="">app default</option>
+    {{range .TrainFrameworks}}<option value="{{.}}">{{.}}</option>{{end}}
+  </select></label>
+  <label class="flex items-center gap-1 text-xs text-mut"><input type="checkbox" name="early_stop" value="1"> early stop</label>
+  <button type="submit" class="btn">start sweep</button>
+</form>
+<div class="cli-echo mb-3">$ <b>luncur sweep start {{.App.Name}} --project {{.Project.Name}} --params params.yaml --metric &lt;m&gt; [--direction min] [--max-trials N] [--parallel N] [--early-stop]</b></div>
+{{end}}
+{{if .Sweeps}}
+<table class="tbl"><tr><th>ID</th><th>Status</th><th>Metric</th><th>Direction</th><th>Trials</th><th>Best</th></tr>
+{{range .Sweeps}}<tr>
+  <td class="font-mono text-xs">{{.ID}}</td>
+  <td><span class="chip {{.ChipClass}}">{{.Status}}</span></td>
+  <td class="font-mono text-xs">{{.Metric}}</td>
+  <td class="font-mono text-xs">{{.Direction}}</td>
+  <td class="font-mono text-xs">{{.Done}}/{{.Total}}</td>
+  <td class="font-mono text-xs">{{if .Best}}{{.Best}}{{else}}&ndash;{{end}}</td>
+</tr>{{end}}
+</table>
+{{if .Sweep}}{{template "sweeptrials" .Sweep}}{{end}}
+{{else}}<p class="text-sm text-mut">No sweeps yet. Start one above.</p>{{end}}
+<div class="cli-echo mt-2">$ <b>luncur sweep ls {{.App.Name}} --project {{.Project.Name}}</b> &middot; $ <b>luncur sweep status &lt;id&gt; --app {{.App.Name}} --project {{.Project.Name}}</b></div>
+</div>
 {{end}}
 
 <div class="card mb-6">
@@ -380,3 +419,32 @@
      carries no hx-* attributes, so htmx has nothing left to re-trigger and
      polling stops on its own. */}}
 {{define "statuschip"}}<span id="app-status-chip" class="status-{{.Status}}"{{if .Building}} hx-get="/ui/projects/{{.ProjectName}}/apps/{{.AppName}}/chip" hx-trigger="every 3s" hx-swap="outerHTML"{{end}}>{{.Status}}</span>{{end}}
+
+{{/* sweeptrials is the Sweeps card's polling fragment for the current
+     sweep's trial table: while the sweep is still "running" it re-fetches
+     itself every 15s (same self-terminating htmx idiom as "statuschip");
+     once it lands on a terminal status (done/stopped/failed) the returned
+     markup carries no hx-* attributes, so htmx stops re-fetching on its
+     own. */}}
+{{define "sweeptrials"}}<div id="sweep-trials"{{if .Polling}} hx-get="/ui/projects/{{.ProjectName}}/apps/{{.AppName}}/sweeps/{{.ID}}/trials" hx-trigger="every 15s" hx-swap="outerHTML"{{end}}>
+<p class="mb-2 text-xs text-mut">sweep <code>{{.ID}}</code> &middot; <span class="chip {{.ChipClass}}">{{.Status}}</span> &middot; {{.Metric}} ({{.Direction}}){{if .EarlyStop}} &middot; early-stop{{end}} &middot; {{.Done}}/{{.Total}} done{{if .BestValue}} &middot; best {{.BestValue}}{{end}}</p>
+{{if .Warning}}<p class="err">{{.Warning}}</p>{{end}}
+{{if .Trials}}
+<table class="tbl"><tr><th>Trial</th><th>State</th><th>Params</th><th>Metric</th><th>Run</th></tr>
+{{range .Trials}}<tr{{if .Best}} class="bg-rowhover"{{end}}>
+  <td class="font-mono text-xs">{{.ID}}{{if .Best}} <span class="chip chip-ok">best</span>{{end}}</td>
+  <td><span class="chip {{.ChipClass}}">{{.State}}</span></td>
+  <td class="font-mono text-xs">{{.ParamsCompact}}</td>
+  <td class="font-mono text-xs">{{if .MetricValue}}{{.MetricValue}}{{else}}&ndash;{{end}}</td>
+  <td class="font-mono text-xs">{{if .RunID}}{{.RunID}}{{else}}&ndash;{{end}}</td>
+</tr>{{end}}
+</table>
+{{end}}
+{{if eq .Status "running"}}
+<form class="mt-2" method="post" action="/ui/projects/{{.ProjectName}}/apps/{{.AppName}}/sweeps/{{.ID}}/stop">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn-ghost" hx-confirm="Stop sweep {{.ID}}? Running trials are killed.">stop sweep</button>
+</form>
+<div class="cli-echo mt-1">$ <b>luncur sweep stop {{.ID}} --app {{.AppName}} --project {{.ProjectName}}</b></div>
+{{end}}
+</div>{{end}}

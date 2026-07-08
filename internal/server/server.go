@@ -75,6 +75,12 @@ type server struct {
 	// dnsProvider builds the DNS-01 provider from settings; tests override.
 	dnsProvider func() (dns.Provider, error)
 
+	// sweepMLflowURLFn resolves an app's attached mlflow addon to its
+	// in-cluster tracking URL ("" when none); defaults to sweepMLflowURL.
+	// Tests override it to point at an httptest.Server instead of a real
+	// cluster-internal DNS name, mirroring mailer/dnsProvider above.
+	sweepMLflowURLFn func(store.App, string) string
+
 	certs *certManager
 
 	// lastRegistryGC tracks the last completed weekly registry GC sweep,
@@ -85,6 +91,12 @@ type server struct {
 	// seen idle (no GPU pod scheduled on it). In-memory, loop-local state
 	// for runGPUIdleLoop — written only by that single goroutine.
 	gpuIdleSince map[string]time.Time
+
+	// sweepMLflowDown tracks, per sweep id, whether its mlflow addon has
+	// already been found unreachable this sweep's lifetime — once set, the
+	// loop stops retrying mlflow and reads log-line metrics instead.
+	// In-memory, loop-local state for startSweepLoop.
+	sweepMLflowDown map[string]bool
 
 	tmpl *template.Template
 
@@ -141,6 +153,7 @@ func newServer(d Deps) *server {
 	}
 	s.mailer = s.smtpMailer
 	s.dnsProvider = s.dnsProviderFromSettings
+	s.sweepMLflowURLFn = s.sweepMLflowURL
 
 	if d.DataDir != "" {
 		src, err := build.NewSource(d.DataDir)
@@ -205,6 +218,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/runs", s.authed(s.handleListRuns))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/runs/{id}", s.authed(s.handleGetRun))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/runs/{id}/logs", s.authed(s.handleRunLogs))
+	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/sweeps", s.authed(s.handleCreateSweep))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/sweeps", s.authed(s.handleListSweeps))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/sweeps/{id}", s.authed(s.handleGetSweep))
+	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/sweeps/{id}/stop", s.authed(s.handleStopSweep))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/scale", s.authed(s.handleScaleApp))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/health", s.authed(s.handleSetHealth))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookEnable))
