@@ -93,7 +93,7 @@ func (b *PushBackend) Push(ctx context.Context, u store.User, project, app strin
 	if err != nil {
 		return fmt.Errorf("deploy %s failed — see: luncur logs %s --project %s --deploy %s", d.ID, app, project, d.ID)
 	}
-	fmt.Fprintf(progress, "-----> app live: http://%s\n", hostFor(a.Name, s.externalIP))
+	fmt.Fprintf(progress, "-----> app live: %s\n", s.appURL(a))
 	return nil
 }
 

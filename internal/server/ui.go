@@ -580,7 +580,7 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	}
 	rows := make([]uiAppRow, 0, len(list))
 	for _, a := range list {
-		url := "http://" + hostFor(a.Name, s.externalIP)
+		url := s.appURL(a)
 		internalURL := ""
 		if a.Kind != "web" {
 			url = ""
@@ -1088,7 +1088,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		}
 	}
 
-	url := "http://" + hostFor(a.Name, s.externalIP)
+	url := s.appURL(a)
 	internalURL := ""
 	if a.Internal {
 		internalURL = internalURLFor(a.Name, p.Namespace)

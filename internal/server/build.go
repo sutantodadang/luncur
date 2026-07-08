@@ -334,6 +334,6 @@ func (s *server) finishDeploy(ctx context.Context, p store.Project, a store.App,
 	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
 		log.Printf("mark deploy %s live (kube apply already succeeded): %v", d.ID, err)
 	}
-	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: "http://" + hostFor(a.Name, s.externalIP)})
+	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: s.appURL(a)})
 	return nil
 }
