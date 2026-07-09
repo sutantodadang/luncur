@@ -76,6 +76,22 @@ func backupCmd() *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(create, list, prune)
+	verify := &cobra.Command{
+		Use:   "verify <archive.tar.gz>",
+		Short: "Restore an archive into a scratch dir and check its integrity",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rep, err := verifyArchive(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"ok: %d files, %d tables, integrity=%s, sealer key=%v\n",
+				len(rep.Files), rep.Tables, rep.Integrity, rep.SealerKey)
+			return nil
+		},
+	}
+
+	cmd.AddCommand(create, list, prune, verify)
 	return cmd
 }
