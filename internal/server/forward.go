@@ -40,7 +40,10 @@ func (s *server) handleForwardApp(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 
-	addr := fmt.Sprintf("%s.%s:%d", a.Name, p.Namespace, a.Port)
+	// The app Service listens on 80 and targets the container's app port
+	// (render.go) — dialing a.Port on the ClusterIP would hang: kube-proxy
+	// silently drops non-service ports.
+	addr := fmt.Sprintf("%s.%s:80", a.Name, p.Namespace)
 	backend, err := s.fwdDial(r.Context(), "tcp", addr)
 	if err != nil {
 		log.Printf("forward dial %s: %v", addr, err)

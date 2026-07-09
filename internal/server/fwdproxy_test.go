@@ -11,6 +11,19 @@ import (
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
+// The app Service listens on 80 (targetPort = container port); dialing
+// a.Port on the ClusterIP hangs — kube-proxy drops non-service ports.
+// Field-found regression: browser spun forever, then 502.
+func TestFwdProxyTargetUsesServicePort80(t *testing.T) {
+	u := fwdProxyTarget(
+		store.Project{Namespace: "luncur-waku"},
+		store.App{Name: "waku-simpaniz", Port: 8001},
+	)
+	if got := u.String(); got != "http://waku-simpaniz.luncur-waku:80" {
+		t.Fatalf("target %s, want service port 80", got)
+	}
+}
+
 func TestForwardHostParsing(t *testing.T) {
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st, ExternalIP: "1.2.3.4"})

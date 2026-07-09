@@ -65,7 +65,7 @@ func TestForwardTunnelEcho(t *testing.T) {
 
 	ts, st, srv := newForwardTestServer(t)
 	srv.fwdDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if addr != "api.luncur-web:3000" {
+		if addr != "api.luncur-web:80" {
 			t.Errorf("dialed %s", addr)
 		}
 		return net.Dial("tcp", ln.Addr().String())
