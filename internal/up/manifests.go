@@ -307,3 +307,41 @@ func PanelIngress(externalIP, customHost, tlsSecret string) (render.Object, erro
 	}
 	return render.Object{Kind: "Ingress", JSON: b}, nil
 }
+
+// ForwardIngressName is deterministic so destroy paths can compute it
+// without a rendered manifest at hand.
+func ForwardIngressName(app, namespace string) string {
+	return "fwd-" + app + "-" + namespace
+}
+
+// ForwardIngress routes one internal app's forward host to luncur itself;
+// the server's host check proxies it onward after cookie auth. No TLS
+// block: forward hosts share the sslip.io plain-HTTP posture for now.
+func ForwardIngress(host, app, namespace string) (render.Object, error) {
+	labels := map[string]string{
+		"app.kubernetes.io/name":       "luncur",
+		"app.kubernetes.io/managed-by": "luncur",
+		"luncur.dev/forward":           "true",
+	}
+	pathType := netv1.PathTypePrefix
+	ing := &netv1.Ingress{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
+		ObjectMeta: metav1.ObjectMeta{Name: ForwardIngressName(app, namespace), Namespace: systemNamespace, Labels: labels},
+		Spec: netv1.IngressSpec{Rules: []netv1.IngressRule{{
+			Host: host,
+			IngressRuleValue: netv1.IngressRuleValue{HTTP: &netv1.HTTPIngressRuleValue{
+				Paths: []netv1.HTTPIngressPath{{
+					Path: "/", PathType: &pathType,
+					Backend: netv1.IngressBackend{Service: &netv1.IngressServiceBackend{
+						Name: "luncur", Port: netv1.ServiceBackendPort{Number: 80},
+					}},
+				}},
+			}},
+		}}},
+	}
+	b, err := json.Marshal(ing)
+	if err != nil {
+		return render.Object{}, err
+	}
+	return render.Object{Kind: "Ingress", JSON: b}, nil
+}
