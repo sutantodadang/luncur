@@ -71,6 +71,23 @@ adds `"chat_id"` from `notify_telegram_chat`.
 backup can unseal your env vars and addon credentials. The S3 bucket is
 the trust boundary; scope its access accordingly.
 
+## Verify
+
+```sh
+luncur backup verify /path/to/luncur-YYYYMMDD-HHMMSS.tar.gz
+# ok: N files, N tables, integrity=ok, sealer key=true
+```
+
+Restores the archive into a throwaway scratch directory, runs `PRAGMA
+integrity_check` against the restored DB, and confirms the sealer key is
+present — the live data dir is never touched, so it's safe to run against
+production archives any time, not just during an incident. This is the
+automated restore drill: a backup nobody has restored is not a backup. Run
+it after every `backup create`, and on a quarterly cadence against the
+latest S3 archive — see
+[Disaster recovery](../operations/disaster-recovery.md) for the full drill
+checklist, RTO/RPO numbers, and failure-mode breakdown.
+
 ## Restoring
 
 `luncur restore` automates the DB/key half; addon data stays guided:
