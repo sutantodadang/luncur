@@ -43,41 +43,37 @@ func PanelHost(ip string) string {
 	return "panel." + ip + ".sslip.io"
 }
 
-// LuncurObjects returns the manifests luncur applies to deploy itself:
-// ServiceAccount, ClusterRoleBinding, Deployment, Service, and Ingress —
-// all in the luncur-system namespace, labeled app.kubernetes.io/managed-by:
-// luncur.
-func LuncurObjects(p Params) ([]render.Object, error) {
-	var objs []render.Object
-	add := func(kind string, v any) error {
-		b, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		objs = append(objs, render.Object{Kind: kind, JSON: b})
-		return nil
-	}
-
-	labels := map[string]string{
+// luncurLabels are the standard labels stamped on every object LuncurObjects
+// and LuncurClusterRole render.
+func luncurLabels() map[string]string {
+	return map[string]string{
 		"app.kubernetes.io/name":       "luncur",
 		"app.kubernetes.io/managed-by": "luncur",
 	}
+}
 
-	sa := &corev1.ServiceAccount{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"},
-		ObjectMeta: metav1.ObjectMeta{Name: "luncur", Namespace: systemNamespace, Labels: labels},
-	}
-	if err := add("ServiceAccount", sa); err != nil {
-		return nil, err
-	}
+func rule(groups []string, resources []string, verbs ...string) rbacv1.PolicyRule {
+	return rbacv1.PolicyRule{APIGroups: groups, Resources: resources, Verbs: verbs}
+}
 
-	rule := func(groups []string, resources []string, verbs ...string) rbacv1.PolicyRule {
-		return rbacv1.PolicyRule{APIGroups: groups, Resources: resources, Verbs: verbs}
-	}
+// LuncurClusterRole returns the "luncur" ClusterRole — the single source of
+// truth for LuncurObjects (applied by `luncur up`) and the server's own
+// startup self-heal (internal/kube.EnsureClusterRole, wired in
+// internal/cli/serve.go): every release that adds a permission the server
+// needs updates this one function, and both paths pick it up.
+//
+// The last rule grants a narrow, scoped "escalate" on this ClusterRole
+// itself (via ResourceNames), so the server's own ServiceAccount can extend
+// its role's rules without cluster-admin: Kubernetes' RBAC escalation
+// prevention otherwise blocks a ServiceAccount from granting rules it
+// doesn't already hold, which is exactly what self-heal needs to do when a
+// new release adds a permission.
+func LuncurClusterRole() *rbacv1.ClusterRole {
+	labels := luncurLabels()
 	full := []string{"get", "list", "watch", "create", "update", "patch", "delete"}
 	read := []string{"get", "list", "watch"}
 	manage := []string{"get", "list", "watch", "create", "update", "patch"}
-	cr := &rbacv1.ClusterRole{
+	return &rbacv1.ClusterRole{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole"},
 		ObjectMeta: metav1.ObjectMeta{Name: "luncur", Labels: labels},
 		Rules: []rbacv1.PolicyRule{
@@ -94,9 +90,42 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 			rule([]string{"metrics.k8s.io"}, []string{"pods", "nodes"}, read...),
 			rule([]string{"autoscaling"}, []string{"horizontalpodautoscalers"}, full...),
 			rule([]string{"policy"}, []string{"poddisruptionbudgets"}, full...),
+			{
+				APIGroups:     []string{"rbac.authorization.k8s.io"},
+				Resources:     []string{"clusterroles"},
+				ResourceNames: []string{"luncur"},
+				Verbs:         []string{"get", "update", "patch", "escalate"},
+			},
 		},
 	}
-	if err := add("ClusterRole", cr); err != nil {
+}
+
+// LuncurObjects returns the manifests luncur applies to deploy itself:
+// ServiceAccount, ClusterRoleBinding, Deployment, Service, and Ingress —
+// all in the luncur-system namespace, labeled app.kubernetes.io/managed-by:
+// luncur.
+func LuncurObjects(p Params) ([]render.Object, error) {
+	var objs []render.Object
+	add := func(kind string, v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		objs = append(objs, render.Object{Kind: kind, JSON: b})
+		return nil
+	}
+
+	labels := luncurLabels()
+
+	sa := &corev1.ServiceAccount{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"},
+		ObjectMeta: metav1.ObjectMeta{Name: "luncur", Namespace: systemNamespace, Labels: labels},
+	}
+	if err := add("ServiceAccount", sa); err != nil {
+		return nil, err
+	}
+
+	if err := add("ClusterRole", LuncurClusterRole()); err != nil {
 		return nil, err
 	}
 

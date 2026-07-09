@@ -22,6 +22,7 @@ import (
 	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/server"
 	"github.com/sutantodadang/luncur/internal/store"
+	"github.com/sutantodadang/luncur/internal/up"
 )
 
 // bootstrapAdmin creates the initial admin from "email:password" iff the
@@ -94,6 +95,22 @@ func serveCmd() *cobra.Command {
 				if err := build.EnsureSystem(context.Background(), kubeClient,
 					"luncur-system", "luncur-data", "luncur-registry", "registry:2"); err != nil {
 					log.Printf("warning: ensure system infra: %v", err)
+				}
+			}
+
+			// Self-heal the "luncur" ClusterRole on every boot: `luncur
+			// update` only swaps the Deployment image, so a release that
+			// adds RBAC rules (metrics nodes, PodDisruptionBudgets, ...)
+			// otherwise breaks in the field until the operator re-runs
+			// `luncur up`. Best-effort — never block or fail boot on RBAC
+			// trouble. Note: upgrading from a version without this feature
+			// still needs one `luncur up`, since the live ClusterRole won't
+			// yet hold the "escalate" rule this call needs to update itself.
+			if kubeClient != nil {
+				if changed, err := kubeClient.EnsureClusterRole(context.Background(), up.LuncurClusterRole()); err != nil {
+					log.Printf("rbac self-heal: %v (run 'luncur up' to update permissions)", err)
+				} else if changed {
+					log.Printf("rbac self-heal: ClusterRole/luncur updated")
 				}
 			}
 

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -958,5 +960,103 @@ func TestDeleteJob(t *testing.T) {
 	// Idempotent: deleting a missing job is success, not an error.
 	if err := c.DeleteJob(context.Background(), "ns-train", "does-not-exist"); err != nil {
 		t.Fatalf("delete missing job: %v", err)
+	}
+}
+
+// clusterRoleRules reads back the live "luncur" ClusterRole's Rules from
+// dyn, failing the test if it's missing or malformed.
+func clusterRoleRules(t *testing.T, dyn *dynamicfake.FakeDynamicClient) []rbacv1.PolicyRule {
+	t.Helper()
+	u, err := dyn.Resource(gvrByKind["ClusterRole"]).Get(context.Background(), "luncur", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get ClusterRole/luncur: %v", err)
+	}
+	b, err := json.Marshal(u.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cr rbacv1.ClusterRole
+	if err := json.Unmarshal(b, &cr); err != nil {
+		t.Fatal(err)
+	}
+	return cr.Rules
+}
+
+// TestEnsureClusterRoleCreatesWhenAbsent: EnsureClusterRole is the server's
+// startup self-heal (internal/cli/serve.go) — on a fresh cluster (or one
+// whose ClusterRole predates a feature) the "luncur" ClusterRole doesn't
+// exist yet, and EnsureClusterRole must create it rather than error.
+func TestEnsureClusterRoleCreatesWhenAbsent(t *testing.T) {
+	dyn := newFakeDyn(t) // no seed objects: ClusterRole/luncur doesn't exist
+	c := NewForTest(dyn, nil)
+	want := &rbacv1.ClusterRole{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole"},
+		ObjectMeta: metav1.ObjectMeta{Name: "luncur"},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "watch"}},
+		},
+	}
+
+	changed, err := c.EnsureClusterRole(context.Background(), want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("want changed=true creating an absent ClusterRole")
+	}
+	if got := clusterRoleRules(t, dyn); !reflect.DeepEqual(got, want.Rules) {
+		t.Fatalf("rules after create = %+v, want %+v", got, want.Rules)
+	}
+}
+
+// TestEnsureClusterRoleUpdatesWhenDrifted covers the field incident this
+// function exists to fix: a live ClusterRole seeded with an older, narrower
+// rule set (as if applied by a previous `luncur up`) must be brought up to
+// date with the binary's current desired rules — e.g. adding the
+// PodDisruptionBudget rule from #78 — without the operator re-running
+// `luncur up`. A second call with matching rules is a no-op (changed=false).
+func TestEnsureClusterRoleUpdatesWhenDrifted(t *testing.T) {
+	old := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole",
+		"metadata": map[string]any{"name": "luncur"},
+		"rules": []any{
+			map[string]any{
+				"apiGroups": []any{""},
+				"resources": []any{"pods"},
+				"verbs":     []any{"get", "list", "watch"},
+			},
+		},
+	}}
+	dyn := newFakeDyn(t, old)
+	c := NewForTest(dyn, nil)
+
+	want := &rbacv1.ClusterRole{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole"},
+		ObjectMeta: metav1.ObjectMeta{Name: "luncur"},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "watch"}},
+			{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"},
+				Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		},
+	}
+
+	changed, err := c.EnsureClusterRole(context.Background(), want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("want changed=true updating a drifted ClusterRole")
+	}
+	if got := clusterRoleRules(t, dyn); !reflect.DeepEqual(got, want.Rules) {
+		t.Fatalf("rules after update = %+v, want %+v", got, want.Rules)
+	}
+
+	// Second call against now-matching rules is a no-op.
+	changed, err = c.EnsureClusterRole(context.Background(), want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("want changed=false when rules already match")
 	}
 }

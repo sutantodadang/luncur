@@ -51,6 +51,12 @@ func TestLuncurObjects(t *testing.T) {
 	if !strings.Contains(all, `"resources":["pods","nodes"]`) {
 		t.Fatal(`manifests: metrics.k8s.io rule missing resources ["pods","nodes"]`)
 	}
+	// The self-heal escalate grant must be scoped to the "luncur" ClusterRole
+	// by name, never a bare escalate on all clusterroles — that would let the
+	// server's ServiceAccount grant itself arbitrary cluster-admin rules.
+	if !strings.Contains(all, `"verbs":["get","update","patch","escalate"],"apiGroups":["rbac.authorization.k8s.io"],"resources":["clusterroles"],"resourceNames":["luncur"]`) {
+		t.Fatal(`manifests: ClusterRole missing scoped self-heal escalate rule on resourceNames ["luncur"]`)
+	}
 	for _, want := range []string{
 		`"--ssh-listen"`,
 		`"nodePort":30022`,
