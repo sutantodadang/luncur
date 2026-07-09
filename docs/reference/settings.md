@@ -27,9 +27,10 @@ where each one is explained in context.
 | `smtp_from` | defaults to `smtp_user` | From address for invite emails | [Backups & restore](../guides/backups.md) |
 | `notify_url` | unset (write-only) | Unset disables deploy/cert notifications entirely | [Backups & restore](../guides/backups.md) |
 | `notify_format` | `generic` | Webhook payload shape: `generic`, `discord`, `slack`, or `telegram` | [Backups & restore](../guides/backups.md) |
-| `notify_events` | `deploy_failed,cert_failed` | CSV subset of `deploy_success`, `deploy_failed`, `cert_issued`, `cert_failed` | [Backups & restore](../guides/backups.md) |
+| `notify_events` | `deploy_failed,cert_failed,app_unhealthy,backup_failed` | CSV subset of `deploy_success`, `deploy_failed`, `cert_issued`, `cert_failed`, `app_unhealthy`, `backup_failed` | [Backups & restore](../guides/backups.md) |
 | `notify_telegram_chat` | unset | Chat id for the `telegram` notify format | [Backups & restore](../guides/backups.md) |
 | `audit_retention_days` | `90` | Audit rows older than this are pruned opportunistically; `0` keeps every row forever | [Audit log](../operations/audit.md) |
 | `gpu_idle_minutes` | unset (disabled) | Per-instance idle scale-to-zero timeout for rented GPU nodes with no GPU pod scheduled | [GPU cloud](../ml/gpu-cloud.md) |
 | `train_gang_timeout_minutes` | `10` | How long a multi-node training run waits for all pods to schedule together before the Job is torn down; `0` disables the guard | [Training](../ml/training.md) |
 | `pipeline_engine` | `native` | Default orchestrator engine for pipeline runs when a pipeline doesn't pin its own `engine`: `native` or `argo` (`luncur argo install` first) | [Pipelines](../ml/pipelines.md) |
+| `metrics_token` | unset (write-only) | Bearer token gating `GET /metrics/prometheus`; unset 404s the endpoint | — |

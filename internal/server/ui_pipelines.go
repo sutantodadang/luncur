@@ -294,7 +294,7 @@ func (s *server) handleUIPipeline(w http.ResponseWriter, r *http.Request, u stor
 // success or back to the project page (?err=) on a known validation failure
 // — same idiom as handleUISweepCreate.
 func (s *server) handleUIPipelineCreate(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -323,7 +323,7 @@ func (s *server) handleUIPipelineCreate(w http.ResponseWriter, r *http.Request, 
 // editor always submits yaml/cron/engine together (unlike the JSON API's
 // optional-pointer fields), so all three are always re-validated together.
 func (s *server) handleUIPipelineUpdate(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -359,7 +359,7 @@ func (s *server) handleUIPipelineUpdate(w http.ResponseWriter, r *http.Request, 
 // pipelineUIRedirectErr, same as any other pipeline validation failure — no
 // special-casing (spec's "surface via the existing htmx error banner").
 func (s *server) handleUIPipelineRun(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -384,7 +384,7 @@ func (s *server) handleUIPipelineRun(w http.ResponseWriter, r *http.Request, u s
 // as handleStopPipelineRun (API), redirect back to the detail page instead
 // of a JSON body — same idiom as handleUISweepStop.
 func (s *server) handleUIPipelineRunStop(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -447,7 +447,7 @@ func (s *server) handleUIPipelineRunSteps(w http.ResponseWriter, r *http.Request
 // GET render (handleUIPipeline) never re-renders it, so this fragment is the
 // only place it's ever shown.
 func (s *server) handleUIPipelineWebhookSecret(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}

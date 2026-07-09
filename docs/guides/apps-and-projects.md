@@ -31,12 +31,21 @@ out.
 luncur project create myproj
 luncur project list
 luncur project add-member myproj member@example.com
+luncur project add-member myproj viewer@example.com --role viewer
 
 luncur app create myapp --project myproj --port 8080
 luncur app list --project myproj
 luncur app info myapp --project myproj
 luncur app raw myapp --project myproj
 ```
+
+**Member roles:** project membership has its own role, separate from the
+global admin/member role above. `--role member` (the default) can create,
+deploy, and otherwise modify anything in the project. `--role viewer` grants
+read-only access — a viewer can browse apps, deploys, logs, and metrics but
+any mutating request (deploy, scale, env changes, add-ons, etc.) is rejected
+with a 403 `read_only` error, both via the API and the web UI. Global admins
+always have full write access to every project regardless of membership.
 
 **App kinds — web (default), worker, cron:**
 ```sh

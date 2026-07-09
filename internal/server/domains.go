@@ -110,7 +110,7 @@ func (s *server) addDomain(ctx context.Context, p store.Project, a store.App, ho
 }
 
 func (s *server) handleAddDomain(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -164,7 +164,7 @@ func (s *server) handleListDomains(w http.ResponseWriter, r *http.Request, u sto
 }
 
 func (s *server) handleDeleteDomain(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -211,7 +211,7 @@ func (s *server) retryDomain(p store.Project, a store.App, hostname string) erro
 }
 
 func (s *server) handleRetryDomain(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

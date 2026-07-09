@@ -129,7 +129,7 @@ func (s *server) rollback(ctx context.Context, p store.Project, a store.App, u s
 }
 
 func (s *server) handleRollback(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -15,6 +16,10 @@ const (
 	monitorInterval = 15 * time.Second
 	monitorWindow   = 120
 )
+
+// crashCooldown suppresses repeat app_unhealthy notifications while an app
+// keeps crash-looping; one alert per cooldown window per app.
+const crashCooldown = 30 * time.Minute
 
 // metricSample is one point on a live chart.
 type metricSample struct {
@@ -55,13 +60,41 @@ type monitor struct {
 	mu    sync.Mutex
 	apps  map[string]*metricRing // key "<namespace>/<app>"
 	nodes map[string]*metricRing // key node name; CPUMilli/MemoryMiB = usage
+
+	// restarts/lastAlert track crash-loop state per app key ("<namespace>/<app>"),
+	// guarded by mu alongside the metric rings.
+	restarts  map[string]int
+	lastAlert map[string]time.Time
 }
 
 func newMonitor() *monitor {
 	return &monitor{
-		apps:  make(map[string]*metricRing),
-		nodes: make(map[string]*metricRing),
+		apps:      make(map[string]*metricRing),
+		nodes:     make(map[string]*metricRing),
+		restarts:  make(map[string]int),
+		lastAlert: make(map[string]time.Time),
 	}
+}
+
+// crashLoopCheck records the current restart count for key and reports
+// whether an app_unhealthy alert should fire: at least 3 more restarts since
+// the previous sample, and no alert already sent within cooldown. The first
+// sample ever seen for a key just establishes the baseline — nothing to
+// compare against yet, so it never alerts.
+func (m *monitor) crashLoopCheck(now time.Time, key string, count int, cooldown time.Duration) (delta int, alert bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prev, had := m.restarts[key]
+	delta = count - prev
+	m.restarts[key] = count
+	if !had || delta < 3 {
+		return delta, false
+	}
+	if last, ok := m.lastAlert[key]; ok && now.Sub(last) < cooldown {
+		return delta, false
+	}
+	m.lastAlert[key] = now
+	return delta, true
 }
 
 // record adds one sample per app/node this tick reported, and zero-fills
@@ -155,7 +188,40 @@ func (s *server) sampleMetrics(ctx context.Context) {
 	if err != nil {
 		nodes = nil
 	}
-	s.mon.record(s.nowFn(), apps, nodes)
+	now := s.nowFn()
+	s.mon.record(now, apps, nodes)
+	s.checkCrashLoops(ctx, now)
+}
+
+// checkCrashLoops polls every known app's restart count and fires
+// app_unhealthy (via s.notify, fire-and-forget) when it jumps by >=3 since
+// the previous sample, subject to crashCooldown per app.
+func (s *server) checkCrashLoops(ctx context.Context, now time.Time) {
+	projects, err := s.st.ListProjects()
+	if err != nil {
+		return
+	}
+	for _, p := range projects {
+		apps, err := s.st.ListApps(p.ID)
+		if err != nil {
+			continue
+		}
+		for _, a := range apps {
+			count, err := s.kube.RestartCount(ctx, p.Namespace, a.Name)
+			if err != nil {
+				continue
+			}
+			key := p.Namespace + "/" + a.Name
+			if delta, alert := s.mon.crashLoopCheck(now, key, count, crashCooldown); alert {
+				s.notify(notifyEvent{
+					Event:   "app_unhealthy",
+					Project: p.Name,
+					App:     a.Name,
+					Err:     fmt.Sprintf("%d container restarts in the last %s", delta, monitorInterval*2),
+				})
+			}
+		}
+	}
 }
 
 // StartMonitor runs the metrics sampler until ctx ends. No-op without kube.

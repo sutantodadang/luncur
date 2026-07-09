@@ -47,21 +47,26 @@ unconfigured SMTP) never blocks invite creation — the API returns
 `emailed:false` plus a warning, and the invite link can be copied as
 before.
 
-**Notifications (deploy & cert events):**
+**Notifications (deploy, cert & health events):**
 
 ```sh
 luncur config set notify_url https://discord.com/api/webhooks/...   # write-only: reads show "(set)"
 luncur config set notify_format discord      # generic (default) | discord | slack | telegram
-luncur config set notify_events deploy_success,deploy_failed,cert_failed
+luncur config set notify_events deploy_success,deploy_failed,cert_failed,app_unhealthy,backup_failed
 # telegram: notify_url = https://api.telegram.org/bot<token>/sendMessage
 luncur config set notify_telegram_chat 123456789
 ```
 
 Unset `notify_url` disables the feature entirely. `notify_events` is a CSV
-subset of `deploy_success`, `deploy_failed`, `cert_issued`, `cert_failed`;
-default when unset is `deploy_failed,cert_failed`. Delivery is best-effort:
-one attempt, a 5s timeout, failures logged — a notification never blocks a
-deploy or cert issuance. The `generic` format POSTs
+subset of `deploy_success`, `deploy_failed`, `cert_issued`, `cert_failed`,
+`app_unhealthy`, `backup_failed`; default when unset is
+`deploy_failed,cert_failed,app_unhealthy,backup_failed`. `app_unhealthy` fires
+when an app's container restart count jumps by 3+ between two 15s monitor
+samples (crash-loop detection), at most once per 30 minutes per app.
+`backup_failed` fires when a scheduled (`backup_schedule=daily`) backup run
+errors. Delivery is best-effort: one attempt, a 5s timeout, failures logged —
+a notification never blocks a deploy, cert issuance, or the monitor loop. The
+`generic` format POSTs
 `{"event","project","app","deploy_id","status","url","error","time"}`
 (`deploy_id` omitted for cert events, `url`/`error` omitted when empty, `time`
 RFC3339); `discord`/`slack` POST `{"content"|"text": <message>}`; `telegram`
@@ -70,6 +75,23 @@ adds `"chat_id"` from `notify_telegram_chat`.
 **Security note:** archives contain the sealer key — whoever can read a
 backup can unseal your env vars and addon credentials. The S3 bucket is
 the trust boundary; scope its access accordingly.
+
+## Verify
+
+```sh
+luncur backup verify /path/to/luncur-YYYYMMDD-HHMMSS.tar.gz
+# ok: N files, N tables, integrity=ok, sealer key=true
+```
+
+Restores the archive into a throwaway scratch directory, runs `PRAGMA
+integrity_check` against the restored DB, and confirms the sealer key is
+present — the live data dir is never touched, so it's safe to run against
+production archives any time, not just during an incident. This is the
+automated restore drill: a backup nobody has restored is not a backup. Run
+it after every `backup create`, and on a quarterly cadence against the
+latest S3 archive — see
+[Disaster recovery](../operations/disaster-recovery.md) for the full drill
+checklist, RTO/RPO numbers, and failure-mode breakdown.
 
 ## Restoring
 

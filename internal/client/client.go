@@ -255,9 +255,11 @@ func (c *Client) ListProjects() ([]ProjectInfo, error) {
 	return out, err
 }
 
-func (c *Client) AddMember(project, email string) error {
+// AddMember adds email to project with the given role ("member" or
+// "viewer"); an empty role defaults to "member" server-side.
+func (c *Client) AddMember(project, email, role string) error {
 	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/members",
-		map[string]string{"email": email}, nil)
+		map[string]string{"email": email, "role": role}, nil)
 }
 
 // RenameProject changes a project's name in place; its k8s namespace never

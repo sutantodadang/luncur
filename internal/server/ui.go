@@ -27,7 +27,7 @@ const csrfCookie = "luncur_csrf"
 func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ui/static/{file}", s.handleUIStatic)
 	mux.HandleFunc("GET /ui/login", s.handleUILoginPage)
-	mux.HandleFunc("POST /ui/login", s.handleUILogin)
+	mux.HandleFunc("POST /ui/login", s.rateLimited(s.handleUILogin))
 	mux.HandleFunc("POST /ui/logout", s.handleUILogout)
 	mux.HandleFunc("GET /ui/register", s.handleUIRegisterPage)
 	mux.HandleFunc("POST /ui/register", s.handleUIRegister)
@@ -284,6 +284,27 @@ func (s *server) uiProject(w http.ResponseWriter, r *http.Request, u store.User)
 	return p, true
 }
 
+// uiProjectWrite is uiProject plus write authorization: global admins and
+// role=member pass; role=viewer gets a plain-text 403, matching the CSRF
+// check's precedent for how this UI surface rejects a blocked write (as
+// opposed to uiProject/uiAdmin's leak-nothing 404, which is about hiding
+// existence rather than declining an otherwise-visible action).
+func (s *server) uiProjectWrite(w http.ResponseWriter, r *http.Request, u store.User) (store.Project, bool) {
+	p, ok := s.uiProject(w, r, u)
+	if !ok {
+		return p, false
+	}
+	if u.Role == "admin" {
+		return p, true
+	}
+	role, err := s.st.MemberRole(p.ID, u.ID)
+	if err == nil && role == "viewer" {
+		http.Error(w, "viewers cannot modify this project", http.StatusForbidden)
+		return p, false
+	}
+	return p, true
+}
+
 // uiAdmin 404s non-admins (leak-nothing, same policy as uiProject).
 func (s *server) uiAdmin(w http.ResponseWriter, u store.User) bool {
 	if u.Role != "admin" {
@@ -448,7 +469,16 @@ func (s *server) handleUIAddMember(w http.ResponseWriter, r *http.Request, u sto
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if err := s.st.AddMember(p.ID, member.ID); err != nil {
+	role := r.PostFormValue("role")
+	if role == "" {
+		role = "member"
+	}
+	if err := s.st.AddMember(p.ID, member.ID, role); err != nil {
+		var ve *store.ValidationError
+		if errors.As(err, &ve) {
+			http.Redirect(w, r, "/ui/projects/"+p.Name+"?err="+url.QueryEscape(ve.Error()), http.StatusSeeOther)
+			return
+		}
 		log.Printf("ui add member: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -723,7 +753,7 @@ func (s *server) handleUIQuota(w http.ResponseWriter, r *http.Request, u store.U
 // CreateGitApp core, plain-text 400 + redirect back to the create form
 // instead of a JSON envelope.
 func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -916,7 +946,8 @@ func (s *server) handleUIChip(w http.ResponseWriter, r *http.Request, u store.Us
 // renders an addon's connection URL by default, only on this explicit
 // hx-get, so credentials don't sit in the page's initial HTML/history.
 func (s *server) handleUIAddonURL(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	// Credentials in the reveal fragment: viewers are blocked like writes.
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1175,7 +1206,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 // rides along on this one response — it must never be persisted in
 // plaintext or appear in a URL/query string.
 func (s *server) handleUIWebhookEnable(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1210,7 +1241,7 @@ func (s *server) handleUIWebhookEnable(w http.ResponseWriter, r *http.Request, u
 // then redirect back — nothing sensitive to show, so a normal redirect
 // (unlike enable) is fine here.
 func (s *server) handleUIWebhookDisable(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1259,7 +1290,7 @@ func firstNonEmpty(vals ...string) string {
 }
 
 func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1319,7 +1350,7 @@ func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.U
 // (0/0/0); otherwise min/max/cpu configure the HPA. Same shared core and
 // error-mapping shape as handleUIScale.
 func (s *server) handleUIAutoscale(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1387,7 +1418,7 @@ func (s *server) handleUIAutoscale(w http.ResponseWriter, r *http.Request, u sto
 // app page with ?err= (matches handleUICreateApp's deploy-failure idiom)
 // instead of erroring the whole request.
 func (s *server) handleUIRunCreate(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1456,7 +1487,7 @@ func parseUIRunOpts(r *http.Request) (runOpts, error) {
 // core as handleSetTraining, form-POST instead of JSON, redirect back to
 // the app page with ?err= on failure (mirrors handleUIGPUQuota).
 func (s *server) handleUITraining(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1487,7 +1518,7 @@ func (s *server) handleUITraining(w http.ResponseWriter, r *http.Request, u stor
 }
 
 func (s *server) handleUIHealth(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1514,7 +1545,7 @@ func (s *server) handleUIHealth(w http.ResponseWriter, r *http.Request, u store.
 }
 
 func (s *server) handleUIEnvSet(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1549,7 +1580,7 @@ func (s *server) handleUIEnvSet(w http.ResponseWriter, r *http.Request, u store.
 // handleUIEnvBulk is handleBulkSetEnv's UI twin: paste-in-only bulk upsert
 // from a raw .env textarea, redirecting back to the app page on success.
 func (s *server) handleUIEnvBulk(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1592,7 +1623,7 @@ func (s *server) handleUIEnvBulk(w http.ResponseWriter, r *http.Request, u store
 }
 
 func (s *server) handleUIEnvUnset(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1626,7 +1657,7 @@ func (s *server) handleUIEnvUnset(w http.ResponseWriter, r *http.Request, u stor
 // non-empty DNS warning rides along as a ?warn= query param so the page can
 // show it once, on the redirect target, without persisting it anywhere.
 func (s *server) handleUIDomainAdd(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1660,7 +1691,7 @@ func (s *server) handleUIDomainAdd(w http.ResponseWriter, r *http.Request, u sto
 // handleUIDomainDelete is handleDeleteDomain's UI twin: same store+sync
 // calls, redirect instead of a 204.
 func (s *server) handleUIDomainDelete(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1694,7 +1725,7 @@ func (s *server) handleUIDomainDelete(w http.ResponseWriter, r *http.Request, u 
 // handleUIVolumeAdd is handleAddVolume's UI twin: same shared addVolume
 // core, redirect instead of JSON.
 func (s *server) handleUIVolumeAdd(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1738,7 +1769,7 @@ func (s *server) handleUIVolumeAdd(w http.ResponseWriter, r *http.Request, u sto
 // handleUIVolumeRemove is handleDeleteVolume's UI twin: same shared
 // removeVolume core (purge via checkbox), redirect instead of JSON.
 func (s *server) handleUIVolumeRemove(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1774,7 +1805,7 @@ func (s *server) handleUIVolumeRemove(w http.ResponseWriter, r *http.Request, u 
 // createAddon core (unattached — the project page's form has no app
 // picker), redirect instead of a 201 body.
 func (s *server) handleUIAddonCreate(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1813,7 +1844,7 @@ func (s *server) handleUIAddonCreate(w http.ResponseWriter, r *http.Request, u s
 // removeAddon core, redirect instead of a 204. force/keep_data ride form
 // checkboxes instead of query params.
 func (s *server) handleUIAddonDelete(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1849,7 +1880,7 @@ func (s *server) handleUIAddonDelete(w http.ResponseWriter, r *http.Request, u s
 // attachAddon core. A non-empty collision warning rides the ?warn= query
 // param, same mechanism handleUIDomainAdd uses.
 func (s *server) handleUIAddonAttach(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1887,7 +1918,7 @@ func (s *server) handleUIAddonAttach(w http.ResponseWriter, r *http.Request, u s
 // handleUIAddonDetach is handleDetachAddon's UI twin: same store+sync
 // calls, redirect instead of a 204.
 func (s *server) handleUIAddonDetach(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1924,7 +1955,7 @@ func (s *server) handleUIAddonDetach(w http.ResponseWriter, r *http.Request, u s
 // only guards against a direct POST); missing kube/build-source surface as
 // 503 exactly like the API path, never as a silent redirect.
 func (s *server) handleUIDeploy(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -1960,7 +1991,7 @@ func (s *server) handleUIDeploy(w http.ResponseWriter, r *http.Request, u store.
 // out of s.rollback) because applyImageDeploy would otherwise panic on a
 // nil client — mirroring handleRollback's requireKube check.
 func (s *server) handleUIRollback(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -2013,7 +2044,7 @@ func (s *server) handleUIRollback(w http.ResponseWriter, r *http.Request, u stor
 // handleUIAppDestroy is handleDeleteApp's UI twin: same destroyApp core,
 // redirect back to the project page instead of a 204.
 func (s *server) handleUIAppDestroy(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -2038,7 +2069,7 @@ func (s *server) handleUIAppDestroy(w http.ResponseWriter, r *http.Request, u st
 // back to the app page (whose ejected banner then tells the story) instead
 // of returning the rendered YAML in the body.
 func (s *server) handleUIEject(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -2061,7 +2092,7 @@ func (s *server) handleUIEject(w http.ResponseWriter, r *http.Request, u store.U
 // handleUIDomainRetry is handleRetryDomain's UI twin: same retryDomain core,
 // redirect back to the app page instead of a 202.
 func (s *server) handleUIDomainRetry(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -2096,7 +2127,7 @@ func (s *server) handleUIDomainRetry(w http.ResponseWriter, r *http.Request, u s
 // handleUIAddonUpgrade is handleUpgradeAddon's UI twin: same upgradeAddon
 // core, redirect back to the project page instead of a 200 body.
 func (s *server) handleUIAddonUpgrade(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -2451,7 +2482,7 @@ func (s *server) handleUIInviteCreate(w http.ResponseWriter, r *http.Request, u 
 // handleUIAdopt is handleAdoptApp's UI twin: clear the ejected flag,
 // best-effort re-sync, redirect back to the app page.
 func (s *server) handleUIAdopt(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -2583,7 +2614,7 @@ func (s *server) handleUIEditGet(w http.ResponseWriter, r *http.Request, u store
 // override — re-renders the editor with the user's own text so nothing is
 // lost.
 func (s *server) handleUIEditPost(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}

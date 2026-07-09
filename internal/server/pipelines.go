@@ -1220,7 +1220,7 @@ func writePipelineRequestError(w http.ResponseWriter, err error) bool {
 // handleCreatePipeline creates a pipeline from a compiled+validated
 // pipeline.yaml.
 func (s *server) handleCreatePipeline(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -1256,7 +1256,7 @@ func (s *server) handleCreatePipeline(w http.ResponseWriter, r *http.Request, u 
 // schedule; a non-empty cron is validated (400 bad_request naming "cron" on
 // bad syntax).
 func (s *server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -1335,7 +1335,7 @@ func (s *server) handleGetPipeline(w http.ResponseWriter, r *http.Request, u sto
 // can lose it" instinct, but pipelines have no auto-stop-on-delete: the
 // operator must stop the run first.
 func (s *server) handleDeletePipeline(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -1367,7 +1367,7 @@ func (s *server) handleDeletePipeline(w http.ResponseWriter, r *http.Request, u 
 
 // handleCreatePipelineRun manually triggers a pipeline run.
 func (s *server) handleCreatePipelineRun(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -1439,7 +1439,7 @@ func (s *server) handleGetPipelineRun(w http.ResponseWriter, r *http.Request, u 
 // via stopPipelineRun and finishes "stopped"; an already-finished run is a
 // 200 no-op that just reports current state (B2 stopSweep convention).
 func (s *server) handleStopPipelineRun(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -1518,7 +1518,7 @@ func (s *server) generatePipelineWebhookSecret(pl store.Pipeline) (string, error
 // never recoverable from the store afterward (only the sealed bytes
 // persist), mirroring handleWebhookEnable's contract for app deploy hooks.
 func (s *server) handleGeneratePipelineWebhookSecret(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -1547,7 +1547,7 @@ func (s *server) handleGeneratePipelineWebhookSecret(w http.ResponseWriter, r *h
 // the stored secret is cleared, so any previously-issued secret stops
 // verifying.
 func (s *server) handleDeletePipelineWebhookSecret(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

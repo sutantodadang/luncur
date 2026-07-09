@@ -164,7 +164,7 @@ func (s *server) startRun(ctx context.Context, p store.Project, a store.App, opt
 
 // handleCreateRun triggers one run of a kind=job app via the JSON API.
 func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

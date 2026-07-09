@@ -102,6 +102,10 @@ type server struct {
 
 	// mon collects live app/node CPU/memory samples in memory; see monitor.go.
 	mon *monitor
+
+	// loginLimiter guards login endpoints against brute-force attempts;
+	// see ratelimit.go.
+	loginLimiter *rateLimiter
 }
 
 // newServer wires all server fields (including build config defaults) but
@@ -147,6 +151,7 @@ func newServer(d Deps) *server {
 		nowFn:           time.Now,
 		httpClient:      &http.Client{Timeout: 5 * time.Second},
 		mon:             newMonitor(),
+		loginLimiter:    newRateLimiter(time.Now),
 	}
 	if d.Kube != nil {
 		s.execer = d.Kube
@@ -182,7 +187,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("POST /v1/login", s.handleLogin)
+	mux.HandleFunc("GET /metrics/prometheus", s.handlePrometheus)
+	mux.HandleFunc("POST /v1/login", s.rateLimited(s.handleLogin))
 	mux.HandleFunc("GET /v1/me", s.authed(s.handleMe))
 	mux.HandleFunc("PUT /v1/me/password", s.authed(s.handleChangePassword))
 	mux.HandleFunc("PUT /v1/me/email", s.authed(s.handleChangeEmail))

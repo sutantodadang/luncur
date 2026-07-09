@@ -20,14 +20,33 @@ func (s *Store) GetUserByEmail(email string) (User, error) {
 	return u, err
 }
 
-// AddMember adds userID to projectID's membership as 'member'. Idempotent:
-// re-adding an existing member is a no-op.
-func (s *Store) AddMember(projectID, userID int64) error {
+// AddMember adds userID to projectID's membership with the given role
+// ("member" or "viewer"). Idempotent: re-adding an existing member updates
+// their role.
+func (s *Store) AddMember(projectID, userID int64, role string) error {
+	if role != "member" && role != "viewer" {
+		return validationErrorf("invalid role %q (must be member or viewer)", role)
+	}
 	_, err := s.db.Exec(
-		`INSERT OR IGNORE INTO project_members (project_id, user_id, role) VALUES (?, ?, 'member')`,
-		projectID, userID,
+		`INSERT INTO project_members (project_id, user_id, role) VALUES (?, ?, ?)
+		 ON CONFLICT (project_id, user_id) DO UPDATE SET role = excluded.role`,
+		projectID, userID, role,
 	)
 	return err
+}
+
+// MemberRole returns userID's role in projectID ("member"/"viewer"), or
+// ErrNotFound when they are not a member.
+func (s *Store) MemberRole(projectID, userID int64) (string, error) {
+	var role string
+	err := s.db.QueryRow(
+		`SELECT role FROM project_members WHERE project_id = ? AND user_id = ?`,
+		projectID, userID,
+	).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return role, err
 }
 
 // RemoveMember drops userID from projectID's membership. ErrNotFound when

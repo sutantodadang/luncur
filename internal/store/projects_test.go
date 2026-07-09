@@ -92,7 +92,7 @@ func TestDeleteProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AddMember(p.ID, u.ID); err != nil {
+	if err := s.AddMember(p.ID, u.ID, "member"); err != nil {
 		t.Fatal(err)
 	}
 

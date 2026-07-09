@@ -51,7 +51,7 @@ func (s *server) addVolume(ctx context.Context, p store.Project, a store.App, na
 }
 
 func (s *server) handleAddVolume(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -142,7 +142,7 @@ func (s *server) removeVolume(ctx context.Context, p store.Project, a store.App,
 }
 
 func (s *server) handleDeleteVolume(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

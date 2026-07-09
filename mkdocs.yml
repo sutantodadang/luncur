@@ -47,6 +47,7 @@ nav:
   - Operations:
       - Audit log: operations/audit.md
       - Doctor: operations/doctor.md
+      - Disaster recovery: operations/disaster-recovery.md
       - Registry GC: operations/registry-gc.md
       - Eject & adopt: operations/eject-adopt.md
       - Uninstall: operations/uninstall.md

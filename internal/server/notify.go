@@ -15,7 +15,7 @@ const errTailLimit = 300
 
 // defaultNotifyEvents is the notify_events value used when the setting is
 // unset.
-const defaultNotifyEvents = "deploy_failed,cert_failed"
+const defaultNotifyEvents = "deploy_failed,cert_failed,app_unhealthy,backup_failed"
 
 // notifyEventNames are the valid values inside notify_events (CSV).
 var notifyEventNames = map[string]bool{
@@ -24,6 +24,8 @@ var notifyEventNames = map[string]bool{
 	"cert_issued":    true,
 	"cert_failed":    true,
 	"pipeline":       true,
+	"app_unhealthy":  true,
+	"backup_failed":  true,
 }
 
 // notifyFormats are the valid values for notify_format.
@@ -61,10 +63,10 @@ func parseNotifyEvents(csv string) map[string]bool {
 	return out
 }
 
-// notifyEvent describes one deploy/cert/pipeline outcome to report to the
-// configured notification webhook (see the notify_* settings).
+// notifyEvent describes one deploy/cert/pipeline/health outcome to report to
+// the configured notification webhook (see the notify_* settings).
 type notifyEvent struct {
-	Event    string // deploy_success|deploy_failed|cert_issued|cert_failed|pipeline
+	Event    string // deploy_success|deploy_failed|cert_issued|cert_failed|pipeline|app_unhealthy|backup_failed
 	Project  string
 	App      string
 	DeployID string // "" for cert/pipeline events — internal id, kept for API consumers
@@ -186,6 +188,10 @@ func notifyMessage(ev notifyEvent) string {
 		return fmt.Sprintf("⚠️ %s cert failed: %s", ev.URL, ev.Err)
 	case "pipeline":
 		return fmt.Sprintf("🔧 %s/%s: %s", ev.Project, ev.App, ev.Message)
+	case "app_unhealthy":
+		return fmt.Sprintf("🚨 %s/%s unhealthy: %s", ev.Project, ev.App, ev.Err)
+	case "backup_failed":
+		return fmt.Sprintf("💾 scheduled backup failed: %s", ev.Err)
 	default:
 		return fmt.Sprintf("%s: %s/%s", ev.Event, ev.Project, ev.App)
 	}

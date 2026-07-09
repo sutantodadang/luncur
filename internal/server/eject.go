@@ -60,7 +60,7 @@ func (s *server) ejectApp(p store.Project, a store.App) (yamlOut []byte, savedTo
 }
 
 func (s *server) handleEjectApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -85,7 +85,7 @@ func (s *server) handleEjectApp(w http.ResponseWriter, r *http.Request, u store.
 // rendered state onto the still-running objects, reclaiming
 // fieldManager=luncur (and overwriting any drift — documented behavior).
 func (s *server) handleAdoptApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

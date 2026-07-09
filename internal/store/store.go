@@ -161,6 +161,10 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("migrate addon types: %w", err)
 	}
 
+	if err := migrateMemberRoles(db); err != nil {
+		return fmt.Errorf("migrate member roles: %w", err)
+	}
+
 	// Created here rather than in schema.sql: schema.sql's CREATE TABLE IF
 	// NOT EXISTS is a no-op on a pre-existing deployments table, so a
 	// standalone CREATE INDEX there would run (and fail on the missing
@@ -376,6 +380,59 @@ SELECT id, project_id, type, name, version, size_gb, creds_enc, created_at FROM 
 		return err
 	}
 	if _, err := tx.Exec(`ALTER TABLE addons_new RENAME TO addons`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateMemberRoles rebuilds project_members when its CHECK constraint
+// predates the 'viewer' role. SQLite can't ALTER a CHECK, so this is a
+// copy-rename rebuild; the (project_id, user_id) primary key and existing
+// rows survive unchanged (foreign_keys is toggled off around the swap).
+func migrateMemberRoles(db *sql.DB) error {
+	var tableSQL string
+	err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'project_members'`,
+	).Scan(&tableSQL)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if strings.Contains(tableSQL, "'viewer'") {
+		return nil
+	}
+
+	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	defer db.Exec(`PRAGMA foreign_keys=ON`) //nolint:errcheck
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+
+	if _, err := tx.Exec(`
+CREATE TABLE project_members_new (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role       TEXT NOT NULL CHECK (role IN ('admin','member','viewer')),
+  PRIMARY KEY (project_id, user_id)
+)`); err != nil {
+		return fmt.Errorf("create project_members_new: %w", err)
+	}
+	if _, err := tx.Exec(`
+INSERT INTO project_members_new (project_id, user_id, role)
+SELECT project_id, user_id, role FROM project_members`); err != nil {
+		return fmt.Errorf("copy project_members: %w", err)
+	}
+	if _, err := tx.Exec(`DROP TABLE project_members`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE project_members_new RENAME TO project_members`); err != nil {
 		return err
 	}
 	return tx.Commit()
