@@ -89,6 +89,9 @@ var settableKeys = map[string]func(string) bool{
 	// store.seedNetworkIsolation; toggling here fans out to every project
 	// namespace via networkIsolationChanged.
 	"network_isolation": func(v string) bool { return v == "on" || v == "off" },
+	// metrics_token: bearer token gating GET /metrics/prometheus. Sealed at
+	// rest like backup_s3_secret_key; unset means the endpoint 404s.
+	"metrics_token": func(v string) bool { return v != "" },
 }
 
 // sealedKeys are write-only secrets: sealed at rest with the install
@@ -100,6 +103,7 @@ var sealedKeys = map[string]bool{
 	"dns_route53_secret_key":  true,
 	"dns_rfc2136_tsig_secret": true,
 	"notify_url":              true,
+	"metrics_token":           true,
 }
 
 func (s *server) handleGetSetting(w http.ResponseWriter, r *http.Request, _ store.User) {

@@ -187,6 +187,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("GET /metrics/prometheus", s.handlePrometheus)
 	mux.HandleFunc("POST /v1/login", s.rateLimited(s.handleLogin))
 	mux.HandleFunc("GET /v1/me", s.authed(s.handleMe))
 	mux.HandleFunc("PUT /v1/me/password", s.authed(s.handleChangePassword))
