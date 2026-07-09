@@ -946,7 +946,8 @@ func (s *server) handleUIChip(w http.ResponseWriter, r *http.Request, u store.Us
 // renders an addon's connection URL by default, only on this explicit
 // hx-get, so credentials don't sit in the page's initial HTML/history.
 func (s *server) handleUIAddonURL(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	// Credentials in the reveal fragment: viewers are blocked like writes.
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}

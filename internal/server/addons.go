@@ -421,7 +421,9 @@ func (s *server) handleListAddons(w http.ResponseWriter, r *http.Request, u stor
 // receive it under — the same values addonEnv injects, so what users copy
 // here matches what their app sees.
 func (s *server) handleAddonURL(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	// Connection URLs embed live credentials; a read-only viewer could use
+	// them to write to the addon directly, so gate like a mutation.
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
