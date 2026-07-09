@@ -209,7 +209,8 @@ func TestNotifyDefaultEventsFiltering(t *testing.T) {
 	s := newServer(Deps{Store: st, Sealer: sealer, ExternalIP: "1.2.3.4"})
 	setSealedNotifyURL(t, s, ts.URL)
 
-	// default events = deploy_failed,cert_failed -> deploy_success dropped.
+	// default events = deploy_failed,cert_failed,app_unhealthy,backup_failed
+	// -> deploy_success dropped.
 	s.notify(notifyEvent{Event: "deploy_success", Project: "p", App: "a", DeployID: "1", URL: "http://x"})
 	select {
 	case b := <-ch:

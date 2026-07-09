@@ -47,21 +47,26 @@ unconfigured SMTP) never blocks invite creation — the API returns
 `emailed:false` plus a warning, and the invite link can be copied as
 before.
 
-**Notifications (deploy & cert events):**
+**Notifications (deploy, cert & health events):**
 
 ```sh
 luncur config set notify_url https://discord.com/api/webhooks/...   # write-only: reads show "(set)"
 luncur config set notify_format discord      # generic (default) | discord | slack | telegram
-luncur config set notify_events deploy_success,deploy_failed,cert_failed
+luncur config set notify_events deploy_success,deploy_failed,cert_failed,app_unhealthy,backup_failed
 # telegram: notify_url = https://api.telegram.org/bot<token>/sendMessage
 luncur config set notify_telegram_chat 123456789
 ```
 
 Unset `notify_url` disables the feature entirely. `notify_events` is a CSV
-subset of `deploy_success`, `deploy_failed`, `cert_issued`, `cert_failed`;
-default when unset is `deploy_failed,cert_failed`. Delivery is best-effort:
-one attempt, a 5s timeout, failures logged — a notification never blocks a
-deploy or cert issuance. The `generic` format POSTs
+subset of `deploy_success`, `deploy_failed`, `cert_issued`, `cert_failed`,
+`app_unhealthy`, `backup_failed`; default when unset is
+`deploy_failed,cert_failed,app_unhealthy,backup_failed`. `app_unhealthy` fires
+when an app's container restart count jumps by 3+ between two 15s monitor
+samples (crash-loop detection), at most once per 30 minutes per app.
+`backup_failed` fires when a scheduled (`backup_schedule=daily`) backup run
+errors. Delivery is best-effort: one attempt, a 5s timeout, failures logged —
+a notification never blocks a deploy, cert issuance, or the monitor loop. The
+`generic` format POSTs
 `{"event","project","app","deploy_id","status","url","error","time"}`
 (`deploy_id` omitted for cert events, `url`/`error` omitted when empty, `time`
 RFC3339); `discord`/`slack` POST `{"content"|"text": <message>}`; `telegram`

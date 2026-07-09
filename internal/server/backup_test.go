@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/store"
@@ -269,5 +270,33 @@ func TestBackupAPI(t *testing.T) {
 	defer prune.Body.Close()
 	if prune.StatusCode != 200 {
 		t.Fatalf("prune: want 200, got %d", prune.StatusCode)
+	}
+}
+
+// TestScheduledBackupFailureNotifies drives runBackupSchedule directly (the
+// tick body StartBackups calls hourly): with backup_schedule=daily and no
+// data dir configured, createBackup fails immediately and that failure must
+// notify backup_failed exactly once.
+func TestScheduledBackupFailureNotifies(t *testing.T) {
+	ch := make(chan []byte, 4)
+	ts := httptest.NewServer(captureHandler(ch))
+	t.Cleanup(ts.Close)
+
+	st := newTestStore(t)
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newServer(Deps{Store: st, Sealer: sealer}) // no DataDir -> s.src nil -> createBackup fails
+	setSealedNotifyURL(t, s, ts.URL)
+	if err := st.SetSetting("backup_schedule", "daily"); err != nil {
+		t.Fatal(err)
+	}
+
+	s.runBackupSchedule(context.Background())
+
+	b := recvNotify(t, ch, 2*time.Second)
+	if !strings.Contains(string(b), `"event":"backup_failed"`) {
+		t.Fatalf("body = %s, want backup_failed", b)
 	}
 }

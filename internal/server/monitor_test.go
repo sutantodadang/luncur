@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/sutantodadang/luncur/internal/kube"
+	"github.com/sutantodadang/luncur/internal/secret"
 )
 
 // TestMetricRingWrap asserts the ring keeps only the newest monitorWindow
@@ -244,5 +245,81 @@ func TestUINodeChartsFragment(t *testing.T) {
 	}
 	if !strings.Contains(body, "cp1") || !strings.Contains(body, "<svg") {
 		t.Fatalf("node charts fragment = %s, want cp1 + svg", body)
+	}
+}
+
+// crashPod builds a fake pod labeled for app under namespace ns, with one
+// container status reporting restarts restarts.
+func crashPod(ns, app string, restarts int32) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      app + "-0",
+			Namespace: ns,
+			Labels:    map[string]string{"app.kubernetes.io/name": app},
+		},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{Name: "app", RestartCount: restarts},
+			},
+		},
+	}
+}
+
+// TestMonitorNotifiesCrashLoop drives sampleMetrics directly: a fake pod for
+// app "api" starts at 0 restarts (baseline, no alert), jumps to 3 restarts
+// (delta >= 3 -> exactly one app_unhealthy delivery), then holds at 3 (no
+// further delta -> nothing sent, exercising the same suppression path the
+// cooldown uses).
+func TestMonitorNotifiesCrashLoop(t *testing.T) {
+	ch := make(chan []byte, 4)
+	ts := httptest.NewServer(captureHandler(ch))
+	t.Cleanup(ts.Close)
+
+	st := newTestStore(t)
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateApp(p.ID, "api", 8080, "web", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	pod := crashPod(p.Namespace, "api", 0)
+	cs := k8sfake.NewSimpleClientset(pod)
+
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newServer(Deps{Store: st, Sealer: sealer, Kube: kube.NewForTest(nil, cs)})
+	setSealedNotifyURL(t, s, ts.URL)
+
+	ctx := context.Background()
+
+	// Tick 1: baseline (0 restarts) — nothing to compare against yet.
+	s.sampleMetrics(ctx)
+	select {
+	case b := <-ch:
+		t.Fatalf("unexpected notification on baseline tick: %s", b)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Bump restarts to 3 (delta >= 3) and tick again — one delivery.
+	pod.Status.ContainerStatuses[0].RestartCount = 3
+	if _, err := cs.CoreV1().Pods(p.Namespace).Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	s.sampleMetrics(ctx)
+	b := recvNotify(t, ch, 2*time.Second)
+	if !strings.Contains(string(b), `"event":"app_unhealthy"`) {
+		t.Fatalf("body = %s, want app_unhealthy", b)
+	}
+
+	// Tick again with restarts unchanged — delta 0, suppressed.
+	s.sampleMetrics(ctx)
+	select {
+	case b := <-ch:
+		t.Fatalf("unexpected second notification: %s", b)
+	case <-time.After(200 * time.Millisecond):
 	}
 }

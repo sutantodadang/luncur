@@ -1009,6 +1009,28 @@ func (c *Client) AppMetrics(ctx context.Context, namespace, app string) (AppMetr
 	return out, true
 }
 
+// RestartCount sums container restarts across an app's pods via the
+// app.kubernetes.io/name label — used by the monitor's crash-loop
+// detector. No clientset wired -> (0, nil).
+func (c *Client) RestartCount(ctx context.Context, namespace, app string) (int, error) {
+	if c.cs == nil {
+		return 0, nil
+	}
+	list, err := c.cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/name=" + app,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("list pods: %w", err)
+	}
+	total := 0
+	for _, p := range list.Items {
+		for _, cs := range p.Status.ContainerStatuses {
+			total += int(cs.RestartCount)
+		}
+	}
+	return total, nil
+}
+
 // ClusterPodUsage sums CPU/memory usage per luncur app across ALL
 // namespaces in one metrics.k8s.io list — the monitor samples every app on
 // one API call instead of one per app. Keys are "<namespace>/<app>" using

@@ -342,9 +342,38 @@ func (s *server) handlePruneBackups(w http.ResponseWriter, r *http.Request, _ st
 	writeJSON(w, http.StatusOK, map[string]any{"removed": removed})
 }
 
-// StartBackups runs the daily backup loop: every hour, when the schedule
-// setting is "daily" and the newest backup is older than 24h (or absent),
-// take one and prune. Mirrors the cert-manager loop's lifecycle.
+// runBackupSchedule performs one scheduled-backup tick: skip unless the
+// backup_schedule setting is "daily" and the newest backup is older than 24h
+// (or absent); otherwise take one, notify on failure, and prune. Split from
+// StartBackups so tests can drive a single tick directly.
+func (s *server) runBackupSchedule(ctx context.Context) {
+	if v, err := s.st.GetSetting("backup_schedule"); err != nil || v != "daily" {
+		return
+	}
+	rows, err := s.st.ListBackups()
+	if err != nil {
+		log.Printf("backup schedule: %v", err)
+		return
+	}
+	if len(rows) > 0 {
+		if last, err := time.Parse("2006-01-02 15:04:05", rows[0].CreatedAt); err == nil &&
+			s.nowFn().UTC().Sub(last) < 24*time.Hour {
+			return
+		}
+	}
+	if _, warnings, err := s.createBackup(ctx, true); err != nil {
+		log.Printf("scheduled backup: %v", err)
+		s.notify(notifyEvent{Event: "backup_failed", Project: "system", App: "backup", Err: err.Error()})
+	} else if len(warnings) > 0 {
+		log.Printf("scheduled backup warnings: %v", warnings)
+	}
+	if _, err := s.pruneBackups(ctx); err != nil {
+		log.Printf("scheduled prune: %v", err)
+	}
+}
+
+// StartBackups runs the daily backup loop: every hour, delegate to
+// runBackupSchedule. Mirrors the cert-manager loop's lifecycle.
 func (s *server) StartBackups(ctx context.Context) {
 	tick := time.NewTicker(time.Hour)
 	defer tick.Stop()
@@ -353,28 +382,7 @@ func (s *server) StartBackups(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			if v, err := s.st.GetSetting("backup_schedule"); err != nil || v != "daily" {
-				continue
-			}
-			rows, err := s.st.ListBackups()
-			if err != nil {
-				log.Printf("backup schedule: %v", err)
-				continue
-			}
-			if len(rows) > 0 {
-				if last, err := time.Parse("2006-01-02 15:04:05", rows[0].CreatedAt); err == nil &&
-					s.nowFn().UTC().Sub(last) < 24*time.Hour {
-					continue
-				}
-			}
-			if _, warnings, err := s.createBackup(ctx, true); err != nil {
-				log.Printf("scheduled backup: %v", err)
-			} else if len(warnings) > 0 {
-				log.Printf("scheduled backup warnings: %v", warnings)
-			}
-			if _, err := s.pruneBackups(ctx); err != nil {
-				log.Printf("scheduled prune: %v", err)
-			}
+			s.runBackupSchedule(ctx)
 		}
 	}
 }
