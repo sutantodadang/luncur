@@ -8,9 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
+
+	rbacv1 "k8s.io/api/rbac/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -234,6 +237,72 @@ func (c *Client) Apply(ctx context.Context, namespace string, objs []render.Obje
 		}
 	}
 	return nil
+}
+
+// EnsureClusterRole makes the live "luncur" ClusterRole match cr, creating
+// it if absent — the server's startup self-heal (internal/cli/serve.go)
+// calls this on every boot so a release that adds RBAC rules (e.g. metrics
+// nodes, PodDisruptionBudgets) doesn't require the operator to re-run
+// `luncur up` before the new permission takes effect.
+//
+// Deliberately get-then-create/update rather than routing through Apply's
+// server-side-apply patch: SSA apply-patches don't three-way-merge reliably
+// against the fake dynamic client this package's tests use (see
+// TestApplyClusterRoleBindingSkipsNamespace's comment on the same
+// limitation), and a plain get/write pair is simple enough for an object
+// that only changes across releases. Returns changed=true when the
+// ClusterRole was created or its rules differed from cr's.
+func (c *Client) EnsureClusterRole(ctx context.Context, cr *rbacv1.ClusterRole) (changed bool, err error) {
+	gvr := gvrByKind["ClusterRole"]
+	obj, err := clusterRoleToUnstructured(cr)
+	if err != nil {
+		return false, err
+	}
+
+	existing, getErr := c.dyn.Resource(gvr).Get(ctx, cr.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(getErr) {
+		if _, err := c.dyn.Resource(gvr).Create(ctx, obj, metav1.CreateOptions{FieldManager: "luncur"}); err != nil {
+			return false, fmt.Errorf("create ClusterRole/%s: %w", cr.Name, err)
+		}
+		return true, nil
+	}
+	if getErr != nil {
+		return false, fmt.Errorf("get ClusterRole/%s: %w", cr.Name, getErr)
+	}
+
+	var current rbacv1.ClusterRole
+	b, err := json.Marshal(existing.Object)
+	if err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(b, &current); err != nil {
+		return false, err
+	}
+	if reflect.DeepEqual(current.Rules, cr.Rules) {
+		return false, nil
+	}
+
+	obj.SetResourceVersion(existing.GetResourceVersion())
+	if _, err := c.dyn.Resource(gvr).Update(ctx, obj, metav1.UpdateOptions{FieldManager: "luncur"}); err != nil {
+		return false, fmt.Errorf("update ClusterRole/%s: %w", cr.Name, err)
+	}
+	return true, nil
+}
+
+// clusterRoleToUnstructured round-trips cr through JSON — the dynamic
+// client's typed Create/Update calls need an *unstructured.Unstructured,
+// and json.Marshal already respects cr's TypeMeta (apiVersion/kind) plus
+// every field's json tag, so this is simpler than hand-building the map.
+func clusterRoleToUnstructured(cr *rbacv1.ClusterRole) (*unstructured.Unstructured, error) {
+	b, err := json.Marshal(cr)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	return &unstructured.Unstructured{Object: m}, nil
 }
 
 // HasWorkflowCRD reports whether the Argo Workflows CRD is installed —
