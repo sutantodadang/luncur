@@ -65,7 +65,8 @@ func (s *server) forwardAppFromHost(host string) (store.Project, store.App, bool
 // fwdProxyTarget is split out so tests can point the proxy at an
 // httptest.Server instead of cluster DNS (same pattern as sweepMLflowURLFn).
 func fwdProxyTarget(p store.Project, a store.App) *url.URL {
-	return &url.URL{Scheme: "http", Host: fmt.Sprintf("%s.%s:%d", a.Name, p.Namespace, a.Port)}
+	// Service port is always 80 (targetPort = the app's container port).
+	return &url.URL{Scheme: "http", Host: fmt.Sprintf("%s.%s:80", a.Name, p.Namespace)}
 }
 
 // handleForwardHost serves every request whose Host is a forward host:
