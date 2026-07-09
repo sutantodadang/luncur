@@ -3,9 +3,12 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
+	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -106,6 +109,14 @@ type server struct {
 	// loginLimiter guards login endpoints against brute-force attempts;
 	// see ratelimit.go.
 	loginLimiter *rateLimiter
+
+	// fwdKey signs port-forward handoff tokens and luncur_fwd cookies
+	// (fwdtoken.go). Random per boot: a restart only forces re-opening.
+	fwdKey []byte
+
+	// fwdDial opens the tunnel's in-cluster TCP connection; tests point it
+	// at a local listener.
+	fwdDial func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // newServer wires all server fields (including build config defaults) but
@@ -159,6 +170,12 @@ func newServer(d Deps) *server {
 	s.mailer = s.smtpMailer
 	s.dnsProvider = s.dnsProviderFromSettings
 	s.sweepMLflowURLFn = s.sweepMLflowURL
+
+	s.fwdKey = make([]byte, 32)
+	if _, err := rand.Read(s.fwdKey); err != nil {
+		panic(fmt.Sprintf("fwd key: %v", err)) // crypto/rand failure is unrecoverable
+	}
+	s.fwdDial = (&net.Dialer{Timeout: 10 * time.Second}).DialContext
 
 	if d.DataDir != "" {
 		src, err := build.NewSource(d.DataDir)
@@ -258,6 +275,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/metrics", s.authed(s.handleAppMetrics))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/metrics/history", s.authed(s.handleAppMetricsHistory))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/pods", s.authed(s.handleAppPods))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/forward", s.authed(s.handleForwardApp))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/volumes", s.authed(s.handleAddVolume))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/volumes", s.authed(s.handleListVolumes))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/volumes/{name}", s.authed(s.handleDeleteVolume))
