@@ -7,7 +7,7 @@
   {{if .App.Ejected}} <span class="status-failed">ejected</span>{{end}}
   {{if ne .App.Kind "web"}} <span class="status-pending">{{.App.Kind}}</span>{{end}}
   {{if .App.Internal}} <span class="chip chip-muted">internal</span>{{end}}
-  {{if eq .App.Kind "web"}}{{if .App.Internal}}<code class="font-mono text-[11px] text-mut" title="cluster-only — not reachable from a browser">{{.InternalURL}}</code>{{else}}<a class="font-mono text-[11px] text-mut hover:text-signal" href="{{.URL}}">{{.URL}}</a>{{end}}{{end}}
+  {{if eq .App.Kind "web"}}{{if .App.Internal}}<code class="font-mono text-[11px] text-mut" title="cluster-only — not reachable from a browser">{{.InternalURL}}</code> <a class="font-mono text-[11px] text-mut hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/open" target="_blank" rel="noopener">open</a> <code class="font-mono text-[11px] text-mut">luncur forward {{.Project.Name}}/{{.App.Name}} {{.App.Port}}</code>{{else}}<a class="font-mono text-[11px] text-mut hover:text-signal" href="{{.URL}}">{{.URL}}</a>{{end}}{{end}}
   <div class="ml-auto flex gap-2">
   {{if and .IsGit (not .App.Ejected)}}
   <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/deploy">

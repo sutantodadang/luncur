@@ -391,3 +391,42 @@ func TestUIProjectsMembersPageFields(t *testing.T) {
 		t.Fatalf("member project page should not show add-member form, got: %s", body)
 	}
 }
+
+// TestUIInternalAppShowsOpenAndForwardHint checks the app page's internal-URL
+// block (app.html) carries the one-click open link (Task 6's /open route)
+// and the copyable `luncur forward` CLI hint, guarded by the same
+// .App.Internal condition as the "internal" badge — a public (non-internal)
+// app's page must not leak the /open link.
+func TestUIInternalAppShowsOpenAndForwardHint(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000,"internal":true}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"pub","port":4000}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+
+	status, body := getUIPage(t, client, srv.URL, "/ui/projects/web/apps/api", ck)
+	if status != http.StatusOK {
+		t.Fatalf("internal app page: want 200, got %d", status)
+	}
+	if !strings.Contains(body, "/ui/projects/web/apps/api/open") {
+		t.Fatalf("internal app page missing open link, got: %s", body)
+	}
+	if !strings.Contains(body, "luncur forward web/api 3000") {
+		t.Fatalf("internal app page missing forward hint, got: %s", body)
+	}
+
+	status, body = getUIPage(t, client, srv.URL, "/ui/projects/web/apps/pub", ck)
+	if status != http.StatusOK {
+		t.Fatalf("public app page: want 200, got %d", status)
+	}
+	if strings.Contains(body, "/open") {
+		t.Fatalf("public app page should not show open link, got: %s", body)
+	}
+}
