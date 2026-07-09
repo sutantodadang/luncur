@@ -115,7 +115,7 @@ func (s *server) requireApp(w http.ResponseWriter, p store.Project, name string)
 }
 
 func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -296,7 +296,7 @@ func (s *server) destroyApp(ctx context.Context, p store.Project, a store.App) e
 }
 
 func (s *server) handleDeleteApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -325,7 +325,7 @@ func (s *server) handleDeleteApp(w http.ResponseWriter, r *http.Request, u store
 // app (App.SourceType == "git") with neither triggers an async build cloning
 // from its configured repo; anything else is a bad request.
 func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -786,7 +786,7 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 }
 
 func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -927,7 +927,7 @@ func (s *server) autoscaleApp(ctx context.Context, p store.Project, a store.App,
 }
 
 func (s *server) handleAutoscaleApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -1004,7 +1004,7 @@ func (s *server) setAppTraining(p store.Project, a store.App, nodes int, framewo
 // (nodes/framework) — the values startRun falls back to when a run request
 // doesn't override them.
 func (s *server) handleSetTraining(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

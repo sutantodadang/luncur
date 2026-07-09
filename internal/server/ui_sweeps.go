@@ -192,7 +192,7 @@ func uiSweepDataFrom(sw store.Sweep, trials []store.SweepTrial) uiSweepData {
 // app page (?err= on failure) instead of a 202 body — same idiom as
 // handleUIRunCreate.
 func (s *server) handleUISweepCreate(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}
@@ -287,7 +287,7 @@ func (s *server) uiRequireSweep(w http.ResponseWriter, a store.App, id string) (
 // handleUISweepStop is stopSweep's UI twin: same idempotent core as
 // handleStopSweep, redirect back to the app page instead of a JSON body.
 func (s *server) handleUISweepStop(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.uiProject(w, r, u)
+	p, ok := s.uiProjectWrite(w, r, u)
 	if !ok {
 		return
 	}

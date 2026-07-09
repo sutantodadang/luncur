@@ -125,7 +125,7 @@ func (s *server) handleGetEnv(w http.ResponseWriter, r *http.Request, u store.Us
 
 // handleSetEnv seals and upserts one env var, then opportunistically syncs.
 func (s *server) handleSetEnv(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -164,7 +164,7 @@ func (s *server) handleSetEnv(w http.ResponseWriter, r *http.Request, u store.Us
 
 // handleBulkSetEnv accepts raw .env text and upserts every pair in it.
 func (s *server) handleBulkSetEnv(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -212,7 +212,7 @@ func (s *server) handleBulkSetEnv(w http.ResponseWriter, r *http.Request, u stor
 
 // handleUnsetEnv deletes one env var, then opportunistically syncs.
 func (s *server) handleUnsetEnv(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -256,7 +256,7 @@ func (s *server) setOverride(ctx context.Context, p store.Project, a store.App, 
 // handleSetOverride stores a raw strategic-merge-patch for one manifest
 // kind, then opportunistically syncs. The request body IS the patch.
 func (s *server) handleSetOverride(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -293,7 +293,7 @@ func (s *server) handleSetOverride(w http.ResponseWriter, r *http.Request, u sto
 // handleDeleteOverride removes one manifest kind's override, then
 // opportunistically syncs.
 func (s *server) handleDeleteOverride(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

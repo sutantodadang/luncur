@@ -51,6 +51,7 @@ func projectCmd() *cobra.Command {
 		},
 	}
 
+	var memberRole string
 	addMember := &cobra.Command{
 		Use:   "add-member <project> <email>",
 		Short: "Add a member to a project",
@@ -60,13 +61,14 @@ func projectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := c.AddMember(args[0], args[1]); err != nil {
+			if err := c.AddMember(args[0], args[1], memberRole); err != nil {
 				return err
 			}
 			cmd.Printf("added %s to %s\n", args[1], args[0])
 			return nil
 		},
 	}
+	addMember.Flags().StringVar(&memberRole, "role", "member", "member role: member or viewer")
 
 	rename := &cobra.Command{
 		Use:   "rename <old> <new>",

@@ -40,6 +40,26 @@ func (s *server) requireProject(w http.ResponseWriter, u store.User, name string
 	return p, true
 }
 
+// requireProjectWrite is requireProject plus write authorization: global
+// admins and role=member pass; role=viewer gets 403 read_only.
+func (s *server) requireProjectWrite(w http.ResponseWriter, u store.User, name string) (store.Project, bool) {
+	p, ok := s.requireProject(w, u, name)
+	if !ok {
+		return p, false
+	}
+	if u.Role == "admin" {
+		return p, true
+	}
+	role, err := s.st.MemberRole(p.ID, u.ID)
+	if err == nil && role == "viewer" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":"read_only","message":"viewers cannot modify this project"}`))
+		return p, false
+	}
+	return p, true
+}
+
 func (s *server) handleCreateProject(w http.ResponseWriter, r *http.Request, _ store.User) {
 	var req struct {
 		Name string `json:"name"`
@@ -275,10 +295,15 @@ func (s *server) handleAddMember(w http.ResponseWriter, r *http.Request, u store
 
 	var req struct {
 		Email string `json:"email"`
+		Role  string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
+	}
+	role := req.Role
+	if role == "" {
+		role = "member"
 	}
 
 	member, err := s.st.GetUserByEmail(req.Email)
@@ -292,7 +317,12 @@ func (s *server) handleAddMember(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	if err := s.st.AddMember(p.ID, member.ID); err != nil {
+	if err := s.st.AddMember(p.ID, member.ID, role); err != nil {
+		var ve *store.ValidationError
+		if errors.As(err, &ve) {
+			writeError(w, http.StatusBadRequest, "bad_request", ve.Error())
+			return
+		}
 		log.Printf("add member: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return

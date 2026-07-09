@@ -689,7 +689,7 @@ func sweepJSON(sw store.Sweep, trials []store.SweepTrial) map[string]any {
 
 // handleCreateSweep starts a hyperparameter sweep over a kind=job app.
 func (s *server) handleCreateSweep(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -801,7 +801,7 @@ func (s *server) handleGetSweep(w http.ResponseWriter, r *http.Request, u store.
 // running trials killed and finishes "stopped"; an already-stopped (or
 // done/failed) sweep is a 200 no-op that just reports current state.
 func (s *server) handleStopSweep(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

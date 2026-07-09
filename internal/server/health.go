@@ -32,7 +32,7 @@ func (s *server) setAppHealth(ctx context.Context, p store.Project, a store.App,
 // handleSetHealth sets (or, with an empty path, clears) the app's HTTP
 // health check path, then opportunistically syncs.
 func (s *server) handleSetHealth(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

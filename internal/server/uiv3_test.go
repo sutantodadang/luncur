@@ -351,7 +351,7 @@ func TestUIProjectsMembersPageFields(t *testing.T) {
 	if _, err := st.CreateProject("proj"); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AddMember(mustProjectID(t, st, "proj"), member.ID); err != nil {
+	if err := st.AddMember(mustProjectID(t, st, "proj"), member.ID, "member"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1963,7 +1963,7 @@ func TestUIProjectsPageShowsCardSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AddMember(proj.ID, member.ID); err != nil {
+	if err := st.AddMember(proj.ID, member.ID, "member"); err != nil {
 		t.Fatal(err)
 	}
 

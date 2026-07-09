@@ -62,7 +62,7 @@ func (s *server) enableWebhook(a store.App) (string, error) {
 // secret is returned in this response ONLY — it is never recoverable from
 // the store afterward (only the sealed bytes persist).
 func (s *server) handleWebhookEnable(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -97,7 +97,7 @@ func (s *server) handleWebhookEnable(w http.ResponseWriter, r *http.Request, u s
 // handleWebhookDisable turns off an app's deploy webhook: the stored
 // secret is cleared, so any previously-issued secret stops verifying.
 func (s *server) handleWebhookDisable(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

@@ -16,10 +16,10 @@ func TestMembers(t *testing.T) {
 	if ok, _ := s.IsMember(p.ID, u.ID); ok {
 		t.Fatal("not a member yet")
 	}
-	if err := s.AddMember(p.ID, u.ID); err != nil {
+	if err := s.AddMember(p.ID, u.ID, "member"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AddMember(p.ID, u.ID); err != nil {
+	if err := s.AddMember(p.ID, u.ID, "member"); err != nil {
 		t.Fatal("second add must be idempotent")
 	}
 	if ok, _ := s.IsMember(p.ID, u.ID); !ok {
@@ -47,7 +47,7 @@ func TestRemoveMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AddMember(p.ID, u.ID); err != nil {
+	if err := s.AddMember(p.ID, u.ID, "member"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,5 +60,22 @@ func TestRemoveMember(t *testing.T) {
 
 	if err := s.RemoveMember(p.ID, u.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestMemberRoles(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	u, _ := s.CreateUser("v@x.io", "pw123456", "member")
+
+	if err := s.AddMember(p.ID, u.ID, "viewer"); err != nil {
+		t.Fatal(err)
+	}
+	role, err := s.MemberRole(p.ID, u.ID)
+	if err != nil || role != "viewer" {
+		t.Fatalf("role=%q err=%v", role, err)
+	}
+	if err := s.AddMember(p.ID, u.ID, "owner"); err == nil {
+		t.Fatal("invalid role must be rejected")
 	}
 }

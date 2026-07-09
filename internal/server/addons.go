@@ -316,7 +316,7 @@ func (s *server) ensureMinioBucket(p store.Project, a store.Addon, creds addon.C
 }
 
 func (s *server) handleCreateAddon(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -479,7 +479,7 @@ func (s *server) attachAddon(ctx context.Context, p store.Project, ad store.Addo
 }
 
 func (s *server) handleAttachAddon(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -517,7 +517,7 @@ func (s *server) handleAttachAddon(w http.ResponseWriter, r *http.Request, u sto
 }
 
 func (s *server) handleDetachAddon(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -577,7 +577,7 @@ func (s *server) removeAddon(ctx context.Context, p store.Project, ad store.Addo
 }
 
 func (s *server) handleDeleteAddon(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -645,7 +645,7 @@ func (s *server) upgradeAddon(ctx context.Context, p store.Project, a store.Addo
 // handleUpgradeAddon re-renders an addon's manifests at a new version and
 // SSA-applies them (rolling restart). The PVC and credentials are untouched.
 func (s *server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}

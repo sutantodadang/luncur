@@ -12,7 +12,7 @@ import (
 // handleSetProjectS3 stores a project's external S3 configuration; keys are
 // sealed at rest. Apps opt in per app (POST .../apps/{app}/s3).
 func (s *server) handleSetProjectS3(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -91,7 +91,7 @@ func (s *server) handleGetProjectS3(w http.ResponseWriter, r *http.Request, u st
 }
 
 func (s *server) handleDeleteProjectS3(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
@@ -110,7 +110,7 @@ func (s *server) handleDeleteProjectS3(w http.ResponseWriter, r *http.Request, u
 // handleAppS3Env toggles an app's LUNCUR_S3_* injection from the project's
 // external S3 settings.
 func (s *server) handleAppS3Env(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
 	if !ok {
 		return
 	}
