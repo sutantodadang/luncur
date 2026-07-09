@@ -91,6 +91,20 @@ Your app is live at `http://web.<ip>.sslip.io` — no DNS setup needed
 luncur domain add web www.example.com --project demo   # cert issues automatically
 ```
 
+### Access internal apps
+
+Internal apps (`--internal`, no public URL) stay cluster-only — until you
+need to peek at one:
+
+```sh
+luncur forward demo/web 8080     # localhost:8080 → the app, any TCP protocol
+```
+
+No kubeconfig needed — the tunnel rides through the luncur server with your
+API token. Or click **open** on the app's panel page: it serves the app at
+`http://web--demo.<your-domain>` behind your panel login (project members
+only, HTTP for now unless your ingress terminates TLS for it).
+
 Re-running `sudo ./luncur up` is always safe: every step is
 skip-or-repair, so it doubles as upgrade and self-heal.
 

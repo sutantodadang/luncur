@@ -3,10 +3,14 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
+	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/sutantodadang/luncur/internal/acme"
@@ -106,6 +110,20 @@ type server struct {
 	// loginLimiter guards login endpoints against brute-force attempts;
 	// see ratelimit.go.
 	loginLimiter *rateLimiter
+
+	// fwdKey signs port-forward handoff tokens and luncur_fwd cookies
+	// (fwdtoken.go). Random per boot: a restart only forces re-opening.
+	fwdKey []byte
+
+	// fwdDial opens the tunnel's in-cluster TCP connection; tests point it
+	// at a local listener.
+	fwdDial func(ctx context.Context, network, addr string) (net.Conn, error)
+
+	// fwdProxyTargetFn resolves a forward-host app to its in-cluster proxy
+	// target (fwdproxy.go); defaults to fwdProxyTarget. Tests override it to
+	// point at an httptest.Server instead of cluster-internal DNS, mirroring
+	// sweepMLflowURLFn above.
+	fwdProxyTargetFn func(store.Project, store.App) *url.URL
 }
 
 // newServer wires all server fields (including build config defaults) but
@@ -159,6 +177,13 @@ func newServer(d Deps) *server {
 	s.mailer = s.smtpMailer
 	s.dnsProvider = s.dnsProviderFromSettings
 	s.sweepMLflowURLFn = s.sweepMLflowURL
+
+	s.fwdKey = make([]byte, 32)
+	if _, err := rand.Read(s.fwdKey); err != nil {
+		panic(fmt.Sprintf("fwd key: %v", err)) // crypto/rand failure is unrecoverable
+	}
+	s.fwdDial = (&net.Dialer{Timeout: 10 * time.Second}).DialContext
+	s.fwdProxyTargetFn = fwdProxyTarget
 
 	if d.DataDir != "" {
 		src, err := build.NewSource(d.DataDir)
@@ -258,6 +283,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/metrics", s.authed(s.handleAppMetrics))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/metrics/history", s.authed(s.handleAppMetricsHistory))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/pods", s.authed(s.handleAppPods))
+	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/forward", s.authed(s.handleForwardApp))
 	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/volumes", s.authed(s.handleAddVolume))
 	mux.HandleFunc("GET /v1/projects/{project}/apps/{app}/volumes", s.authed(s.handleListVolumes))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/volumes/{name}", s.authed(s.handleDeleteVolume))
@@ -324,7 +350,20 @@ func (s *server) handler() http.Handler {
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
 	})
 
-	return s.auditMiddleware(mux)
+	// Forward-host requests ({app}--{project}.<parent>) are app traffic, not
+	// control-plane actions: they branch off before auditMiddleware/routing
+	// so they skip both the audit log and the /ui, /v1 route tables
+	// entirely. The /open click that mints their handoff token, on the
+	// panel host, IS audited like any other UI GET/POST through the normal
+	// chain below.
+	h := s.auditMiddleware(mux)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p, a, ok := s.forwardAppFromHost(r.Host); ok {
+			s.handleForwardHost(w, r, p, a)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // New builds the full API handler. Later plans add their routes here.

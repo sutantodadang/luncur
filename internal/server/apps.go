@@ -14,8 +14,10 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/resource"
 
+	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
+	"github.com/sutantodadang/luncur/internal/up"
 )
 
 // errKubeUnavailable is the shared cores' sentinel for "this action can't
@@ -290,6 +292,14 @@ func (s *server) destroyApp(ctx context.Context, p store.Project, a store.App) e
 	if !a.Ejected {
 		if err := s.kube.DeleteAppObjects(ctx, p.Namespace, a.Name); err != nil {
 			return err
+		}
+		// The forward Ingress (fwdproxy.go's one-click open) is luncur's
+		// own object, not the app's, but an ejected app must not touch
+		// kube at all — same rule as DeleteAppObjects above. NotFound is
+		// already swallowed by DeleteObject; the extra IsNotFound check
+		// just keeps this a non-fatal best-effort.
+		if err := s.kube.DeleteObject(ctx, s.systemNamespace, "Ingress", up.ForwardIngressName(a.Name, p.Namespace)); err != nil && !kube.IsNotFound(err) {
+			log.Printf("delete forward ingress: %v", err)
 		}
 	}
 	return s.st.DeleteApp(a.ID)

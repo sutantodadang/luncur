@@ -1,8 +1,11 @@
 package up
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	netv1 "k8s.io/api/networking/v1"
 )
 
 func TestLuncurObjects(t *testing.T) {
@@ -113,5 +116,35 @@ func TestPanelIngress(t *testing.T) {
 		if !strings.Contains(customJSON, want) {
 			t.Fatalf("missing %q in: %s", want, customJSON)
 		}
+	}
+}
+
+func TestForwardIngress(t *testing.T) {
+	obj, err := ForwardIngress("waku-simpaniz--waku.1.2.3.4.sslip.io", "waku-simpaniz", "luncur-waku")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obj.Kind != "Ingress" {
+		t.Fatalf("kind %s", obj.Kind)
+	}
+	var ing netv1.Ingress
+	if err := json.Unmarshal(obj.JSON, &ing); err != nil {
+		t.Fatal(err)
+	}
+	if ing.Name != "fwd-waku-simpaniz-luncur-waku" {
+		t.Fatalf("name %s", ing.Name)
+	}
+	if ing.Labels["luncur.dev/forward"] != "true" {
+		t.Fatalf("labels %v", ing.Labels)
+	}
+	if len(ing.Spec.Rules) != 1 || ing.Spec.Rules[0].Host != "waku-simpaniz--waku.1.2.3.4.sslip.io" {
+		t.Fatalf("rules %+v", ing.Spec.Rules)
+	}
+	b := ing.Spec.Rules[0].HTTP.Paths[0].Backend.Service
+	if b.Name != "luncur" || b.Port.Number != 80 {
+		t.Fatalf("backend %+v", b)
+	}
+	if len(ing.Spec.TLS) != 0 {
+		t.Fatalf("unexpected TLS %+v", ing.Spec.TLS)
 	}
 }
