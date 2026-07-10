@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func seedWebApi(t *testing.T, srv *httptestServer, admin string) {
+func seedWebAPI(t *testing.T, srv *httptestServer, admin string) {
 	t.Helper()
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
 	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000}`).Body.Close()
@@ -16,7 +16,7 @@ func seedWebApi(t *testing.T, srv *httptestServer, admin string) {
 func TestEnvRoundTrip(t *testing.T) {
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
-	seedWebApi(t, srv, admin)
+	seedWebAPI(t, srv, admin)
 
 	if resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/env", admin, `{"key":"DB_URL","value":"postgres://x"}`); resp.StatusCode != 204 {
 		t.Fatalf("put env: want 204, got %d", resp.StatusCode)
@@ -49,7 +49,7 @@ func TestEnvRoundTrip(t *testing.T) {
 func TestBulkSetEnv(t *testing.T) {
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
-	seedWebApi(t, srv, admin)
+	seedWebAPI(t, srv, admin)
 
 	body := `{"dotenv":"A=1\n# c\nexport B=\"two words\"\n\nC=x=y"}`
 	resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/env/bulk", admin, body)
@@ -84,7 +84,7 @@ func TestBulkSetEnv(t *testing.T) {
 func TestOverrideAndRaw(t *testing.T) {
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
-	seedWebApi(t, srv, admin)
+	seedWebAPI(t, srv, admin)
 
 	patch := `{"metadata":{"labels":{"team":"x"}}}`
 	if resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/overrides/Deployment", admin, patch); resp.StatusCode != 204 {

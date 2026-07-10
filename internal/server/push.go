@@ -77,7 +77,8 @@ func (b *PushBackend) Push(ctx context.Context, u store.User, project, app strin
 		return fmt.Errorf("create deployment: %w", err)
 	}
 	if _, err := s.src.Save(d.ID, tarball); err != nil {
-		s.st.SetDeploymentStatus(d.ID, "failed")
+		// Best-effort: the save error is what the pusher needs to see.
+		_ = s.st.SetDeploymentStatus(d.ID, "failed")
 		return fmt.Errorf("save source: %w", err)
 	}
 

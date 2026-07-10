@@ -89,7 +89,7 @@ func restoreArchive(archivePath, dataDir string, force bool, now func() time.Tim
 			return nil, fmt.Errorf("open existing %s: %w", dbPath, err)
 		}
 		projects, err := st.ListProjects()
-		st.Close()
+		_ = st.Close()
 		if err != nil {
 			return nil, err
 		}

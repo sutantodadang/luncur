@@ -1,0 +1,46 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      # Deliberate best-effort calls: cleanup Closes, writes to in-memory or
+      # already-doomed sinks, and SSH protocol replies where the peer going
+      # away is the caller's problem, not ours.
+      exclude-functions:
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*os.File).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*net/smtp.Client).Close
+        - (net/http.ResponseWriter).Write
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - os.Remove
+        - os.RemoveAll
+        - encoding/pem.Encode
+        - (*encoding/json.Encoder).Encode
+        - (*strings.Builder).WriteString
+        - (*bytes.Buffer).WriteString
+        - (golang.org/x/crypto/ssh.Channel).Close
+        - (golang.org/x/crypto/ssh.Channel).SendRequest
+        - (golang.org/x/crypto/ssh.Conn).Close
+        - (golang.org/x/crypto/ssh.NewChannel).Reject
+        - (*golang.org/x/crypto/ssh.Request).Reply
+        # Returns an error only when the named flag doesn't exist — a typo
+        # any test run catches immediately.
+        - (*github.com/spf13/cobra.Command).MarkFlagRequired
+    staticcheck:
+      # QF* are editor quick-fix suggestions (e.g. "apply De Morgan's law"),
+      # not correctness issues; the un-transformed conditions read better.
+      checks: ["all", "-QF1001"]
+  exclusions:
+    rules:
+      # Tests ignore errors on writes to httptest recorders and fake
+      # conns all over; errcheck noise there drowns the real signal.
+      - path: _test\.go
+        linters: [errcheck]

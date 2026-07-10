@@ -61,13 +61,14 @@ func (s *server) handleForwardApp(w http.ResponseWriter, r *http.Request, u stor
 	defer conn.Close()
 	defer backend.Close()
 
-	buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: luncur-tunnel/1\r\nConnection: Upgrade\r\n\r\n")
+	// A buffered-write error surfaces at the checked Flush below.
+	_, _ = buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: luncur-tunnel/1\r\nConnection: Upgrade\r\n\r\n")
 	if err := buf.Flush(); err != nil {
 		return
 	}
 
 	done := make(chan struct{}, 2)
-	go func() { io.Copy(backend, buf); done <- struct{}{} }()
-	go func() { io.Copy(conn, backend); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(backend, buf); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(conn, backend); done <- struct{}{} }()
 	<-done
 }

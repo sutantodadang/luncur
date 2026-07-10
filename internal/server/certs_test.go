@@ -42,20 +42,39 @@ type recordedPatch struct {
 	raw       []byte
 }
 
+// patchRecorder collects recordedPatches behind a mutex: the reactor runs on
+// the cert manager's goroutine while the test goroutine reads assertions.
+type patchRecorder struct {
+	mu      sync.Mutex
+	patches []recordedPatch
+}
+
+func (r *patchRecorder) add(p recordedPatch) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.patches = append(r.patches, p)
+}
+
+func (r *patchRecorder) snapshot() []recordedPatch {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]recordedPatch(nil), r.patches...)
+}
+
 // certTestServer builds a *server wired with a fake dynamic client (patches
 // recorded) and a fake typed clientset (so GetSecretData/accountKey work),
 // following the same fixture shape as apps_test.go's kubeServer and
 // build_test.go's buildServer.
-func certTestServer(t *testing.T) (*server, *store.Store, *[]recordedPatch, *k8sfake.Clientset) {
+func certTestServer(t *testing.T) (*server, *store.Store, *patchRecorder, *k8sfake.Clientset) {
 	t.Helper()
 	st := newTestStore(t)
 	scheme := runtime.NewScheme()
 	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
 	cs := k8sfake.NewSimpleClientset()
-	var patches []recordedPatch
+	rec := &patchRecorder{}
 	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
 		if pa, ok := a.(ktesting.PatchAction); ok {
-			patches = append(patches, recordedPatch{
+			rec.add(recordedPatch{
 				resource:  a.GetResource().Resource,
 				namespace: a.GetNamespace(),
 				name:      pa.GetName(),
@@ -71,7 +90,7 @@ func certTestServer(t *testing.T) (*server, *store.Store, *[]recordedPatch, *k8s
 	s := newServer(Deps{
 		Store: st, Sealer: sealer, Kube: kube.NewForTest(dyn, cs), ExternalIP: "1.2.3.4",
 	})
-	return s, st, &patches, cs
+	return s, st, rec, cs
 }
 
 func seedDomain(t *testing.T, st *store.Store, hostname string) (store.Project, store.App, store.Domain) {
@@ -163,13 +182,14 @@ func TestCertManagerIssuesAndRenews(t *testing.T) {
 	}
 
 	secretName := certSecretName(a.Name, d.Hostname)
-	if !hasPatch(*patches, "secrets", p.Namespace, secretName,
+	applied := patches.snapshot()
+	if !hasPatch(applied, "secrets", p.Namespace, secretName,
 		`"type":"kubernetes.io/tls"`, `"namespace":"`+p.Namespace+`"`) {
-		t.Fatalf("no applied TLS secret %s/%s of type kubernetes.io/tls found in patches: %+v", p.Namespace, secretName, *patches)
+		t.Fatalf("no applied TLS secret %s/%s of type kubernetes.io/tls found in patches: %+v", p.Namespace, secretName, applied)
 	}
 
-	if !hasPatch(*patches, "ingresses", "luncur-system", challengeIngress, `"host":"`+d.Hostname+`"`) {
-		t.Fatalf("no applied challenge Ingress %s with host %s found in patches: %+v", challengeIngress, d.Hostname, *patches)
+	if !hasPatch(applied, "ingresses", "luncur-system", challengeIngress, `"host":"`+d.Hostname+`"`) {
+		t.Fatalf("no applied challenge Ingress %s with host %s found in patches: %+v", challengeIngress, d.Hostname, applied)
 	}
 }
 
@@ -336,14 +356,15 @@ func TestIssueDNS01PickedForWildcard(t *testing.T) {
 		t.Fatalf("no TXT presented for the base domain; presents = %v", prov.presents)
 	}
 
-	for _, pt := range *patches {
+	recorded := patches.snapshot()
+	for _, pt := range recorded {
 		if pt.resource == "ingresses" && pt.name == challengeIngress {
 			t.Fatalf("dns-01 issuance must not touch the challenge Ingress: %+v", pt)
 		}
 	}
-	if !hasPatch(*patches, "secrets", p.Namespace, certSecretName(a.Name, d.Hostname),
+	if !hasPatch(recorded, "secrets", p.Namespace, certSecretName(a.Name, d.Hostname),
 		`"type":"kubernetes.io/tls"`) {
-		t.Fatalf("no applied TLS secret found in patches: %+v", *patches)
+		t.Fatalf("no applied TLS secret found in patches: %+v", recorded)
 	}
 }
 

@@ -1,3 +1,5 @@
+// Package cli implements the luncur command tree: the server (`serve`),
+// the installer (`up`), and every client verb, all in one binary.
 package cli
 
 import "github.com/spf13/cobra"

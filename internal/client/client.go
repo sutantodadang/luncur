@@ -38,7 +38,7 @@ func New(server, token string) *Client {
 // do sends a JSON request and decodes a JSON response. Non-2xx responses
 // are turned into errors carrying the envelope's message and code.
 func (c *Client) do(method, path string, in, out any) error {
-	var body *bytes.Buffer = bytes.NewBuffer(nil)
+	body := bytes.NewBuffer(nil)
 	if in != nil {
 		if err := json.NewEncoder(body).Encode(in); err != nil {
 			return err

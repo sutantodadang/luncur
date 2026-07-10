@@ -2,6 +2,8 @@ module github.com/sutantodadang/luncur
 
 go 1.26.0
 
+toolchain go1.26.5
+
 require (
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.53.0

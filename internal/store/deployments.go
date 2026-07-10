@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// Deployment.ID and RolledBackFrom are opaque nanoids (see NewID), not
-// sequential integers — never parse, sort, or compare them for ordering.
-// Seq is the per-app human-facing deploy number (#1, #2, ...); it's the
-// only deployment number a user ever sees.
+// Deployment records one deploy. ID and RolledBackFrom are opaque nanoids
+// (see NewID), not sequential integers — never parse, sort, or compare them
+// for ordering. Seq is the per-app human-facing deploy number (#1, #2, ...);
+// it's the only deployment number a user ever sees.
 type Deployment struct {
 	ID             string
 	AppID          int64

@@ -103,8 +103,8 @@ func forwardCmd() *cobra.Command {
 					}
 					defer remoteConn.Close()
 					done := make(chan struct{}, 2)
-					go func() { io.Copy(remoteConn, local); done <- struct{}{} }()
-					go func() { io.Copy(local, remoteConn); done <- struct{}{} }()
+					go func() { _, _ = io.Copy(remoteConn, local); done <- struct{}{} }()
+					go func() { _, _ = io.Copy(local, remoteConn); done <- struct{}{} }()
 					<-done
 				}(conn)
 			}

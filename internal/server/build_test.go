@@ -558,9 +558,16 @@ func TestWatchBuildPodLogsJobEventsWhenNoPod(t *testing.T) {
 	srv, d := watcherTestServer(t, cs)
 
 	done := make(chan struct{})
-	go srv.watchBuildPod(context.Background(), d, "build-1", done)
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		srv.watchBuildPod(context.Background(), d, "build-1", done)
+	}()
 	time.Sleep(150 * time.Millisecond)
 	close(done)
+	// Join before the deferred Cleanup restores the tuning globals the
+	// watcher goroutine reads — a bare close(done) leaves it racing.
+	<-exited
 
 	b, err := os.ReadFile(srv.src.LogPath(d.ID))
 	if err != nil {
@@ -592,9 +599,16 @@ func TestWatchBuildPodLogsWatcherErrorOnce(t *testing.T) {
 	srv, d := watcherTestServer(t, cs)
 
 	done := make(chan struct{})
-	go srv.watchBuildPod(context.Background(), d, "build-1", done)
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		srv.watchBuildPod(context.Background(), d, "build-1", done)
+	}()
 	time.Sleep(150 * time.Millisecond) // several polls at the 10ms interval
 	close(done)
+	// Join before the deferred Cleanup restores watchBuildPollInterval,
+	// which the watcher goroutine reads — a bare close(done) leaves it racing.
+	<-exited
 
 	b, err := os.ReadFile(srv.src.LogPath(d.ID))
 	if err != nil {
