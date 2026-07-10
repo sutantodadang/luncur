@@ -52,6 +52,12 @@ func TestLuncurObjects(t *testing.T) {
 			t.Fatalf("manifests missing %q", want)
 		}
 	}
+	// DeleteAppObjects removes per-run Jobs via DeleteCollection, which RBAC
+	// gates behind its own verb — without it every app destroy 500s at the
+	// Jobs step (Forbidden is not NotFound, so it isn't swallowed).
+	if !strings.Contains(all, "deletecollection") {
+		t.Fatal("manifests: batch jobs rule missing deletecollection verb")
+	}
 	// metrics.k8s.io must grant both pods and nodes, else node monitoring
 	// (ListNodes -> NodeMetrics) is Forbidden and the nodes page never
 	// leaves "collecting samples".
