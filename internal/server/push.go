@@ -86,10 +86,18 @@ func (b *PushBackend) Push(ctx context.Context, u store.User, project, app strin
 
 	// Tail the build log into the pusher's terminal while runBuild runs.
 	done := make(chan struct{})
-	go tailFile(done, s.src.LogPath(d.ID), progress)
+	tailDone := make(chan struct{})
+	go func() {
+		defer close(tailDone)
+		tailFile(done, s.src.LogPath(d.ID), progress)
+	}()
 
 	err = s.runBuild(ctx, p, a, d)
 	close(done)
+	// Join: tailFile's final drain writes progress too — without this the
+	// closing Fprintf below (and the caller closing the connection after
+	// Push returns) races with it.
+	<-tailDone
 
 	if err != nil {
 		return fmt.Errorf("deploy %s failed — see: luncur logs %s --project %s --deploy %s", d.ID, app, project, d.ID)
