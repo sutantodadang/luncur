@@ -21,6 +21,33 @@ func TestUpDefaults(t *testing.T) {
 	}
 }
 
+func TestUpReplicaFlags(t *testing.T) {
+	cmd := upCmd()
+	for _, name := range []string{"replica-url", "replica-endpoint", "replica-access-key", "replica-secret-key"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Fatalf("missing flag --%s", name)
+		}
+	}
+}
+
+func TestUpReplicaURLRequiresCredentials(t *testing.T) {
+	cmd := upCmd()
+	cmd.SetArgs([]string{"--kubeconfig", "does-not-exist", "--replica-url", "s3://bucket/luncur"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--replica-access-key") {
+		t.Fatalf("want replica credentials error, got %v", err)
+	}
+}
+
+func TestUpReplicaCredentialsRequireURL(t *testing.T) {
+	cmd := upCmd()
+	cmd.SetArgs([]string{"--kubeconfig", "does-not-exist", "--replica-access-key", "AKIA", "--replica-secret-key", "secret"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--replica-url") {
+		t.Fatalf("want replica-url required error, got %v", err)
+	}
+}
+
 func TestUpRefusesNonLinuxWithoutKubeconfig(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		t.Skip("linux host")

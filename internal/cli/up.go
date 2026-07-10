@@ -29,10 +29,19 @@ func defaultImage() string {
 
 func upCmd() *cobra.Command {
 	var ip, image, builderImage, kubeconfig, certProvider, acmeEmail string
+	var replicaURL, replicaEndpoint, replicaAccessKey, replicaSecretKey string
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Install (or repair) luncur on this machine's K3s",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if replicaURL != "" {
+				if replicaAccessKey == "" || replicaSecretKey == "" {
+					return fmt.Errorf("--replica-url requires --replica-access-key and --replica-secret-key")
+				}
+			} else if replicaEndpoint != "" || replicaAccessKey != "" || replicaSecretKey != "" {
+				return fmt.Errorf("--replica-endpoint, --replica-access-key, and --replica-secret-key require --replica-url")
+			}
+
 			ctx := cmd.Context()
 			runner := up.ExecRunner{}
 			kubeconfigPath := kubeconfig
@@ -89,10 +98,30 @@ func upCmd() *cobra.Command {
 				return err
 			}
 
+			if replicaURL != "" {
+				cmd.Println("==> applying litestream replica credentials")
+				secJSON, err := json.Marshal(map[string]any{
+					"apiVersion": "v1", "kind": "Secret",
+					"metadata": map[string]any{
+						"name": up.LitestreamSecretName, "namespace": "luncur-system",
+						"labels": map[string]string{"app.kubernetes.io/managed-by": "luncur"},
+					},
+					"type":       "Opaque",
+					"stringData": map[string]string{"access-key": replicaAccessKey, "secret-key": replicaSecretKey},
+				})
+				if err != nil {
+					return err
+				}
+				if err := kc.Apply(ctx, "luncur-system", []render.Object{{Kind: "Secret", JSON: secJSON}}); err != nil {
+					return err
+				}
+			}
+
 			cmd.Println("==> deploying luncur")
 			objs, err := up.LuncurObjects(up.Params{
 				Image: image, ExternalIP: ip, BuilderImage: builderImage,
 				CertProvider: certProvider, ACMEEmail: acmeEmail,
+				ReplicaURL: replicaURL, ReplicaEndpoint: replicaEndpoint,
 			})
 			if err != nil {
 				return err
@@ -162,6 +191,10 @@ func upCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "target an existing cluster (skips K3s install)")
 	cmd.Flags().StringVar(&certProvider, "cert-provider", "builtin", "TLS cert provider: builtin, traefik, or cert-manager")
 	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "email for Let's Encrypt account registration")
+	cmd.Flags().StringVar(&replicaURL, "replica-url", "", "continuously replicate the control-plane DB with a Litestream sidecar to this destination (e.g. s3://bucket/luncur)")
+	cmd.Flags().StringVar(&replicaEndpoint, "replica-endpoint", "", "S3 endpoint for --replica-url (non-AWS providers)")
+	cmd.Flags().StringVar(&replicaAccessKey, "replica-access-key", "", "S3 access key for --replica-url")
+	cmd.Flags().StringVar(&replicaSecretKey, "replica-secret-key", "", "S3 secret key for --replica-url")
 	return cmd
 }
 

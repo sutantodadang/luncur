@@ -22,6 +22,14 @@ const systemNamespace = "luncur-system"
 // admin bootstrap token from (key "admin").
 const BootstrapSecretName = "luncur-bootstrap"
 
+// LitestreamSecretName is the Secret the litestream sidecar reads its S3
+// credentials from (keys "access-key" and "secret-key").
+const LitestreamSecretName = "luncur-litestream"
+
+// litestreamImage is pinned: the sidecar shares the data volume with the
+// server, so bump deliberately, not via :latest.
+const litestreamImage = "litestream/litestream:0.3"
+
 // SSHNodePort is where git push reaches the in-cluster SSH receiver:
 // ssh://git@<ip>:30022/<project>/<app>.git
 const SSHNodePort = 30022
@@ -33,6 +41,12 @@ type Params struct {
 	BuilderImage string
 	CertProvider string // builtin|traefik|cert-manager
 	ACMEEmail    string
+
+	// ReplicaURL enables the Litestream sidecar when non-empty: the
+	// replica destination, e.g. "s3://bucket/luncur". ReplicaEndpoint
+	// optionally targets a non-AWS S3 endpoint.
+	ReplicaURL      string
+	ReplicaEndpoint string
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -157,6 +171,91 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 		args = append(args, "--acme-email", p.ACMEEmail)
 	}
 
+	containers := []corev1.Container{{
+		Name:  "luncur",
+		Image: p.Image,
+		Args:  args,
+		Env: []corev1.EnvVar{{
+			Name: "BOOTSTRAP_ADMIN",
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: BootstrapSecretName},
+				Key:                  "admin",
+			}},
+		}},
+		Ports: []corev1.ContainerPort{{ContainerPort: 8080}, {ContainerPort: 2222}},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "luncur-data", MountPath: "/var/lib/luncur"},
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/v1/health",
+					Port: intstr.FromInt32(8080),
+				},
+			},
+		},
+		// A hung server (deadlocked, out of file descriptors, ...) still
+		// answers TCP but never HTTP — liveness restarts it so the kubelet
+		// self-heals instead of leaving a dead panel up indefinitely.
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/v1/health",
+					Port: intstr.FromInt32(8080),
+				},
+			},
+			InitialDelaySeconds: 10,
+			PeriodSeconds:       10,
+			FailureThreshold:    3,
+		},
+	}}
+
+	volumes := []corev1.Volume{{
+		Name: "luncur-data",
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: "luncur-data",
+			},
+		},
+	}}
+
+	if p.ReplicaURL != "" {
+		cfg := "dbs:\n  - path: /var/lib/luncur/luncur.db\n    replicas:\n      - url: " + p.ReplicaURL + "\n"
+		if p.ReplicaEndpoint != "" {
+			cfg += "        endpoint: " + p.ReplicaEndpoint + "\n"
+		}
+		cm := &corev1.ConfigMap{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "luncur-litestream",
+				Namespace: systemNamespace,
+				Labels:    labels,
+			},
+			Data: map[string]string{"litestream.yml": cfg},
+		}
+		if err := add("ConfigMap", cm); err != nil {
+			return nil, err
+		}
+
+		containers = append(containers, corev1.Container{
+			Name:  "litestream",
+			Image: litestreamImage,
+			Args:  []string{"replicate", "-config", "/etc/litestream/litestream.yml"},
+			Env: []corev1.EnvVar{
+				{Name: "LITESTREAM_ACCESS_KEY_ID", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: LitestreamSecretName}, Key: "access-key"}}},
+				{Name: "LITESTREAM_SECRET_ACCESS_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: LitestreamSecretName}, Key: "secret-key"}}},
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "luncur-data", MountPath: "/var/lib/luncur"},
+				{Name: "litestream-config", MountPath: "/etc/litestream"},
+			},
+		})
+		volumes = append(volumes, corev1.Volume{
+			Name:         "litestream-config",
+			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "luncur-litestream"}}},
+		})
+	}
+
 	dep := &appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{
@@ -167,42 +266,17 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr(int32(1)),
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			// Recreate, not the default RollingUpdate: this is a
+			// single-replica control plane backed by one RWO PVC holding a
+			// SQLite file. RollingUpdate would briefly run old and new pods
+			// together, both writing the same database file.
+			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "luncur",
-					Containers: []corev1.Container{{
-						Name:  "luncur",
-						Image: p.Image,
-						Args:  args,
-						Env: []corev1.EnvVar{{
-							Name: "BOOTSTRAP_ADMIN",
-							ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-								LocalObjectReference: corev1.LocalObjectReference{Name: BootstrapSecretName},
-								Key:                  "admin",
-							}},
-						}},
-						Ports: []corev1.ContainerPort{{ContainerPort: 8080}, {ContainerPort: 2222}},
-						VolumeMounts: []corev1.VolumeMount{
-							{Name: "luncur-data", MountPath: "/var/lib/luncur"},
-						},
-						ReadinessProbe: &corev1.Probe{
-							ProbeHandler: corev1.ProbeHandler{
-								HTTPGet: &corev1.HTTPGetAction{
-									Path: "/v1/health",
-									Port: intstr.FromInt32(8080),
-								},
-							},
-						},
-					}},
-					Volumes: []corev1.Volume{{
-						Name: "luncur-data",
-						VolumeSource: corev1.VolumeSource{
-							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: "luncur-data",
-							},
-						},
-					}},
+					Containers:         containers,
+					Volumes:            volumes,
 				},
 			},
 		},

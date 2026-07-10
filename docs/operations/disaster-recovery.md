@@ -73,6 +73,42 @@ separately per the guided steps `luncur restore` prints — see
 [Backups & restore](../guides/backups.md#restoring) for the full addon
 procedure.
 
+## Continuous replication (Litestream)
+
+The backup schedule above sets the RPO to the backup interval (up to 24h by
+default). For a tighter RPO, `luncur up --replica-url` adds a Litestream
+sidecar to the luncur Deployment that continuously streams the control-plane
+SQLite WAL to S3 — RPO shrinks from "backup interval" to roughly seconds.
+This only affects control-plane data loss; deployed apps keep running (and
+keep their own state in Kubernetes) whether or not replication is enabled.
+
+Enable it:
+
+```sh
+luncur up \
+  --replica-url s3://my-bucket/luncur \
+  --replica-endpoint https://s3.example.com \
+  --replica-access-key AKIA... --replica-secret-key ...
+```
+
+`--replica-endpoint` is only needed for non-AWS S3-compatible providers.
+These flags aren't persisted anywhere but the rendered Deployment — pass them
+again on every subsequent `luncur up`, or a re-run without them removes the
+sidecar (and its ConfigMap) on the next apply.
+
+Recovery from a Litestream replica, on a fresh box, is a `litestream
+restore` instead of `luncur restore`:
+
+```sh
+litestream restore -o luncur.db s3://my-bucket/luncur
+# copy luncur.db into the data PVC's path, then luncur up as usual
+```
+
+Prefer the periodic-backup restore drill above when it's available — it also
+covers addon data (Postgres/Redis dumps) that Litestream doesn't touch.
+Litestream replication is for shrinking the control-plane RPO, not a
+replacement for `luncur backup` / `luncur restore`.
+
 ## Quarterly drill checklist
 
 Run this every quarter, independent of any incident, so the RTO estimate
