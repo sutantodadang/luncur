@@ -96,16 +96,13 @@ func (s *Store) CreateSweep(sw Sweep, trialParams []string) (Sweep, []SweepTrial
 		return Sweep{}, nil, err
 	}
 
-	var trialIDs []string
 	for _, params := range trialParams {
-		tid := NewID()
 		if _, err := tx.Exec(
 			`INSERT INTO sweep_trials (id, sweep_id, params_json, state) VALUES (?, ?, ?, 'pending')`,
-			tid, id, params,
+			NewID(), id, params,
 		); err != nil {
 			return Sweep{}, nil, err
 		}
-		trialIDs = append(trialIDs, tid)
 	}
 
 	if err := tx.Commit(); err != nil {

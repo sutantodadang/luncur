@@ -77,7 +77,7 @@ func (s *Store) Authenticate(email, password string) (User, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		// Burn the same bcrypt cost as a real comparison so unknown-email
 		// and wrong-password responses take equal time.
-		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		return User{}, ErrAuthFailed
 	}
 	if err != nil {

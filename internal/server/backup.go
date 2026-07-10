@@ -70,10 +70,11 @@ func (s *server) createBackup(ctx context.Context, upload bool) (store.Backup, [
 		return nil
 	}
 	fail := func(err error) (store.Backup, []string, error) {
-		tw.Close()
-		gz.Close()
-		f.Close()
-		os.Remove(path)
+		// Best-effort teardown: the archive is being discarded anyway.
+		_ = tw.Close()
+		_ = gz.Close()
+		_ = f.Close()
+		_ = os.Remove(path)
 		return store.Backup{}, warnings, err
 	}
 

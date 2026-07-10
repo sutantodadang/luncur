@@ -56,7 +56,7 @@ func serveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer st.Close()
+			defer func() { _ = st.Close() }()
 			if bootstrap != "" {
 				if err := bootstrapAdmin(st, bootstrap); err != nil {
 					return err
@@ -198,7 +198,7 @@ func serveCmd() *cobra.Command {
 			case <-ctx.Done():
 				log.Printf("luncur serve shutting down")
 				if sshSrv != nil {
-					sshSrv.Close()
+					_ = sshSrv.Close()
 				}
 				shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()

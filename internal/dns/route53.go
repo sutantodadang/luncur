@@ -90,7 +90,7 @@ func (r *Route53) zoneID(ctx context.Context, fqdn string) (string, error) {
 		var out struct {
 			HostedZones struct {
 				HostedZone []struct {
-					Id   string `xml:"Id"`
+					ID   string `xml:"Id"`
 					Name string `xml:"Name"`
 				} `xml:"HostedZone"`
 			} `xml:"HostedZones"`
@@ -101,7 +101,7 @@ func (r *Route53) zoneID(ctx context.Context, fqdn string) (string, error) {
 		}
 		for _, z := range out.HostedZones.HostedZone {
 			if strings.TrimSuffix(z.Name, ".") == cand {
-				return strings.TrimPrefix(z.Id, "/hostedzone/"), nil
+				return strings.TrimPrefix(z.ID, "/hostedzone/"), nil
 			}
 		}
 	}
