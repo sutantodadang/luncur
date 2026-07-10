@@ -5,7 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
+
+	"github.com/sutantodadang/luncur/internal/render"
 )
 
 func TestLuncurObjects(t *testing.T) {
@@ -116,6 +120,133 @@ func TestPanelIngress(t *testing.T) {
 		if !strings.Contains(customJSON, want) {
 			t.Fatalf("missing %q in: %s", want, customJSON)
 		}
+	}
+}
+
+func deploymentFrom(t *testing.T, objs []render.Object) *appsv1.Deployment {
+	t.Helper()
+	for _, o := range objs {
+		if o.Kind == "Deployment" {
+			var dep appsv1.Deployment
+			if err := json.Unmarshal(o.JSON, &dep); err != nil {
+				t.Fatal(err)
+			}
+			return &dep
+		}
+	}
+	t.Fatal("no Deployment in objs")
+	return nil
+}
+
+func TestLuncurObjectsHardening(t *testing.T) {
+	objs, err := LuncurObjects(Params{
+		Image: "img", ExternalIP: "1.2.3.4", BuilderImage: "b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := deploymentFrom(t, objs)
+	if dep.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
+		t.Fatalf("strategy = %v, want Recreate", dep.Spec.Strategy.Type)
+	}
+	if len(dep.Spec.Template.Spec.Containers) != 1 {
+		t.Fatalf("containers = %d, want 1 (no sidecar without ReplicaURL)", len(dep.Spec.Template.Spec.Containers))
+	}
+	c := dep.Spec.Template.Spec.Containers[0]
+	if c.LivenessProbe == nil || c.LivenessProbe.HTTPGet == nil ||
+		c.LivenessProbe.HTTPGet.Path != "/v1/health" || c.LivenessProbe.HTTPGet.Port.IntValue() != 8080 {
+		t.Fatalf("livenessProbe = %+v, want HTTP GET /v1/health:8080", c.LivenessProbe)
+	}
+	for _, o := range objs {
+		if o.Kind == "ConfigMap" && strings.Contains(string(o.JSON), "luncur-litestream") {
+			t.Fatal("unexpected luncur-litestream ConfigMap without ReplicaURL")
+		}
+	}
+}
+
+func TestLuncurObjectsLitestreamSidecar(t *testing.T) {
+	objs, err := LuncurObjects(Params{
+		Image: "img", ExternalIP: "1.2.3.4", BuilderImage: "b",
+		ReplicaURL: "s3://my-bucket/luncur", ReplicaEndpoint: "https://s3.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var cm *corev1.ConfigMap
+	for _, o := range objs {
+		if o.Kind == "ConfigMap" {
+			var c corev1.ConfigMap
+			if err := json.Unmarshal(o.JSON, &c); err != nil {
+				t.Fatal(err)
+			}
+			if c.Name == "luncur-litestream" {
+				cm = &c
+			}
+		}
+	}
+	if cm == nil {
+		t.Fatal("missing luncur-litestream ConfigMap")
+	}
+	cfg := cm.Data["litestream.yml"]
+	if !strings.Contains(cfg, "s3://my-bucket/luncur") {
+		t.Fatalf("litestream.yml missing replica URL: %s", cfg)
+	}
+	if !strings.Contains(cfg, "endpoint: https://s3.example.com") {
+		t.Fatalf("litestream.yml missing endpoint: %s", cfg)
+	}
+
+	dep := deploymentFrom(t, objs)
+	if len(dep.Spec.Template.Spec.Containers) != 2 {
+		t.Fatalf("containers = %d, want 2 (luncur + litestream)", len(dep.Spec.Template.Spec.Containers))
+	}
+	var sidecar *corev1.Container
+	for i := range dep.Spec.Template.Spec.Containers {
+		if dep.Spec.Template.Spec.Containers[i].Name == "litestream" {
+			sidecar = &dep.Spec.Template.Spec.Containers[i]
+		}
+	}
+	if sidecar == nil {
+		t.Fatal("missing litestream sidecar container")
+	}
+	wantEnv := map[string]string{
+		"LITESTREAM_ACCESS_KEY_ID":     "access-key",
+		"LITESTREAM_SECRET_ACCESS_KEY": "secret-key",
+	}
+	for _, e := range sidecar.Env {
+		wantKey, ok := wantEnv[e.Name]
+		if !ok {
+			continue
+		}
+		if e.ValueFrom == nil || e.ValueFrom.SecretKeyRef == nil ||
+			e.ValueFrom.SecretKeyRef.Name != LitestreamSecretName || e.ValueFrom.SecretKeyRef.Key != wantKey {
+			t.Fatalf("env %s not sourced from %s/%s: %+v", e.Name, LitestreamSecretName, wantKey, e.ValueFrom)
+		}
+		delete(wantEnv, e.Name)
+	}
+	if len(wantEnv) != 0 {
+		t.Fatalf("sidecar missing env vars: %v", wantEnv)
+	}
+
+	mounts := map[string]bool{}
+	for _, m := range sidecar.VolumeMounts {
+		mounts[m.Name] = true
+	}
+	if !mounts["luncur-data"] || !mounts["litestream-config"] {
+		t.Fatalf("sidecar volume mounts = %+v, want luncur-data and litestream-config", sidecar.VolumeMounts)
+	}
+
+	foundVol := false
+	for _, v := range dep.Spec.Template.Spec.Volumes {
+		if v.Name == "litestream-config" {
+			foundVol = true
+			if v.ConfigMap == nil || v.ConfigMap.Name != "luncur-litestream" {
+				t.Fatalf("litestream-config volume = %+v, want ConfigMap luncur-litestream", v)
+			}
+		}
+	}
+	if !foundVol {
+		t.Fatal("missing litestream-config pod volume")
 	}
 }
 
