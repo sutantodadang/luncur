@@ -276,6 +276,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/env", s.authed(s.handleSetEnv))
 	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/env/bulk", s.authed(s.handleBulkSetEnv))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/env/{key}", s.authed(s.handleUnsetEnv))
+	mux.HandleFunc("POST /v1/projects/{project}/apps/{app}/redeploy", s.authed(s.handleRedeploy))
 	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/git-token", s.authed(s.handleSetGitToken))
 	mux.HandleFunc("DELETE /v1/projects/{project}/apps/{app}/git-token", s.authed(s.handleDeleteGitToken))
 	mux.HandleFunc("PUT /v1/projects/{project}/apps/{app}/overrides/{kind}", s.authed(s.handleSetOverride))

@@ -449,6 +449,15 @@ func (c *Client) EnvUnset(project, app, key string) error {
 	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env/"+url.PathEscape(key), nil, nil)
 }
 
+// Redeploy re-rolls an app's current release: a git app rebuilds from its
+// repo, any other app re-applies its latest image. Returns the new
+// deployment's summary.
+func (c *Client) Redeploy(project, app string) (DeployResult, error) {
+	var out DeployResult
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/redeploy", nil, &out)
+	return out, err
+}
+
 // SetGitToken stores a sealed private-repo clone token for a git-source app.
 func (c *Client) SetGitToken(project, app, token string) error {
 	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/git-token",

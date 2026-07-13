@@ -15,6 +15,12 @@
     <button type="submit" class="btn">Deploy from git</button>
   </form>
   {{end}}
+  {{if not .App.Ejected}}
+  <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/redeploy">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <button type="submit" class="btn-ghost" hx-confirm="Redeploy {{.App.Name}}? Pods restart with the current release.">redeploy</button>
+  </form>
+  {{end}}
   <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/destroy">
     <input type="hidden" name="_csrf" value="{{.CSRF}}">
     <button type="submit" class="btn-danger" hx-confirm="Destroy app {{.App.Name}}? Deployments, domains and volumes are deleted. This cannot be undone.">destroy app</button>
