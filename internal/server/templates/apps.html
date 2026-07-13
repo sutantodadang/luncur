@@ -42,10 +42,15 @@
     <input class="input w-auto" name="build_path" placeholder="subdir (monorepo, optional) e.g. backend">
     <input class="input w-auto flex-1" name="image" id="image-field" placeholder="image e.g. nginx:1.27 (optional — deploys immediately)">
   </span>
+  <details class="w-full">
+    <summary class="cursor-pointer text-xs text-mut">env vars (set before first deploy — e.g. POSTGRES_PASSWORD)</summary>
+    <textarea class="input mt-1 w-full font-mono text-xs" name="env" rows="3" placeholder="KEY=VALUE, one per line&#10;POSTGRES_PASSWORD=secret&#10;POSTGRES_DB=vectordb"></textarea>
+  </details>
   <button type="submit" class="btn">create app</button>
 </form>
 <div class="cli-echo">$ <b>luncur app create &lt;name&gt;</b></div>
 <div class="cli-echo">$ <b>luncur deploy &lt;name&gt; --image nginx:1.27</b></div>
+<div class="cli-echo">$ <b>luncur deploy pgvector --image pgvector/pgvector:pg17 -e POSTGRES_PASSWORD=secret</b></div>
 <div class="cli-echo">$ <b>luncur app create gemma --kind model --source hf:org/repo/model.Q4_K_M.gguf</b></div>
 <script>
 function uiKindChange(k) {

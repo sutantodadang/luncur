@@ -332,6 +332,39 @@ func TestUICreateAppBuildPath(t *testing.T) {
 	}
 }
 
+// TestUICreateAppEnv covers the create form's "env" textarea: env vars are
+// sealed and stored on create, before any deploy, so an image app boots with
+// them present (e.g. postgres needs POSTGRES_PASSWORD on first start). Uses an
+// empty image so no deploy is triggered — this exercises just the env path.
+func TestUICreateAppEnv(t *testing.T) {
+	srv, st, _ := kubeServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
+
+	u, err := st.GetUserByEmail("root@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck := uiSessionCookie(t, st, u.ID)
+	client := noRedirectClient()
+	csrfCk := uiCSRF(t, client, srv.URL)
+
+	form := url.Values{"name": {"db"}, "port": {"5432"}, "env": {"POSTGRES_PASSWORD=secret\nPOSTGRES_DB=vec"}}
+	resp := uiPost(t, client, srv.URL+"/ui/projects/web/apps", csrfCk, ck, form)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create with env: want 303, got %d", resp.StatusCode)
+	}
+
+	envResp := doAuthed(t, "GET", srv.URL+"/v1/projects/web/apps/db/env", admin, "")
+	var env map[string]string
+	json.NewDecoder(envResp.Body).Decode(&env)
+	envResp.Body.Close()
+	if env["POSTGRES_PASSWORD"] != "secret" || env["POSTGRES_DB"] != "vec" {
+		t.Fatalf("env after create: %v", env)
+	}
+}
+
 // TestUICreateAppInternalCheckbox covers the create form's "internal"
 // checkbox: checked persists internal=true on a web app (mirroring
 // TestUICreateAppBuildPath's style), and checked with kind=worker is
