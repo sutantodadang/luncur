@@ -432,7 +432,7 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 	// A changing config hash forces a rolling restart on config edits and
 	// redeploys (see Input.PodConfigHash).
 	if in.PodConfigHash != "" {
-		dep.Spec.Template.ObjectMeta.Annotations = map[string]string{"luncur.dev/config-hash": in.PodConfigHash}
+		dep.Spec.Template.Annotations = map[string]string{"luncur.dev/config-hash": in.PodConfigHash}
 	}
 	// Autoscale on for web/worker: omit spec.replicas entirely so
 	// server-side apply releases the field to the HPA controller.
