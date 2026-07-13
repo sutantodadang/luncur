@@ -851,6 +851,32 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 		a.GPUCount = gpu
 	}
 
+	// Set env vars before any deploy so the container boots with them
+	// present — e.g. postgres needs POSTGRES_PASSWORD on first start. The
+	// app isn't live yet, so setAppEnvBulk just seals and stores; the deploy
+	// below then renders the manifest with them.
+	if envText := strings.TrimSpace(r.PostFormValue("env")); envText != "" {
+		vars, err := parseDotenv(envText)
+		if err != nil {
+			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("env: "+err.Error()), http.StatusSeeOther)
+			return
+		}
+		if err := s.setAppEnvBulk(r.Context(), p, a, vars); err != nil {
+			var ve *store.ValidationError
+			msg := "env: internal error"
+			switch {
+			case errors.Is(err, errSealerUnavailable):
+				msg = "env: sealer is not configured"
+			case errors.As(err, &ve):
+				msg = "env: " + ve.Error()
+			default:
+				log.Printf("ui create app: set env: %v", err)
+			}
+			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(msg), http.StatusSeeOther)
+			return
+		}
+	}
+
 	// Built-in runtime model apps deploy themselves at create: the runtime
 	// image is known, so reuse the one-click image-deploy tail below.
 	if a.Kind == "model" && modelRT.Name != "custom" {

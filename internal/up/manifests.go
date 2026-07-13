@@ -96,7 +96,9 @@ func LuncurClusterRole() *rbacv1.ClusterRole {
 			rule([]string{""}, []string{"pods/exec"}, "create"),
 			rule([]string{"apps"}, []string{"deployments", "statefulsets", "daemonsets"}, full...),
 			rule([]string{"apps"}, []string{"replicasets"}, read...),
-			rule([]string{"batch"}, []string{"jobs", "cronjobs"}, full...),
+			// jobs needs deletecollection on top of full: DeleteAppObjects
+			// removes an app's per-run Jobs by label via DeleteCollection.
+			rule([]string{"batch"}, []string{"jobs", "cronjobs"}, append(full, "deletecollection")...),
 			rule([]string{"networking.k8s.io"}, []string{"ingresses", "networkpolicies"}, full...),
 			rule([]string{"helm.cattle.io"}, []string{"helmchartconfigs"}, manage...),
 			rule([]string{"node.k8s.io"}, []string{"runtimeclasses"}, manage...),
