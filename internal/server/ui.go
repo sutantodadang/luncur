@@ -98,6 +98,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env", s.uiPage(s.handleUIEnvSet))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/bulk", s.uiPage(s.handleUIEnvBulk))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/delete", s.uiPage(s.handleUIEnvUnset))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/redeploy", s.uiPage(s.handleUIRedeploy))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/git-token", s.uiPage(s.handleUIGitTokenSet))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/git-token/clear", s.uiPage(s.handleUIGitTokenClear))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains", s.uiPage(s.handleUIDomainAdd))

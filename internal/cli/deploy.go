@@ -87,6 +87,38 @@ func sortedKeys(m map[string]string) []string {
 	return keys
 }
 
+// redeployCmd re-rolls an app's current release: a git app rebuilds from its
+// repo, any other app re-applies its latest image. It always restarts the
+// pods (the deployment's config hash changes), so it doubles as "restart this
+// app" — e.g. to pick up an env change or clear bad in-memory state.
+func redeployCmd() *cobra.Command {
+	var project string
+	cmd := &cobra.Command{
+		Use:   "redeploy <app>",
+		Short: "Re-roll an app's current release (rebuild for git apps; re-apply the latest image otherwise)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			result, err := c.Redeploy(project, args[0])
+			if err != nil {
+				return err
+			}
+			if result.Status == "building" {
+				cmd.Printf("redeploy started for %s (deployment #%d, building)\n", args[0], result.Seq)
+				return nil
+			}
+			cmd.Printf("redeployed %s → %s (deployment #%d)\n", args[0], result.URL, result.Seq)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&project, "project", "", "project name")
+	cmd.MarkFlagRequired("project")
+	return cmd
+}
+
 // deployFromSource packs the current directory, uploads it, and polls the
 // resulting build/deploy until it reaches a terminal state.
 func deployFromSource(cmd *cobra.Command, c *client.Client, project, app string) error {

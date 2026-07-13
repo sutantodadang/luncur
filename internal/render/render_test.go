@@ -76,6 +76,29 @@ func TestRenderDeployment(t *testing.T) {
 	}
 }
 
+func TestRenderPodConfigHash(t *testing.T) {
+	// Absent by default: deterministic render, no annotation.
+	r := mustRender(t, testInput(), map[string]string{"K": "v"})
+	var d appsv1.Deployment
+	if err := json.Unmarshal(objByKind(t, r, "Deployment"), &d); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := d.Spec.Template.Annotations["luncur.dev/config-hash"]; ok {
+		t.Fatalf("config-hash annotation present without PodConfigHash: %v", d.Spec.Template.Annotations)
+	}
+
+	// Set: stamped on the pod template so a change rolls the pods.
+	in := testInput()
+	in.PodConfigHash = "abc123"
+	r = mustRender(t, in, map[string]string{"K": "v"})
+	if err := json.Unmarshal(objByKind(t, r, "Deployment"), &d); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Spec.Template.Annotations["luncur.dev/config-hash"]; got != "abc123" {
+		t.Fatalf("config-hash annotation = %q, want abc123", got)
+	}
+}
+
 func TestRenderNoEnvMeansNoSecret(t *testing.T) {
 	r := mustRender(t, testInput(), nil)
 	// D4: testInput's Replicas:2 now also renders an automatic PDB, so
