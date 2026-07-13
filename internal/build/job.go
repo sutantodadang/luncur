@@ -40,6 +40,12 @@ type BuildParams struct {
 	// flows separately via the app's Secret; this is additive, not a
 	// replacement.
 	BuildEnv map[string]string
+	// GitToken is the app's decrypted git access token for cloning a private
+	// repo (SourceType == "git"). Forwarded to the builder as LUNCUR_GIT_TOKEN
+	// — deliberately NOT a LUNCUR_BUILDARG_, so it never becomes a Docker
+	// build-arg and cannot leak into the image's layer history. The entrypoint
+	// feeds it to `git clone` via GIT_ASKPASS only. Empty = public repo.
+	GitToken string
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -70,6 +76,9 @@ func RenderBuildJob(p BuildParams) (render.Object, error) {
 		{Name: "LUNCUR_SOURCE_TYPE", Value: p.SourceType},
 		{Name: "LUNCUR_GIT_URL", Value: p.GitURL},
 		{Name: "LUNCUR_GIT_BRANCH", Value: p.GitBranch},
+	}
+	if p.GitToken != "" {
+		env = append(env, corev1.EnvVar{Name: "LUNCUR_GIT_TOKEN", Value: p.GitToken})
 	}
 	if p.CacheRef != "" {
 		env = append(env, corev1.EnvVar{Name: "LUNCUR_CACHE_REF", Value: p.CacheRef})

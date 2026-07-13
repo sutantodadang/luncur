@@ -254,6 +254,14 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 		return fail(err)
 	}
 
+	// Private-repo clone credential, unsealed for the builder. Missing/unset
+	// is fine (public repo); an unseal failure must fail the build rather than
+	// silently clone as anonymous and 404 on a private repo.
+	gitToken, err := s.plainGitToken(a)
+	if err != nil {
+		return fail(err)
+	}
+
 	s.buildLogf(d, "rendering build job")
 	job, err := build.RenderBuildJob(build.BuildParams{
 		Namespace:    s.systemNamespace,
@@ -269,6 +277,7 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 		CacheRef:     cacheRef,
 		BuildPath:    a.BuildPath,
 		BuildEnv:     buildEnv,
+		GitToken:     gitToken,
 	})
 	if err != nil {
 		return fail(err)

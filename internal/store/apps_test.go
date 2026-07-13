@@ -15,6 +15,52 @@ func seedProject(t *testing.T, s *Store) Project {
 	return p
 }
 
+func TestGitToken(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	a, err := s.CreateGitApp(p.ID, "web", 3000, "https://github.com/me/private", "main", "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Unset by default.
+	got, err := s.GitToken(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("fresh app git token = %v, want nil", got)
+	}
+
+	// Set then read back the (opaque, pre-sealed) bytes.
+	if err := s.SetGitToken(a.ID, []byte("sealed-bytes")); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GitToken(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "sealed-bytes" {
+		t.Fatalf("git token = %q, want sealed-bytes", got)
+	}
+
+	// Clear.
+	if err := s.SetGitToken(a.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GitToken(a.ID); got != nil {
+		t.Fatalf("after clear git token = %v, want nil", got)
+	}
+
+	// Unknown app.
+	if err := s.SetGitToken(999999, []byte("x")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("set on missing app: want ErrNotFound, got %v", err)
+	}
+	if _, err := s.GitToken(999999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get on missing app: want ErrNotFound, got %v", err)
+	}
+}
+
 func TestAppCRUD(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)

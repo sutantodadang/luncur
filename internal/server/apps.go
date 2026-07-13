@@ -126,6 +126,7 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		Port      int    `json:"port"`
 		GitURL    string `json:"git_url"`
 		GitBranch string `json:"git_branch"`
+		GitToken  string `json:"git_token"`
 		Kind      string `json:"kind"`
 		Schedule  string `json:"schedule"`
 		BuildPath string `json:"build_path"`
@@ -214,6 +215,12 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 			return
 		}
 		a.GPUCount = req.GPU
+	}
+	if req.GitToken != "" && a.SourceType == "git" {
+		if err := s.setGitToken(r.Context(), a, req.GitToken); err != nil {
+			s.writeGitTokenError(w, err)
+			return
+		}
 	}
 	out := s.appJSON(p, a)
 	// Built-in runtime model apps deploy themselves at create: the runtime
