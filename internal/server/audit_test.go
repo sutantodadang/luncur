@@ -123,6 +123,71 @@ func TestAuditRecordsUIFormPost(t *testing.T) {
 	}
 }
 
+// TestUIAuditPaginationAndFilter covers the audit page's pagination (one
+// extra row fetched to decide "has next") and its user/contains filters.
+func TestUIAuditPaginationAndFilter(t *testing.T) {
+	srv, st := testServer(t)
+	seedUserToken(t, st, "audit-pg@b.co", "admin")
+	u, err := st.GetUserByEmail("audit-pg@b.co")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 54 scale rows + 1 login row = 55 total (auditPageSize is 50).
+	for i := 0; i < 54; i++ {
+		if err := st.AppendAudit("audit-pg@b.co", "POST /v1/scale", "/v1/scale"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.AppendAudit("audit-pg@b.co", "POST /v1/login", "/v1/login"); err != nil {
+		t.Fatal(err)
+	}
+
+	client := noRedirectClient()
+	sessionCk := uiSessionCookie(t, st, u.ID)
+	get := func(path string) string {
+		t.Helper()
+		req, _ := http.NewRequest("GET", srv.URL+path, nil)
+		req.AddCookie(sessionCk)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s: want 200, got %d", path, resp.StatusCode)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+
+	// Page 0: a next link, no prev link.
+	p0 := get("/ui/audit")
+	if !strings.Contains(p0, "page=1") {
+		t.Fatal("page 0 missing next link")
+	}
+	if strings.Contains(p0, "page=-1") {
+		t.Fatal("page 0 should have no prev link")
+	}
+
+	// Page 1: a prev link, no next link (55 total → 5 rows on page 1).
+	p1 := get("/ui/audit?page=1")
+	if !strings.Contains(p1, "page=0") {
+		t.Fatal("page 1 missing prev link")
+	}
+	if strings.Contains(p1, "page=2") {
+		t.Fatal("page 1 should have no next link")
+	}
+
+	// Filter: contains=login narrows to the single login row.
+	f := get("/ui/audit?contains=login")
+	if !strings.Contains(f, "/v1/login") {
+		t.Fatal("filtered page missing the login row")
+	}
+	if strings.Contains(f, "POST /v1/scale") {
+		t.Fatal("filtered page should exclude scale rows")
+	}
+}
+
 // TestAuditRecordsLogin checks the two API-login cases: success gets a row
 // with the fixed action name, failure gets none.
 func TestAuditRecordsLogin(t *testing.T) {

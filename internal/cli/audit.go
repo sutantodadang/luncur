@@ -9,7 +9,7 @@ import (
 
 // auditCmd lists the audit log of successful mutating requests (admin only).
 func auditCmd() *cobra.Command {
-	var limit int
+	var limit, offset int
 	var user, contains string
 	cmd := &cobra.Command{
 		Use:   "audit",
@@ -20,7 +20,7 @@ func auditCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			entries, err := c.AuditList(limit, user, contains)
+			entries, err := c.AuditList(limit, offset, user, contains)
 			if err != nil {
 				return err
 			}
@@ -33,6 +33,7 @@ func auditCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 50, "max rows to show (server caps at 200)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many rows (pagination)")
 	cmd.Flags().StringVar(&user, "user", "", "filter by exact user email")
 	cmd.Flags().StringVar(&contains, "contains", "", "filter by substring match on action/target")
 	return cmd

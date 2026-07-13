@@ -257,7 +257,7 @@
 <div class="cli-echo">$ <b>luncur scale {{.App.Name}} &lt;n&gt;</b></div>
 
 {{if or (eq .App.Kind "web") (eq .App.Kind "worker")}}
-<hr class="my-3">
+<hr class="mt-3 mb-3" style="border-color:var(--c-line)">
 {{if gt .App.AutoMin 0}}
 <p class="mb-2 text-sm"><span class="font-mono">autoscale {{.App.AutoMin}}&ndash;{{.App.AutoMax}} @{{.App.AutoCPU}}% cpu</span></p>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/autoscale" class="flex flex-wrap items-end gap-2">

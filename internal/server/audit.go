@@ -151,19 +151,42 @@ func (s *server) handleListAudit(w http.ResponseWriter, r *http.Request, _ store
 	writeJSON(w, http.StatusOK, map[string]any{"entries": out})
 }
 
-// handleUIAudit shows the audit log to admins only, newest 100 rows.
+// auditPageSize is how many audit rows one UI page shows.
+const auditPageSize = 50
+
+// handleUIAudit shows the audit log to admins only, paginated and filterable
+// by user and a substring match. Query params: user, contains, page (0-based).
+// We fetch one extra row to know whether a next page exists without a separate
+// COUNT query.
 func (s *server) handleUIAudit(w http.ResponseWriter, r *http.Request, u store.User) {
 	if !s.uiAdmin(w, u) {
 		return
 	}
-	entries, err := s.st.ListAudit(100, 0, "", "")
+	q := r.URL.Query()
+	user := strings.TrimSpace(q.Get("user"))
+	contains := strings.TrimSpace(q.Get("contains"))
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page < 0 {
+		page = 0
+	}
+
+	entries, err := s.st.ListAudit(auditPageSize+1, page*auditPageSize, user, contains)
 	if err != nil {
 		log.Printf("ui audit: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	hasNext := len(entries) > auditPageSize
+	if hasNext {
+		entries = entries[:auditPageSize]
+	}
+
 	s.renderPage(w, "audit.html", map[string]any{
 		"User": u, "Entries": entries,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
+		"FilterUser": user, "FilterContains": contains,
+		"Page": page, "PageDisplay": page + 1, "PrevPage": page - 1, "NextPage": page + 1,
+		"HasPrev": page > 0, "HasNext": hasNext,
+		"Filtered": user != "" || contains != "",
 	})
 }

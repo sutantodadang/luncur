@@ -2,13 +2,28 @@
 {{template "head" .}}{{template "nav" .}}
 <h1 class="mb-4 text-xl font-semibold text-inkhi">Audit log</h1>
 <div class="card">
-{{if not .Entries}}<p class="mb-1 text-sm text-mut">No audit entries yet.</p><div class="cli-echo mb-2">$ <b>luncur audit list</b></div>{{end}}
+<form method="get" action="/ui/audit" class="mb-3 flex flex-wrap items-center gap-2">
+  <input class="input w-auto" name="user" value="{{.FilterUser}}" placeholder="user email">
+  <input class="input w-auto flex-1" name="contains" value="{{.FilterContains}}" placeholder="action or target contains…">
+  <button type="submit" class="btn">filter</button>
+  {{if .Filtered}}<a class="btn-ghost" href="/ui/audit">clear</a>{{end}}
+</form>
+{{if not .Entries}}
+  {{if .Filtered}}<p class="mb-1 text-sm text-mut">No entries match this filter.</p>
+  {{else}}<p class="mb-1 text-sm text-mut">No audit entries yet.</p><div class="cli-echo mb-2">$ <b>luncur audit list</b></div>{{end}}
+{{else}}
 <table class="tbl"><tr><th>Time</th><th>User</th><th>Action</th><th>Target</th></tr>
 {{range .Entries}}<tr>
   <td class="text-mut">{{.CreatedAt}}</td><td>{{.UserEmail}}</td><td>{{.Action}}</td><td>{{.Target}}</td>
 </tr>{{end}}
 </table>
-<div class="cli-echo">$ <b>luncur audit list</b></div>
+<div class="mt-3 flex items-center gap-3 text-sm">
+  {{if .HasPrev}}<a class="btn-ghost" href="/ui/audit?user={{.FilterUser | urlquery}}&contains={{.FilterContains | urlquery}}&page={{.PrevPage}}">← prev</a>{{end}}
+  <span class="text-mut">page {{.PageDisplay}}</span>
+  {{if .HasNext}}<a class="btn-ghost" href="/ui/audit?user={{.FilterUser | urlquery}}&contains={{.FilterContains | urlquery}}&page={{.NextPage}}">next →</a>{{end}}
+</div>
+{{end}}
+<div class="cli-echo mt-3">$ <b>luncur audit list --user &lt;email&gt; --contains &lt;text&gt; --limit 50 --offset 0</b></div>
 </div>
 {{template "foot" .}}
 {{end}}

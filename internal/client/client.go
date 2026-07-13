@@ -1362,10 +1362,13 @@ func (c *Client) MetricsHistory(project, app string) ([]MetricSample, error) {
 // AuditList fetches the audit log (admin only), newest first. limit <= 0
 // leaves it unset (the server defaults/caps it); user/contains filter by
 // exact email and by substring match respectively, both optional.
-func (c *Client) AuditList(limit int, user, contains string) ([]AuditEntry, error) {
+func (c *Client) AuditList(limit, offset int, user, contains string) ([]AuditEntry, error) {
 	q := url.Values{}
 	if limit > 0 {
 		q.Set("limit", strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
 	}
 	if user != "" {
 		q.Set("user", user)
