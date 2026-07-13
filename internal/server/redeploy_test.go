@@ -7,46 +7,26 @@ import (
 	"testing"
 )
 
-func TestPodConfigHash(t *testing.T) {
-	base := podConfigHash(map[string]string{"A": "1", "B": "2"}, "dep1")
-
-	// Order-independent.
-	if podConfigHash(map[string]string{"B": "2", "A": "1"}, "dep1") != base {
-		t.Fatal("hash should not depend on map order")
-	}
-	// A changed value changes the hash.
-	if podConfigHash(map[string]string{"A": "1", "B": "3"}, "dep1") == base {
-		t.Fatal("hash should change when an env value changes")
-	}
-	// A different deployment id changes the hash (redeploy bounces pods).
-	if podConfigHash(map[string]string{"A": "1", "B": "2"}, "dep2") == base {
-		t.Fatal("hash should change when the deployment id changes")
-	}
-	// No "AB"+"" vs "A"+"B" collisions across the key/value boundary.
-	if podConfigHash(map[string]string{"A": "BC"}, "d") == podConfigHash(map[string]string{"AB": "C"}, "d") {
-		t.Fatal("key/value boundary collision")
-	}
-}
-
-// rawHash pulls the pod-template config-hash out of an app's rendered YAML.
-func rawHash(t *testing.T, srv *httptestServer, admin, app string) string {
+// rawStamp pulls the pod-template deploy annotation out of an app's rendered
+// YAML.
+func rawStamp(t *testing.T, srv *httptestServer, admin, app string) string {
 	t.Helper()
 	resp := doAuthed(t, "GET", srv.URL+"/v1/projects/web/apps/"+app+"/raw", admin, "")
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	for _, line := range strings.Split(string(body), "\n") {
-		if strings.Contains(line, "luncur.dev/config-hash:") {
+		if strings.Contains(line, "luncur.dev/deploy:") {
 			return strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
 		}
 	}
-	t.Fatalf("no config-hash in rendered manifest:\n%s", body)
+	t.Fatalf("no deploy stamp in rendered manifest:\n%s", body)
 	return ""
 }
 
-// TestRedeployImageApp covers the end-to-end restart mechanism: deploying an
-// image stamps a config hash, changing env changes the hash (so the pods
-// roll), and redeploy creates a new live deployment whose fresh id changes the
-// hash again — bouncing pods even with an unchanged image and env.
+// TestRedeployImageApp covers the restart contract: an env edit re-applies the
+// Secret but does NOT change the pod-template stamp (pods keep running until
+// the user redeploys), while redeploy mints a new deployment id — changing the
+// stamp — and bounces the pods even with an unchanged image and env.
 func TestRedeployImageApp(t *testing.T) {
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
@@ -56,16 +36,15 @@ func TestRedeployImageApp(t *testing.T) {
 	if resp := doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps/api/deploy", admin, `{"image":"nginx:1"}`); resp.StatusCode != 200 {
 		t.Fatalf("deploy: want 200, got %d", resp.StatusCode)
 	}
-	h1 := rawHash(t, srv, admin, "api")
+	h1 := rawStamp(t, srv, admin, "api")
 
-	// Env change must alter the hash (env is a Secret EnvFrom; only a
-	// pod-template change restarts the pods).
+	// Env change must NOT alter the stamp — pods keep running until redeploy.
 	if resp := doAuthed(t, "PUT", srv.URL+"/v1/projects/web/apps/api/env", admin, `{"key":"FOO","value":"bar"}`); resp.StatusCode != 204 {
 		t.Fatalf("set env: want 204, got %d", resp.StatusCode)
 	}
-	h2 := rawHash(t, srv, admin, "api")
-	if h1 == h2 {
-		t.Fatal("config hash unchanged after env change — pods would not restart")
+	h2 := rawStamp(t, srv, admin, "api")
+	if h1 != h2 {
+		t.Fatal("deploy stamp changed after env edit — pods would restart, but should only restart on redeploy")
 	}
 
 	// Redeploy: new deployment, same image, 200 live.
@@ -89,8 +68,8 @@ func TestRedeployImageApp(t *testing.T) {
 	}
 
 	// A new deployment id rolls the pods even with unchanged image and env.
-	if h3 := rawHash(t, srv, admin, "api"); h3 == h2 {
-		t.Fatal("config hash unchanged after redeploy — pods would not restart")
+	if h3 := rawStamp(t, srv, admin, "api"); h3 == h2 {
+		t.Fatal("deploy stamp unchanged after redeploy — pods would not restart")
 	}
 }
 

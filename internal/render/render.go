@@ -90,13 +90,15 @@ type Input struct {
 	// for web/worker Deployments; the Deployment then omits spec.replicas so
 	// the HPA owns scale under server-side apply.
 	AutoMin, AutoMax, AutoCPU int32
-	// PodConfigHash, when non-empty, is stamped as a pod-template annotation
-	// (luncur.dev/config-hash). Its value changes whenever the app's env or
-	// current deployment changes, so a config edit or a redeploy alters the
-	// pod template and forces a rolling restart — env is injected via a Secret
-	// EnvFrom, and K8s does not restart running pods when only a Secret's
-	// contents change. Empty leaves the annotation off (deterministic default).
-	PodConfigHash string
+	// DeployStamp, when non-empty, is stamped as a pod-template annotation
+	// (luncur.dev/deploy) carrying the current deployment id. A deploy or
+	// redeploy mints a new id, changing the pod template and forcing a rolling
+	// restart; plain re-syncs (env set/unset, scale, override edits) reuse the
+	// same id and leave running pods alone. This is deliberate: env is injected
+	// via a Secret EnvFrom (K8s does not hot-reload it), so a config change is
+	// staged and only goes live on the next explicit redeploy. Empty leaves the
+	// annotation off (deterministic default).
+	DeployStamp string
 }
 
 // Volume is a single per-app persistent volume: a name (becomes the PVC's
@@ -429,10 +431,10 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			},
 		},
 	}
-	// A changing config hash forces a rolling restart on config edits and
-	// redeploys (see Input.PodConfigHash).
-	if in.PodConfigHash != "" {
-		dep.Spec.Template.Annotations = map[string]string{"luncur.dev/config-hash": in.PodConfigHash}
+	// A new deployment id forces a rolling restart on deploy/redeploy while
+	// leaving plain re-syncs alone (see Input.DeployStamp).
+	if in.DeployStamp != "" {
+		dep.Spec.Template.Annotations = map[string]string{"luncur.dev/deploy": in.DeployStamp}
 	}
 	// Autoscale on for web/worker: omit spec.replicas entirely so
 	// server-side apply releases the field to the HPA controller.

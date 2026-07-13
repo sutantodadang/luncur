@@ -121,6 +121,28 @@ if(!window.__luncurUX){
       if(e.detail.boosted) setBar(false);
     });
   });
+
+  // Preserve scroll on in-place actions: an action button (env set/unset,
+  // redeploy, scale, save health, ...) POSTs and the server redirects back to
+  // the SAME page. hx-boost then swaps the body and htmx scrolls to top —
+  // jarring when you clicked a control halfway down. Snapshot the scroll
+  // position before a boosted request and, if we land on the same URL,
+  // restore it. A real navigation to a different page keeps the top scroll.
+  // Snapshot on the boosted request (boosted is reliable on beforeRequest),
+  // then restore after settle IF we land on the same URL. Don't re-check
+  // boosted on afterSettle — htmx doesn't set it there, and the snapshot's
+  // existence already means this was a boosted action. rAF runs after htmx's
+  // own post-swap scroll-to-top, so our restore wins.
+  var scrollSnap = null;
+  document.body.addEventListener("htmx:beforeRequest", function(e){
+    if(e.detail.boosted){ scrollSnap = { path: location.pathname + location.search, y: window.scrollY }; }
+  });
+  document.body.addEventListener("htmx:afterSettle", function(){
+    var s = scrollSnap; scrollSnap = null;
+    if(s && (location.pathname + location.search) === s.path){
+      requestAnimationFrame(function(){ window.scrollTo(0, s.y); });
+    }
+  });
 }
 
 // Flash cookie ("luncur_flash", "<kind>|<msg>"): the server queues one toast
