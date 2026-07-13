@@ -31,7 +31,25 @@ echo "Preparing workspace..."
 if [ "$LUNCUR_SOURCE_TYPE" = "git" ]; then
   # Clone from git repository (shallow clone of the specified branch).
   echo "Cloning from: $LUNCUR_GIT_URL (branch: ${LUNCUR_GIT_BRANCH:-main})"
-  git clone --depth 1 --branch "${LUNCUR_GIT_BRANCH:-main}" "$LUNCUR_GIT_URL" /workspace
+  clone_url="$LUNCUR_GIT_URL"
+  if [ -n "${LUNCUR_GIT_TOKEN:-}" ]; then
+    # Private repo: feed the token to git via GIT_ASKPASS so it never lands in
+    # the remote URL, .git/config, the process args, or this log. Only the
+    # username (a fixed placeholder — GitHub accepts any username alongside a
+    # PAT/installation token) goes into the URL. GIT_TERMINAL_PROMPT=0 makes a
+    # bad token fail fast instead of hanging on an interactive prompt.
+    askpass="$(mktemp)"
+    printf '#!/bin/sh\nexec echo "$LUNCUR_GIT_TOKEN"\n' > "$askpass"
+    chmod +x "$askpass"
+    export GIT_ASKPASS="$askpass"
+    export GIT_TERMINAL_PROMPT=0
+    case "$LUNCUR_GIT_URL" in
+      https://*) clone_url="https://x-access-token@${LUNCUR_GIT_URL#https://}" ;;
+      *) echo "WARNING: LUNCUR_GIT_TOKEN set but URL is not https; ignoring token" ;;
+    esac
+  fi
+  git clone --depth 1 --branch "${LUNCUR_GIT_BRANCH:-main}" "$clone_url" /workspace
+  unset GIT_ASKPASS GIT_TERMINAL_PROMPT
 else
   # Extract from tarball (assumes sources are at /data/sources/${LUNCUR_DEPLOY_ID}.tar.gz).
   echo "Extracting tarball: /data/sources/${LUNCUR_DEPLOY_ID}.tar.gz"

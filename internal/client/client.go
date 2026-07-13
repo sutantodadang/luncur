@@ -449,6 +449,17 @@ func (c *Client) EnvUnset(project, app, key string) error {
 	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env/"+url.PathEscape(key), nil, nil)
 }
 
+// SetGitToken stores a sealed private-repo clone token for a git-source app.
+func (c *Client) SetGitToken(project, app, token string) error {
+	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/git-token",
+		map[string]string{"token": token}, nil)
+}
+
+// ClearGitToken removes an app's stored git token.
+func (c *Client) ClearGitToken(project, app string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/git-token", nil, nil)
+}
+
 func (c *Client) EnvList(project, app string) (map[string]string, error) {
 	out := make(map[string]string)
 	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env", nil, &out)

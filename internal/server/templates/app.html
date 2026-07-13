@@ -312,6 +312,21 @@
 <div class="cli-echo">$ <b>luncur webhook enable {{.App.Name}}</b></div>
 {{end}}
 </div>
+
+<div class="card">
+<h2>Git token</h2>
+<p class="mb-2 text-sm text-mut">Access token to clone a private repo (e.g. a GitHub PAT). Write-only — sealed at rest, never shown back.</p>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/git-token" class="mb-2 flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input w-auto flex-1 font-mono text-xs" type="password" name="token" placeholder="paste token" autocomplete="off" required>
+  <button type="submit" class="btn">save token</button>
+</form>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/git-token/clear">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn-ghost" hx-confirm="Clear the git token for {{.App.Name}}?">clear token</button>
+</form>
+<div class="cli-echo">$ <b>luncur app git-token set {{.App.Name}} --project {{.Project.Name}} --token &lt;pat&gt;</b></div>
+</div>
 {{end}}
 </div>
 

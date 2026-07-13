@@ -71,6 +71,28 @@ func (s *server) plainEnv(a store.App) (map[string]string, error) {
 	return env, nil
 }
 
+// plainGitToken returns an app's decrypted git access token, or "" if none is
+// set. Mirrors plainEnv's contract: a sealed token that can't be unsealed is
+// an error, never a silent empty (which would clone a private repo as
+// anonymous and fail confusingly).
+func (s *server) plainGitToken(a store.App) (string, error) {
+	sealed, err := s.st.GitToken(a.ID)
+	if err != nil {
+		return "", fmt.Errorf("get git token: %w", err)
+	}
+	if len(sealed) == 0 {
+		return "", nil
+	}
+	if s.sealer == nil {
+		return "", fmt.Errorf("cannot unseal git token: no sealer configured")
+	}
+	plain, err := s.sealer.Open(sealed)
+	if err != nil {
+		return "", fmt.Errorf("unseal git token: %w", err)
+	}
+	return string(plain), nil
+}
+
 // renderApp assembles the manifest set for one app: unseals its env vars,
 // injects connection env for attached addons, loads its overrides, and
 // renders against imageRef.

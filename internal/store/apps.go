@@ -260,6 +260,42 @@ func (s *Store) CreateGitApp(projectID int64, name string, port int, gitURL, git
 	}, nil
 }
 
+// SetGitToken stores the sealed git access token for a private-repo clone.
+// The value arrives already sealed — the store never sees plaintext. A nil or
+// empty slice clears it. Returns ErrNotFound if the app does not exist.
+func (s *Store) SetGitToken(appID int64, sealed []byte) error {
+	var enc any // nil → SQL NULL (clears the token)
+	if len(sealed) > 0 {
+		enc = sealed
+	}
+	res, err := s.db.Exec(`UPDATE apps SET git_token_enc = ? WHERE id = ?`, enc, appID)
+	if err != nil {
+		return fmt.Errorf("set git token: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GitToken returns the sealed git token bytes for an app, or nil if none is
+// set. Callers unseal via the server's sealer.
+func (s *Store) GitToken(appID int64) ([]byte, error) {
+	var enc []byte
+	err := s.db.QueryRow(`SELECT git_token_enc FROM apps WHERE id = ?`, appID).Scan(&enc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return enc, nil
+}
+
 func (s *Store) GetApp(projectID int64, name string) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString

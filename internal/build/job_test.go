@@ -75,6 +75,46 @@ func TestRenderBuildJobWithoutCacheRef(t *testing.T) {
 	}
 }
 
+func TestRenderBuildJobGitToken(t *testing.T) {
+	obj, err := RenderBuildJob(BuildParams{
+		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
+		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
+		RegistryHost: "registry.luncur-system:5000", SourceType: "git", DeployID: "42",
+		GitURL: "https://github.com/me/private", GitToken: "ghp_secret",
+		BuildEnv: map[string]string{"FOO": "bar"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := jobEnv(t, obj)
+	if env["LUNCUR_GIT_TOKEN"] != "ghp_secret" {
+		t.Fatalf("LUNCUR_GIT_TOKEN=%q, want ghp_secret", env["LUNCUR_GIT_TOKEN"])
+	}
+	// The token must NOT be exposed as a build-arg — that would bake it into
+	// the image's layer history.
+	if _, leaked := env["LUNCUR_BUILDARG_GIT_TOKEN"]; leaked {
+		t.Fatal("git token leaked as a LUNCUR_BUILDARG_")
+	}
+	if env["LUNCUR_BUILDARG_FOO"] != "bar" {
+		t.Fatalf("unrelated build-arg missing: %+v", env)
+	}
+}
+
+func TestRenderBuildJobWithoutGitToken(t *testing.T) {
+	obj, err := RenderBuildJob(BuildParams{
+		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",
+		DataPVC: "luncur-data", ImageRef: "registry.luncur-system:5000/web-api:42",
+		RegistryHost: "registry.luncur-system:5000", SourceType: "git", DeployID: "42",
+		GitURL: "https://github.com/me/public",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := jobEnv(t, obj)["LUNCUR_GIT_TOKEN"]; ok {
+		t.Fatal("LUNCUR_GIT_TOKEN present, want absent for public repo")
+	}
+}
+
 func TestRenderBuildJobRootlessSecurity(t *testing.T) {
 	obj, err := RenderBuildJob(BuildParams{
 		Namespace: "luncur-system", Name: "build-42", BuilderImage: "luncur/builder:latest",

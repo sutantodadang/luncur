@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"fmt"
+	"io"
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"github.com/sutantodadang/luncur/internal/client"
@@ -21,6 +25,7 @@ func appCmd() *cobra.Command {
 	var gpu int64
 	var modelSource, runtime string
 	var cpu, memory string
+	var gitToken string
 
 	create := &cobra.Command{
 		Use:   "create <name>",
@@ -55,6 +60,11 @@ func appCmd() *cobra.Command {
 					return err
 				}
 			}
+			if gitToken != "" && gitURL != "" {
+				if err := c.SetGitToken(project, args[0], gitToken); err != nil {
+					return err
+				}
+			}
 			if kind == "model" {
 				cmd.Printf("created %s (kind model, runtime %s)\n", a.Name, a.Runtime)
 				if a.Status != "" {
@@ -83,6 +93,7 @@ func appCmd() *cobra.Command {
 	create.Flags().StringVar(&runtime, "runtime", "auto", "model runtime: auto, llamacpp, vllm, or custom (model kind only)")
 	create.Flags().StringVar(&cpu, "cpu", "", "CPU request+limit applied after create (e.g. 4000m, 4)")
 	create.Flags().StringVar(&memory, "memory", "", "memory request+limit applied after create (e.g. 8192, 8Gi)")
+	create.Flags().StringVar(&gitToken, "git-token", "", "access token to clone a private git repo (git-source apps; e.g. a GitHub PAT)")
 
 	var listProject string
 	list := &cobra.Command{
@@ -190,6 +201,71 @@ func appCmd() *cobra.Command {
 	training.MarkFlagRequired("nodes")
 	training.Flags().StringVar(&trainFramework, "framework", "", "rendezvous env preset: torchrun|torch (empty = LUNCUR_* contract only)")
 
-	cmd.AddCommand(create, list, info, raw, training, ejectCmd(), adoptCmd(), appS3EnvCmd())
+	cmd.AddCommand(create, list, info, raw, training, gitTokenCmd(), ejectCmd(), adoptCmd(), appS3EnvCmd())
+	return cmd
+}
+
+// gitTokenCmd manages an app's private-repo clone token. The token is
+// write-only server-side (sealed at rest, never read back), so there is no
+// "get" — only set and clear.
+func gitTokenCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "git-token",
+		Short: "Manage the access token used to clone a private git repo",
+	}
+
+	var setProject, token string
+	set := &cobra.Command{
+		Use:   "set <app>",
+		Short: "Set the private-repo clone token (--token, or piped on stdin)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			t := token
+			if t == "" {
+				raw, err := io.ReadAll(cmd.InOrStdin())
+				if err != nil {
+					return err
+				}
+				t = strings.TrimSpace(string(raw))
+			}
+			if t == "" {
+				return fmt.Errorf("token is required (--token or pipe it on stdin)")
+			}
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			if err := c.SetGitToken(setProject, args[0], t); err != nil {
+				return err
+			}
+			cmd.Printf("git token set on %s\n", args[0])
+			return nil
+		},
+	}
+	set.Flags().StringVar(&setProject, "project", "", "project name")
+	set.MarkFlagRequired("project")
+	set.Flags().StringVar(&token, "token", "", "access token (omit to read from stdin)")
+
+	var clearProject string
+	clear := &cobra.Command{
+		Use:   "clear <app>",
+		Short: "Remove the stored private-repo clone token",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			if err := c.ClearGitToken(clearProject, args[0]); err != nil {
+				return err
+			}
+			cmd.Printf("git token cleared on %s\n", args[0])
+			return nil
+		},
+	}
+	clear.Flags().StringVar(&clearProject, "project", "", "project name")
+	clear.MarkFlagRequired("project")
+
+	cmd.AddCommand(set, clear)
 	return cmd
 }

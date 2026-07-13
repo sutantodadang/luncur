@@ -98,6 +98,8 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env", s.uiPage(s.handleUIEnvSet))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/bulk", s.uiPage(s.handleUIEnvBulk))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/delete", s.uiPage(s.handleUIEnvUnset))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/git-token", s.uiPage(s.handleUIGitTokenSet))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/git-token/clear", s.uiPage(s.handleUIGitTokenClear))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains", s.uiPage(s.handleUIDomainAdd))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains/delete", s.uiPage(s.handleUIDomainDelete))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/volumes", s.uiPage(s.handleUIVolumeAdd))
@@ -851,6 +853,15 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 		a.GPUCount = gpu
 	}
 
+	// Seal+store a private-repo clone token before any deploy, so the build
+	// job can clone the repo. Only meaningful for git-source apps.
+	if token := strings.TrimSpace(r.PostFormValue("git_token")); token != "" && a.SourceType == "git" {
+		if err := s.setGitToken(r.Context(), a, token); err != nil {
+			s.uiGitTokenError(w, err)
+			return
+		}
+	}
+
 	// Set env vars before any deploy so the container boots with them
 	// present — e.g. postgres needs POSTGRES_PASSWORD on first start. The
 	// app isn't live yet, so setAppEnvBulk just seals and stores; the deploy
@@ -1602,6 +1613,66 @@ func (s *server) handleUIEnvSet(w http.ResponseWriter, r *http.Request, u store.
 	}
 	flash(w, "ok", "env saved")
 	uiRedirect(w, r, p, a)
+}
+
+// handleUIGitTokenSet is handleSetGitToken's UI twin: seal+store a
+// private-repo clone token from the app page, redirecting back on success.
+func (s *server) handleUIGitTokenSet(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProjectWrite(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	token := strings.TrimSpace(r.PostFormValue("token"))
+	if token == "" {
+		http.Error(w, "token is required", http.StatusBadRequest)
+		return
+	}
+	if err := s.setGitToken(r.Context(), a, token); err != nil {
+		s.uiGitTokenError(w, err)
+		return
+	}
+	flash(w, "ok", "git token saved")
+	uiRedirect(w, r, p, a)
+}
+
+// handleUIGitTokenClear is handleDeleteGitToken's UI twin.
+func (s *server) handleUIGitTokenClear(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProjectWrite(w, r, u)
+	if !ok {
+		return
+	}
+	a, ok := s.uiApp(w, r, p)
+	if !ok {
+		return
+	}
+	if err := s.clearGitToken(a); err != nil {
+		s.uiGitTokenError(w, err)
+		return
+	}
+	flash(w, "ok", "git token cleared")
+	uiRedirect(w, r, p, a)
+}
+
+func (s *server) uiGitTokenError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errAppEjected):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, errGitTokenNeedsGit):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, errSealerUnavailable):
+		http.Error(w, "sealer is not configured", http.StatusServiceUnavailable)
+	default:
+		log.Printf("ui git token: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
 }
 
 // handleUIEnvBulk is handleBulkSetEnv's UI twin: paste-in-only bulk upsert
