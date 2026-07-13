@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,14 +20,28 @@ var (
 
 func deployCmd() *cobra.Command {
 	var project, image string
+	var envs []string
 	cmd := &cobra.Command{
 		Use:   "deploy <app>",
 		Short: "Deploy an app from an image or from the current directory's source",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			pairs, err := parseEnvPairs(envs)
+			if err != nil {
+				return err
+			}
+
 			c, err := apiClient()
 			if err != nil {
 				return err
+			}
+
+			// Set env vars before deploying so the container boots with them
+			// present — e.g. postgres needs POSTGRES_PASSWORD on first start.
+			for _, k := range sortedKeys(pairs) {
+				if err := c.EnvSet(project, args[0], k, pairs[k]); err != nil {
+					return err
+				}
 			}
 
 			if image != "" {
@@ -44,7 +59,32 @@ func deployCmd() *cobra.Command {
 	cmd.Flags().StringVar(&project, "project", "", "project name")
 	cmd.MarkFlagRequired("project")
 	cmd.Flags().StringVar(&image, "image", "", "image reference (omit to deploy source from the current directory)")
+	cmd.Flags().StringArrayVarP(&envs, "env", "e", nil, "set an env var before deploying (KEY=VALUE, repeatable)")
 	return cmd
+}
+
+// parseEnvPairs turns []string{"KEY=VALUE"} into a map, erroring on any pair
+// missing "=" or with an empty key.
+func parseEnvPairs(envs []string) (map[string]string, error) {
+	out := make(map[string]string, len(envs))
+	for _, e := range envs {
+		key, value, ok := strings.Cut(e, "=")
+		if !ok || key == "" {
+			return nil, fmt.Errorf("invalid KEY=VALUE pair: %q", e)
+		}
+		out[key] = value
+	}
+	return out, nil
+}
+
+// sortedKeys returns m's keys sorted, so env is applied deterministically.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // deployFromSource packs the current directory, uploads it, and polls the
