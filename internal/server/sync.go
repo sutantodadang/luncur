@@ -2,12 +2,9 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -16,25 +13,6 @@ import (
 	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
 )
-
-// podConfigHash is a short, stable digest of an app's effective env plus its
-// current deployment id. It feeds the pod-template annotation that forces a
-// rolling restart when either changes — see render.Input.PodConfigHash. Keys
-// are sorted so the digest is order-independent; the NUL separators keep
-// "AB"+"C" distinct from "A"+"BC".
-func podConfigHash(env map[string]string, deployID string) string {
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	h := sha256.New()
-	for _, k := range keys {
-		fmt.Fprintf(h, "%s=%s\x00", k, env[k])
-	}
-	fmt.Fprintf(h, "deploy=%s", deployID)
-	return hex.EncodeToString(h.Sum(nil))[:16]
-}
 
 // hostFor builds the sslip.io hostname luncur assigns each app: the app
 // name, then the external IP with dots swapped for dashes (sslip.io
@@ -260,26 +238,27 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 		annotations = nil
 	}
 
-	// Config hash forces a rolling restart when env or the current deployment
-	// changes (env is injected via a Secret EnvFrom, which K8s does not
-	// hot-reload into running pods). Deploys/redeploys create a new deployment
-	// row before rendering, so LatestDeployment returns a fresh id and the
-	// hash changes. Skipped for per-run job pods (runName != ""), which are
-	// ephemeral and render a Job, not the annotated Deployment.
-	var configHash string
+	// Stamp the current deployment id on the pod template so a deploy or
+	// redeploy rolls the pods, while plain re-syncs (env set/unset, scale,
+	// override edits) leave it unchanged and do NOT restart. Deploys and
+	// redeploys create a new deployment row before rendering, so
+	// LatestDeployment returns a fresh id here and the annotation changes;
+	// an env edit re-applies the Secret but reuses the same latest deploy, so
+	// pods keep running until the user clicks redeploy. Skipped for per-run
+	// job pods (runName != ""), which render a Job, not the annotated
+	// Deployment.
+	var deployStamp string
 	if runName == "" {
-		deployID := ""
 		if d, err := s.st.LatestDeployment(a.ID); err == nil {
-			deployID = d.ID
+			deployStamp = d.ID
 		}
-		configHash = podConfigHash(env, deployID)
 	}
 
 	in := render.Input{
 		AppName:            a.Name,
 		Namespace:          p.Namespace,
 		Image:              imageRef,
-		PodConfigHash:      configHash,
+		DeployStamp:        deployStamp,
 		Host:               host,
 		Port:               int32(a.Port),
 		Replicas:           int32(a.Replicas),

@@ -121,6 +121,21 @@ if(!window.__luncurUX){
       if(e.detail.boosted) setBar(false);
     });
   });
+
+  // Preserve scroll on in-place actions: an action button (env set/unset,
+  // redeploy, scale, save health, ...) POSTs and the server redirects back to
+  // the SAME page. hx-boost then swaps the body and htmx scrolls to top —
+  // jarring when you clicked a control halfway down. Snapshot the scroll
+  // position before a boosted request and, if we land on the same URL,
+  // restore it. A real navigation to a different page keeps the top scroll.
+  var scrollSnap = null;
+  document.body.addEventListener("htmx:beforeRequest", function(e){
+    if(e.detail.boosted){ scrollSnap = { path: location.pathname + location.search, y: window.scrollY }; }
+  });
+  document.body.addEventListener("htmx:afterSettle", function(e){
+    var s = scrollSnap; scrollSnap = null;
+    if(e.detail.boosted && s && (location.pathname + location.search) === s.path){ window.scrollTo(0, s.y); }
+  });
 }
 
 // Flash cookie ("luncur_flash", "<kind>|<msg>"): the server queues one toast

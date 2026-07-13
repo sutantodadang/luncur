@@ -76,26 +76,26 @@ func TestRenderDeployment(t *testing.T) {
 	}
 }
 
-func TestRenderPodConfigHash(t *testing.T) {
+func TestRenderDeployStamp(t *testing.T) {
 	// Absent by default: deterministic render, no annotation.
 	r := mustRender(t, testInput(), map[string]string{"K": "v"})
 	var d appsv1.Deployment
 	if err := json.Unmarshal(objByKind(t, r, "Deployment"), &d); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := d.Spec.Template.Annotations["luncur.dev/config-hash"]; ok {
-		t.Fatalf("config-hash annotation present without PodConfigHash: %v", d.Spec.Template.Annotations)
+	if _, ok := d.Spec.Template.Annotations["luncur.dev/deploy"]; ok {
+		t.Fatalf("deploy annotation present without DeployStamp: %v", d.Spec.Template.Annotations)
 	}
 
-	// Set: stamped on the pod template so a change rolls the pods.
+	// Set: stamped on the pod template so a new deployment rolls the pods.
 	in := testInput()
-	in.PodConfigHash = "abc123"
+	in.DeployStamp = "dep123"
 	r = mustRender(t, in, map[string]string{"K": "v"})
 	if err := json.Unmarshal(objByKind(t, r, "Deployment"), &d); err != nil {
 		t.Fatal(err)
 	}
-	if got := d.Spec.Template.Annotations["luncur.dev/config-hash"]; got != "abc123" {
-		t.Fatalf("config-hash annotation = %q, want abc123", got)
+	if got := d.Spec.Template.Annotations["luncur.dev/deploy"]; got != "dep123" {
+		t.Fatalf("deploy annotation = %q, want dep123", got)
 	}
 }
 
