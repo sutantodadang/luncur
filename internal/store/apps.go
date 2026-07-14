@@ -8,18 +8,22 @@ import (
 )
 
 type App struct {
-	ID         int64
-	ProjectID  int64
-	Name       string
-	Port       int
-	Replicas   int
-	SourceType string
-	GitURL     string
-	GitBranch  string
-	Ejected    bool
-	CPUMilli   int64
-	MemoryMB   int64
-	HealthPath string
+	ID        int64
+	ProjectID int64
+	// EnvironmentID is the owning environment's id. 0 on rows written before
+	// environments existed (backfillEnvironments re-parents those to the
+	// project's production environment).
+	EnvironmentID int64
+	Name          string
+	Port          int
+	Replicas      int
+	SourceType    string
+	GitURL        string
+	GitBranch     string
+	Ejected       bool
+	CPUMilli      int64
+	MemoryMB      int64
+	HealthPath    string
 	// Kind is one of web|worker|cron; "" normalizes to "web" on create.
 	Kind string
 	// Schedule is a 5-field cron expression; only set (and required) for
@@ -304,9 +308,9 @@ func (s *Store) GetApp(projectID int64, name string) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu, suspended FROM apps WHERE project_id = ? AND name = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu, suspended, environment_id FROM apps WHERE project_id = ? AND name = ?`,
 		projectID, name,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU, &a.Suspended)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU, &a.Suspended, &a.EnvironmentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -325,9 +329,9 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu, suspended FROM apps WHERE id = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu, suspended, environment_id FROM apps WHERE id = ?`,
 		id,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU, &a.Suspended)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU, &a.Suspended, &a.EnvironmentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -341,7 +345,7 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 
 func (s *Store) ListApps(projectID int64) ([]App, error) {
 	rows, err := s.db.Query(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu, suspended FROM apps WHERE project_id = ? ORDER BY name`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu, suspended, environment_id FROM apps WHERE project_id = ? ORDER BY name`,
 		projectID,
 	)
 	if err != nil {
@@ -352,7 +356,7 @@ func (s *Store) ListApps(projectID int64) ([]App, error) {
 	for rows.Next() {
 		var a App
 		var gitURL, gitBranch sql.NullString
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU, &a.Suspended); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU, &a.Suspended, &a.EnvironmentID); err != nil {
 			return nil, err
 		}
 		a.GitURL = gitURL.String
@@ -562,4 +566,82 @@ func (s *Store) SetAppSuspended(id int64, suspended bool) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// appEnvCols is the full apps column list (matching GetApp/GetAppByID/
+// ListApps above) used by the environment-scoped app methods below.
+const appEnvCols = `id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu, suspended, environment_id`
+
+func scanAppEnvRow(row *sql.Row) (App, error) {
+	var a App
+	var gitURL, gitBranch sql.NullString
+	err := row.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU, &a.Suspended, &a.EnvironmentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return App{}, ErrNotFound
+	}
+	if err != nil {
+		return App{}, err
+	}
+	a.GitURL = gitURL.String
+	a.GitBranch = gitBranch.String
+	return a, nil
+}
+
+// CreateAppInEnv registers an app under an environment's namespace. It also
+// sets project_id to the environment's owning project so legacy
+// project_id-scoped queries (GetApp, ListApps, ...) keep working unchanged.
+func (s *Store) CreateAppInEnv(envID int64, name string, port int, kind, schedule string) (App, error) {
+	env, err := s.GetEnvironmentByID(envID)
+	if err != nil {
+		return App{}, err
+	}
+	if !validName(name) {
+		return App{}, fmt.Errorf("invalid app name %q (lowercase letters, digits, dashes; max 40 chars)", name)
+	}
+	kind = normalizeAppKind(kind)
+	if err := validateAppKind(kind, port, schedule); err != nil {
+		return App{}, err
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO apps (project_id, environment_id, name, source_type, port, kind, schedule)
+		 VALUES (?, ?, ?, 'tarball', ?, ?, ?)`,
+		env.ProjectID, envID, name, port, kind, schedule,
+	)
+	if err != nil {
+		return App{}, fmt.Errorf("insert app: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return App{}, err
+	}
+	return App{
+		ID: id, ProjectID: env.ProjectID, EnvironmentID: envID, Name: name, Port: port, Replicas: 1,
+		SourceType: "tarball", Kind: kind, Schedule: schedule, Nodes: 1,
+	}, nil
+}
+
+// ListAppsInEnv returns every app in an environment, ordered by name.
+func (s *Store) ListAppsInEnv(envID int64) ([]App, error) {
+	rows, err := s.db.Query(`SELECT `+appEnvCols+` FROM apps WHERE environment_id = ? ORDER BY name`, envID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []App
+	for rows.Next() {
+		var a App
+		var gitURL, gitBranch sql.NullString
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU, &a.Suspended, &a.EnvironmentID); err != nil {
+			return nil, err
+		}
+		a.GitURL = gitURL.String
+		a.GitBranch = gitBranch.String
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// GetAppInEnv looks up an app by name within a specific environment.
+func (s *Store) GetAppInEnv(envID int64, name string) (App, error) {
+	return scanAppEnvRow(s.db.QueryRow(`SELECT `+appEnvCols+` FROM apps WHERE environment_id = ? AND name = ?`, envID, name))
 }

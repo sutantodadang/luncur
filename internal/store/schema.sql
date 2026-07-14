@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS environments (
 CREATE TABLE IF NOT EXISTS apps (
   id            INTEGER PRIMARY KEY,
   project_id    INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  environment_id INTEGER NOT NULL DEFAULT 0,
   name          TEXT NOT NULL,
   source_type   TEXT NOT NULL CHECK (source_type IN ('tarball','git')),
   git_url       TEXT,
@@ -143,6 +144,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS addons (
   id         INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  environment_id INTEGER NOT NULL DEFAULT 0,
   type       TEXT NOT NULL CHECK (type IN ('postgres','redis','minio','mlflow')),
   name       TEXT NOT NULL,
   version    TEXT NOT NULL,

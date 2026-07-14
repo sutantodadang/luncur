@@ -113,6 +113,8 @@ func migrate(db *sql.DB) error {
 		{"apps", "autoscale_max", `ALTER TABLE apps ADD COLUMN autoscale_max INTEGER NOT NULL DEFAULT 0`},
 		{"apps", "autoscale_cpu", `ALTER TABLE apps ADD COLUMN autoscale_cpu INTEGER NOT NULL DEFAULT 0`},
 		{"apps", "suspended", `ALTER TABLE apps ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0`},
+		{"apps", "environment_id", `ALTER TABLE apps ADD COLUMN environment_id INTEGER NOT NULL DEFAULT 0`},
+		{"addons", "environment_id", `ALTER TABLE addons ADD COLUMN environment_id INTEGER NOT NULL DEFAULT 0`},
 		{"job_runs", "nodes", `ALTER TABLE job_runs ADD COLUMN nodes INTEGER NOT NULL DEFAULT 1`},
 		{"job_runs", "framework", `ALTER TABLE job_runs ADD COLUMN framework TEXT NOT NULL DEFAULT ''`},
 		{"gpu_instances", "external_ref", `ALTER TABLE gpu_instances ADD COLUMN external_ref TEXT NOT NULL DEFAULT ''`},
@@ -200,7 +202,7 @@ CREATE TABLE IF NOT EXISTS environments (
 }
 
 // backfillGPUExternalRef copies pre-A2 integer contract ids into the string
-// external_ref column. Idempotent: only touches rows where external_ref = ''.
+// external_ref column. Idempotent: only touches rows where external_ref = ”.
 func backfillGPUExternalRef(db *sql.DB) error {
 	_, err := db.Exec(`UPDATE gpu_instances SET external_ref = CAST(external_id AS TEXT) WHERE external_ref = '' AND external_id != 0`)
 	return err
@@ -383,6 +385,7 @@ func migrateAddonTypes(db *sql.DB) error {
 CREATE TABLE addons_new (
   id         INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  environment_id INTEGER NOT NULL DEFAULT 0,
   type       TEXT NOT NULL CHECK (type IN ('postgres','redis','minio','mlflow')),
   name       TEXT NOT NULL,
   version    TEXT NOT NULL,
@@ -393,9 +396,12 @@ CREATE TABLE addons_new (
 )`); err != nil {
 		return fmt.Errorf("create addons_new: %w", err)
 	}
+	// environment_id is selected from the legacy table, not defaulted: the
+	// ALTER loop above already added it (with its own DEFAULT 0) before this
+	// rebuild runs, so any value already backfilled onto it must survive.
 	if _, err := tx.Exec(`
-INSERT INTO addons_new (id, project_id, type, name, version, size_gb, creds_enc, created_at)
-SELECT id, project_id, type, name, version, size_gb, creds_enc, created_at FROM addons`); err != nil {
+INSERT INTO addons_new (id, project_id, environment_id, type, name, version, size_gb, creds_enc, created_at)
+SELECT id, project_id, environment_id, type, name, version, size_gb, creds_enc, created_at FROM addons`); err != nil {
 		return fmt.Errorf("copy addons: %w", err)
 	}
 	if _, err := tx.Exec(`DROP TABLE addons`); err != nil {

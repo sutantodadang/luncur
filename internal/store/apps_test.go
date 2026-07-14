@@ -606,6 +606,27 @@ func TestSetWebhookSecret(t *testing.T) {
 	}
 }
 
+func TestAppInEnv(t *testing.T) {
+	s := openTest(t)
+	p, _ := s.CreateProject("proj")
+	e, _ := s.CreateEnvironment(p.ID, "develop", "standing", "")
+	a, err := s.CreateAppInEnv(e.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.EnvironmentID != e.ID {
+		t.Fatalf("env id = %d", a.EnvironmentID)
+	}
+	list, _ := s.ListAppsInEnv(e.ID)
+	if len(list) != 1 || list[0].Name != "api" {
+		t.Fatalf("list = %+v", list)
+	}
+	got, err := s.GetAppInEnv(e.ID, "api")
+	if err != nil || got.ID != a.ID {
+		t.Fatalf("get: %v", err)
+	}
+}
+
 func TestSetAppTraining(t *testing.T) {
 	s := openTest(t)
 	a := seedApp(t, s)
