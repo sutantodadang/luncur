@@ -1255,7 +1255,7 @@ func (c *Client) TriggerCronJob(ctx context.Context, namespace, name string, sta
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
 			Namespace: namespace,
-			Labels:    cj.Spec.JobTemplate.ObjectMeta.Labels,
+			Labels:    cj.Spec.JobTemplate.Labels,
 			OwnerReferences: []metav1.OwnerReference{{
 				APIVersion:         "batch/v1",
 				Kind:               "CronJob",

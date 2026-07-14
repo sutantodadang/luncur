@@ -377,8 +377,8 @@ func TestRenderCronJob(t *testing.T) {
 	if cj.Spec.Suspend == nil || *cj.Spec.Suspend != false {
 		t.Fatalf("suspend: want false (default), got %v", cj.Spec.Suspend)
 	}
-	if got := cj.Spec.JobTemplate.ObjectMeta.Labels["app.kubernetes.io/name"]; got != "nightly" {
-		t.Fatalf("JobTemplate labels missing app label: %+v", cj.Spec.JobTemplate.ObjectMeta.Labels)
+	if got := cj.Spec.JobTemplate.Labels["app.kubernetes.io/name"]; got != "nightly" {
+		t.Fatalf("JobTemplate labels missing app label: %+v", cj.Spec.JobTemplate.Labels)
 	}
 }
 

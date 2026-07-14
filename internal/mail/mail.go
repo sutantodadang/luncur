@@ -104,7 +104,7 @@ func Message(from, to, subject, text, html string) []byte {
 	_ = mw.SetBoundary(mixedBoundary) // fixed format, always valid — error impossible
 	writeBase64Part(mw, "text/plain; charset=utf-8", text)
 	writeBase64Part(mw, "text/html; charset=utf-8", html)
-	mw.Close()
+	_ = mw.Close() // in-memory buffer, never fails
 
 	return []byte(header +
 		`Content-Type: multipart/alternative; boundary="` + mixedBoundary + `"` + "\r\n" +
@@ -122,7 +122,7 @@ func writeBase64Part(mw *multipart.Writer, contentType, content string) {
 	if err != nil {
 		return
 	}
-	pw.Write([]byte(wrapBase64(content)))
+	_, _ = pw.Write([]byte(wrapBase64(content)))
 }
 
 // wrapBase64 base64-encodes s and wraps it at 76 columns with CRLF line
@@ -131,10 +131,7 @@ func wrapBase64(s string) string {
 	enc := base64.StdEncoding.EncodeToString([]byte(s))
 	var b strings.Builder
 	for i := 0; i < len(enc); i += 76 {
-		end := i + 76
-		if end > len(enc) {
-			end = len(enc)
-		}
+		end := min(i+76, len(enc))
 		b.WriteString(enc[i:end])
 		b.WriteString("\r\n")
 	}
