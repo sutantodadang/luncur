@@ -85,7 +85,12 @@ func (s *server) handleUIAppChart(w http.ResponseWriter, r *http.Request, u stor
 	if !ok {
 		return
 	}
-	view := chartViewFrom(a.Name, s.mon.appSamples(p.Namespace+"/"+a.Name))
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "get environment: "+err.Error())
+		return
+	}
+	view := chartViewFrom(a.Name, s.mon.appSamples(env.Namespace+"/"+a.Name))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, "metricschart", view); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "render metricschart: "+err.Error())
@@ -121,15 +126,15 @@ func (s *server) handleUINodeCharts(w http.ResponseWriter, r *http.Request, u st
 // ~30 minutes) as JSON — the CLI's `luncur metrics` command and any other
 // non-browser consumer.
 func (s *server) handleAppMetricsHistory(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
-	samples := s.mon.appSamples(p.Namespace + "/" + a.Name)
+	samples := s.mon.appSamples(env.Namespace + "/" + a.Name)
 	out := make([]map[string]any, 0, len(samples))
 	for _, sm := range samples {
 		out = append(out, map[string]any{

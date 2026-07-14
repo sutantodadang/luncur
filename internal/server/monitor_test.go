@@ -126,7 +126,12 @@ func TestAppMetricsHistoryEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateApp(p.ID, "web", 8080, "web", ""); err != nil {
+	p, env := seedDefaultEnv(t, st, p)
+	a, err := st.CreateApp(p.ID, "web", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	s := newServer(Deps{Store: st})
@@ -176,7 +181,12 @@ func TestUIAppChartFragment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateApp(p.ID, "web", 8080, "web", ""); err != nil {
+	p, env := seedDefaultEnv(t, st, p)
+	a, err := st.CreateApp(p.ID, "web", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	s := newServer(Deps{Store: st})

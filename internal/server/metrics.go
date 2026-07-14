@@ -23,20 +23,20 @@ type appMetricsView struct {
 // appMetricsData builds an app's metrics view: deploy count always comes
 // from the store; CPU/memory/replica fields stay zero (Available=false)
 // when kube is nil or metrics-server is unreachable.
-func (s *server) appMetricsData(ctx context.Context, p store.Project, a store.App) (appMetricsView, error) {
+func (s *server) appMetricsData(ctx context.Context, p store.Project, env store.Environment, a store.App) (appMetricsView, error) {
 	deploys, err := s.st.CountDeployments(a.ID)
 	if err != nil {
 		return appMetricsView{}, err
 	}
 	out := appMetricsView{DeployCount: deploys}
 	if s.kube != nil {
-		if m, ok := s.kube.AppMetrics(ctx, p.Namespace, a.Name); ok {
+		if m, ok := s.kube.AppMetrics(ctx, env.Namespace, a.Name); ok {
 			out.Available = true
 			out.CPUMillicores = m.CPUMilli
 			out.MemoryMiB = m.MemoryMiB
 			out.Pods = m.Pods
 		}
-		if ready, desired, err := s.kube.DeploymentStatus(ctx, p.Namespace, a.Name); err == nil {
+		if ready, desired, err := s.kube.DeploymentStatus(ctx, env.Namespace, a.Name); err == nil {
 			out.ReadyReplicas = ready
 			out.DesiredReplicas = desired
 		}
@@ -45,15 +45,15 @@ func (s *server) appMetricsData(ctx context.Context, p store.Project, a store.Ap
 }
 
 func (s *server) handleAppMetrics(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
-	m, err := s.appMetricsData(r.Context(), p, a)
+	m, err := s.appMetricsData(r.Context(), p, env, a)
 	if err != nil {
 		log.Printf("count deployments: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")

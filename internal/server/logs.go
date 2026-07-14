@@ -39,11 +39,11 @@ func logBounds(r *http.Request) (tail, since int64, err error) {
 // handleRuntimeLogs streams the app's pod logs as SSE, each line prefixed
 // with its pod name. Follow mode holds the kube streams open.
 func (s *server) handleRuntimeLogs(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -57,7 +57,7 @@ func (s *server) handleRuntimeLogs(w http.ResponseWriter, r *http.Request, u sto
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	pods, err := s.kube.AppPods(r.Context(), p.Namespace, a.Name)
+	pods, err := s.kube.AppPods(r.Context(), env.Namespace, a.Name)
 	if err != nil {
 		log.Printf("list app pods: %v", err)
 		writeError(w, http.StatusBadGateway, "kube_error", "could not list pods")
@@ -91,7 +91,7 @@ func (s *server) handleRuntimeLogs(w http.ResponseWriter, r *http.Request, u sto
 		wg.Add(1)
 		go func(pod string) {
 			defer wg.Done()
-			rc, err := s.kube.PodLogStream(r.Context(), p.Namespace, pod, follow, tail, since)
+			rc, err := s.kube.PodLogStream(r.Context(), env.Namespace, pod, follow, tail, since)
 			if err != nil {
 				send("[" + pod + "] error: " + err.Error())
 				return
