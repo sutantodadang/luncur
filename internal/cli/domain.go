@@ -13,7 +13,7 @@ func domainCmd() *cobra.Command {
 		Short: "Manage custom domains for an app",
 	}
 
-	var addProject string
+	var addProject, addEnv string
 	add := &cobra.Command{
 		Use:   "add <app> <hostname>",
 		Short: "Attach a custom domain to an app",
@@ -23,6 +23,7 @@ func domainCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(addEnv)
 			d, err := c.AddDomain(addProject, args[0], args[1])
 			if err != nil {
 				return err
@@ -36,8 +37,9 @@ func domainCmd() *cobra.Command {
 	}
 	add.Flags().StringVar(&addProject, "project", "", "project name")
 	add.MarkFlagRequired("project")
+	add.Flags().StringVar(&addEnv, "env", "", "environment (default: the project's default env)")
 
-	var listProject string
+	var listProject, listEnv string
 	list := &cobra.Command{
 		Use:   "list <app>",
 		Short: "List an app's custom domains",
@@ -47,6 +49,7 @@ func domainCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(listEnv)
 			domains, err := c.ListDomains(listProject, args[0])
 			if err != nil {
 				return err
@@ -61,8 +64,9 @@ func domainCmd() *cobra.Command {
 	}
 	list.Flags().StringVar(&listProject, "project", "", "project name")
 	list.MarkFlagRequired("project")
+	list.Flags().StringVar(&listEnv, "env", "", "environment (default: the project's default env)")
 
-	var removeProject string
+	var removeProject, removeEnv string
 	remove := &cobra.Command{
 		Use:   "remove <app> <hostname>",
 		Short: "Detach a custom domain from an app",
@@ -72,13 +76,15 @@ func domainCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(removeEnv)
 			return c.DeleteDomain(removeProject, args[0], args[1])
 		},
 	}
 	remove.Flags().StringVar(&removeProject, "project", "", "project name")
 	remove.MarkFlagRequired("project")
+	remove.Flags().StringVar(&removeEnv, "env", "", "environment (default: the project's default env)")
 
-	var retryProject string
+	var retryProject, retryEnv string
 	retry := &cobra.Command{
 		Use:   "retry <app> <hostname>",
 		Short: "Retry certificate issuance for a domain",
@@ -88,11 +94,13 @@ func domainCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(retryEnv)
 			return c.RetryDomain(retryProject, args[0], args[1])
 		},
 	}
 	retry.Flags().StringVar(&retryProject, "project", "", "project name")
 	retry.MarkFlagRequired("project")
+	retry.Flags().StringVar(&retryEnv, "env", "", "environment (default: the project's default env)")
 
 	cmd.AddCommand(add, list, remove, retry)
 	return cmd

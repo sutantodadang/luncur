@@ -36,6 +36,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(webhookCmd())
 	root.AddCommand(destroyCmd())
 	root.AddCommand(envCmd())
+	root.AddCommand(envsCmd())
 	root.AddCommand(editCmd())
 	root.AddCommand(initCmd())
 	root.AddCommand(logsCmd())

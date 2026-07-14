@@ -18,6 +18,7 @@ import (
 type Client struct {
 	base  string
 	token string
+	env   string
 	http  *http.Client
 }
 
@@ -33,6 +34,27 @@ func New(server, token string) *Client {
 		token: token,
 		http:  &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// SetEnv selects the deployment environment the app/addon/deploy/domain/
+// scale/logs path builder targets. "" (the default) keeps the legacy
+// project-default-env base path, so every existing call site is unchanged.
+// Returns the client for chaining.
+func (c *Client) SetEnv(env string) *Client {
+	c.env = env
+	return c
+}
+
+// EnvPath returns the base path segment for a project's env-scoped routes.
+// env == "" returns the legacy /v1/projects/<project> base (the server
+// resolves the project's default environment); a non-empty env returns
+// /v1/projects/<project>/envs/<env>.
+func (c *Client) EnvPath(project, env string) string {
+	p := "/v1/projects/" + url.PathEscape(project)
+	if env != "" {
+		p += "/envs/" + url.PathEscape(env)
+	}
+	return p
 }
 
 // do sends a JSON request and decodes a JSON response. Non-2xx responses
@@ -197,21 +219,21 @@ type ProjectInfo struct {
 }
 
 type AppInfo struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Port        int    `json:"port"`
-	Replicas    int    `json:"replicas"`
-	URL         string `json:"url"`
-	Internal    bool   `json:"internal,omitempty"`
-	InternalURL string `json:"internal_url,omitempty"`
-	Status      string `json:"status,omitempty"`
-	Image       string `json:"image,omitempty"`
-	Kind        string `json:"kind,omitempty"`
-	Schedule    string `json:"schedule,omitempty"`
-	GPU         int64  `json:"gpu,omitempty"`
-	ModelSource string `json:"model_source,omitempty"`
-	Runtime     string `json:"runtime,omitempty"`
-	Seq         int64  `json:"seq,omitempty"`
+	ID          int64          `json:"id"`
+	Name        string         `json:"name"`
+	Port        int            `json:"port"`
+	Replicas    int            `json:"replicas"`
+	URL         string         `json:"url"`
+	Internal    bool           `json:"internal,omitempty"`
+	InternalURL string         `json:"internal_url,omitempty"`
+	Status      string         `json:"status,omitempty"`
+	Image       string         `json:"image,omitempty"`
+	Kind        string         `json:"kind,omitempty"`
+	Schedule    string         `json:"schedule,omitempty"`
+	GPU         int64          `json:"gpu,omitempty"`
+	ModelSource string         `json:"model_source,omitempty"`
+	Runtime     string         `json:"runtime,omitempty"`
+	Seq         int64          `json:"seq,omitempty"`
 	Autoscale   *AutoscaleInfo `json:"autoscale,omitempty"`
 }
 
@@ -281,7 +303,7 @@ func (c *Client) RemoveMember(project, email string) error {
 
 func (c *Client) CreateApp(project, name string, port int, kind, schedule, buildPath string, internal bool, gpu int64) (AppInfo, error) {
 	var out AppInfo
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps",
 		map[string]interface{}{"name": name, "port": port, "kind": kind, "schedule": schedule, "build_path": buildPath, "internal": internal, "gpu": gpu}, &out)
 	return out, err
 }
@@ -290,20 +312,20 @@ func (c *Client) CreateApp(project, name string, port int, kind, schedule, build
 // deploys) a kind=model app serving an OpenAI-compatible endpoint.
 func (c *Client) CreateModelApp(project, name, source, runtime string, gpu int64) (AppInfo, error) {
 	var out AppInfo
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps",
 		map[string]any{"name": name, "kind": "model", "model_source": source, "runtime": runtime, "gpu": gpu}, &out)
 	return out, err
 }
 
 func (c *Client) ListApps(project string) ([]AppInfo, error) {
 	var out []AppInfo
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps", nil, &out)
 	return out, err
 }
 
 func (c *Client) GetApp(project, app string) (AppInfo, error) {
 	var out AppInfo
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app), nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app), nil, &out)
 	return out, err
 }
 
@@ -322,17 +344,17 @@ type MetricsInfo struct {
 
 func (c *Client) AppMetrics(project, app string) (MetricsInfo, error) {
 	var out MetricsInfo
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/metrics", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/metrics", nil, &out)
 	return out, err
 }
 
 func (c *Client) DeleteApp(project, app string) error {
-	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app), nil, nil)
+	return c.do("DELETE", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app), nil, nil)
 }
 
 func (c *Client) Deploy(project, app, image string) (DeployResult, error) {
 	var out DeployResult
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/deploy",
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/deploy",
 		map[string]string{"image": image}, &out)
 	return out, err
 }
@@ -355,7 +377,7 @@ func (c *Client) DeploySource(project, app string, tarball io.Reader) (DeployRes
 
 	var out DeployResult
 	err = c.doMultipart("POST",
-		"/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/deploy",
+		c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/deploy",
 		w.FormDataContentType(), &buf, &out)
 	return out, err
 }
@@ -363,14 +385,14 @@ func (c *Client) DeploySource(project, app string, tarball io.Reader) (DeployRes
 // GetDeploy fetches the current status of a deployment.
 func (c *Client) GetDeploy(project, app string, id string) (DeployResult, error) {
 	var out DeployResult
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+
 		"/deploys/"+url.PathEscape(id), nil, &out)
 	return out, err
 }
 
 // DeployLogs fetches the build log text for a deployment.
 func (c *Client) DeployLogs(project, app string, id string) ([]byte, error) {
-	return c.doRaw("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+
+	return c.doRaw("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+
 		"/deploys/"+url.PathEscape(id)+"/logs", nil)
 }
 
@@ -379,14 +401,14 @@ func (c *Client) DeployLogs(project, app string, id string) ([]byte, error) {
 // rollback API expects.
 func (c *Client) ListDeploys(project, app string) ([]DeployInfo, error) {
 	var out []DeployInfo
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/deploys", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/deploys", nil, &out)
 	return out, err
 }
 
 // CreateGitApp registers an app whose source is a git repo, built at deploy time.
 func (c *Client) CreateGitApp(project, name string, port int, gitURL, branch, kind, schedule, buildPath string, internal bool, gpu int64) (AppInfo, error) {
 	var out AppInfo
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps",
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps",
 		map[string]any{
 			"name": name, "port": port, "git_url": gitURL, "git_branch": branch,
 			"kind": kind, "schedule": schedule, "build_path": buildPath, "internal": internal,
@@ -412,26 +434,26 @@ func (c *Client) Scale(project, app string, replicas *int, cpu, memory *string, 
 	if gpu != nil {
 		body["gpu"] = *gpu
 	}
-	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/scale",
+	return c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/scale",
 		body, nil)
 }
 
 // Autoscale sets (min, max, cpu all > 0) or clears (all 0) the app's
 // autoscaling/v2 HPA parameters.
 func (c *Client) Autoscale(project, app string, min, max, cpu int) error {
-	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/autoscale",
+	return c.do("PUT", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/autoscale",
 		map[string]any{"min": min, "max": max, "cpu": cpu}, nil)
 }
 
 // SetHealth sets (or, with path == "", clears) the app's HTTP health check
 // path used for readiness/liveness probes.
 func (c *Client) SetHealth(project, app, path string) error {
-	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/health",
+	return c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/health",
 		map[string]string{"path": path}, nil)
 }
 
 func (c *Client) EnvSet(project, app, key, value string) error {
-	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env",
+	return c.do("PUT", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/env",
 		map[string]string{"key": key, "value": value}, nil)
 }
 
@@ -440,13 +462,13 @@ func (c *Client) EnvPush(project, app, dotenv string) (int, error) {
 	var out struct {
 		Set int `json:"set"`
 	}
-	err := c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env/bulk",
+	err := c.do("PUT", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/env/bulk",
 		map[string]string{"dotenv": dotenv}, &out)
 	return out.Set, err
 }
 
 func (c *Client) EnvUnset(project, app, key string) error {
-	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env/"+url.PathEscape(key), nil, nil)
+	return c.do("DELETE", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/env/"+url.PathEscape(key), nil, nil)
 }
 
 // Redeploy re-rolls an app's current release: a git app rebuilds from its
@@ -454,18 +476,18 @@ func (c *Client) EnvUnset(project, app, key string) error {
 // deployment's summary.
 func (c *Client) Redeploy(project, app string) (DeployResult, error) {
 	var out DeployResult
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/redeploy", nil, &out)
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/redeploy", nil, &out)
 	return out, err
 }
 
 // PauseCron suspends a cron app's schedule (kind=cron only).
 func (c *Client) PauseCron(project, app string) error {
-	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/pause", nil, nil)
+	return c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/pause", nil, nil)
 }
 
 // ResumeCron resumes a suspended cron app's schedule (kind=cron only).
 func (c *Client) ResumeCron(project, app string) error {
-	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/resume", nil, nil)
+	return c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/resume", nil, nil)
 }
 
 // TriggerCron manually fires a cron app's CronJob ("run now"), returning the
@@ -474,7 +496,7 @@ func (c *Client) TriggerCron(project, app string) (string, error) {
 	var out struct {
 		Job string `json:"job"`
 	}
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/trigger", nil, &out)
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/trigger", nil, &out)
 	return out.Job, err
 }
 
@@ -490,24 +512,24 @@ type CronRunInfo struct {
 // CronRuns fetches a cron app's recent Jobs (newest first).
 func (c *Client) CronRuns(project, app string) ([]CronRunInfo, error) {
 	var out []CronRunInfo
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/cron-runs", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/cron-runs", nil, &out)
 	return out, err
 }
 
 // SetGitToken stores a sealed private-repo clone token for a git-source app.
 func (c *Client) SetGitToken(project, app, token string) error {
-	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/git-token",
+	return c.do("PUT", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/git-token",
 		map[string]string{"token": token}, nil)
 }
 
 // ClearGitToken removes an app's stored git token.
 func (c *Client) ClearGitToken(project, app string) error {
-	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/git-token", nil, nil)
+	return c.do("DELETE", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/git-token", nil, nil)
 }
 
 func (c *Client) EnvList(project, app string) (map[string]string, error) {
 	out := make(map[string]string)
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/env", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/env", nil, &out)
 	return out, err
 }
 
@@ -521,14 +543,14 @@ func (c *Client) Raw(project, app string, base bool) ([]byte, error) {
 
 func (c *Client) PutOverride(project, app, kind, patchJSON string) error {
 	_, err := c.doRaw("PUT",
-		"/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/overrides/"+url.PathEscape(kind),
+		c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/overrides/"+url.PathEscape(kind),
 		[]byte(patchJSON))
 	return err
 }
 
 func (c *Client) DeleteOverride(project, app, kind string) error {
 	_, err := c.doRaw("DELETE",
-		"/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/overrides/"+url.PathEscape(kind),
+		c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/overrides/"+url.PathEscape(kind),
 		nil)
 	return err
 }
@@ -583,15 +605,15 @@ func (c *Client) stream(path string, w io.Writer) error {
 // FollowDeployLogs streams a build log's SSE endpoint until the deployment
 // finishes, writing each log line to w as it arrives.
 func (c *Client) FollowDeployLogs(project, app string, id string, w io.Writer) error {
-	return c.stream(fmt.Sprintf("/v1/projects/%s/apps/%s/deploys/%s/logs?follow=1",
-		url.PathEscape(project), url.PathEscape(app), url.PathEscape(id)), w)
+	return c.stream(c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+
+		"/deploys/"+url.PathEscape(id)+"/logs?follow=1", w)
 }
 
 // RuntimeLogs streams (or, with follow=false, fetches once via SSE) the
 // app's runtime pod logs. tail > 0 limits to the last N lines; since (a Go
 // duration string like "15m") limits to a trailing time window.
 func (c *Client) RuntimeLogs(project, app string, follow bool, tail int64, since string, w io.Writer) error {
-	p := fmt.Sprintf("/v1/projects/%s/apps/%s/logs", url.PathEscape(project), url.PathEscape(app))
+	p := c.EnvPath(project, c.env) + "/apps/" + url.PathEscape(app) + "/logs"
 	q := url.Values{}
 	if follow {
 		q.Set("follow", "1")
@@ -644,23 +666,23 @@ type DomainInfo struct {
 
 func (c *Client) AddDomain(project, app, hostname string) (DomainInfo, error) {
 	var out DomainInfo
-	err := c.do("POST", fmt.Sprintf("/v1/projects/%s/apps/%s/domains", project, app),
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/domains",
 		map[string]string{"hostname": hostname}, &out)
 	return out, err
 }
 
 func (c *Client) ListDomains(project, app string) ([]DomainInfo, error) {
 	var out []DomainInfo
-	err := c.do("GET", fmt.Sprintf("/v1/projects/%s/apps/%s/domains", project, app), nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/domains", nil, &out)
 	return out, err
 }
 
 func (c *Client) DeleteDomain(project, app, hostname string) error {
-	return c.do("DELETE", fmt.Sprintf("/v1/projects/%s/apps/%s/domains/%s", project, app, hostname), nil, nil)
+	return c.do("DELETE", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/domains/"+url.PathEscape(hostname), nil, nil)
 }
 
 func (c *Client) RetryDomain(project, app, hostname string) error {
-	return c.do("POST", fmt.Sprintf("/v1/projects/%s/apps/%s/domains/%s/retry", project, app, hostname), nil, nil)
+	return c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/domains/"+url.PathEscape(hostname)+"/retry", nil, nil)
 }
 
 // VolumeInfo is one per-app persistent volume as returned by the API.
@@ -677,7 +699,7 @@ type VolumeInfo struct {
 // server defaults it to the last path segment).
 func (c *Client) AddVolume(project, app, name, path string, sizeGB int) (VolumeInfo, error) {
 	var out VolumeInfo
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/volumes",
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/volumes",
 		map[string]any{"name": name, "path": path, "size_gb": sizeGB}, &out)
 	return out, err
 }
@@ -686,7 +708,7 @@ func (c *Client) ListVolumes(project, app string) ([]VolumeInfo, error) {
 	var out struct {
 		Volumes []VolumeInfo `json:"volumes"`
 	}
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/volumes", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/volumes", nil, &out)
 	return out.Volumes, err
 }
 
@@ -723,13 +745,13 @@ type AddonInfo struct {
 
 func (c *Client) CreateAddon(project string, req AddonCreate) (AddonInfo, error) {
 	var out AddonInfo
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/addons", req, &out)
+	err := c.do("POST", c.EnvPath(project, c.env)+"/addons", req, &out)
 	return out, err
 }
 
 func (c *Client) ListAddons(project string) ([]AddonInfo, error) {
 	var out []AddonInfo
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/addons", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/addons", nil, &out)
 	return out, err
 }
 
@@ -744,7 +766,7 @@ func (c *Client) AttachAddon(project, name, app string) (string, error) {
 		return "", err
 	}
 	respBody, err := c.doRaw("POST",
-		"/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/attach", body)
+		c.EnvPath(project, c.env)+"/addons/"+url.PathEscape(name)+"/attach", body)
 	if err != nil {
 		return "", err
 	}
@@ -761,7 +783,7 @@ func (c *Client) AttachAddon(project, name, app string) (string, error) {
 }
 
 func (c *Client) DetachAddon(project, name, app string) error {
-	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/detach",
+	return c.do("POST", c.EnvPath(project, c.env)+"/addons/"+url.PathEscape(name)+"/detach",
 		map[string]string{"app": app}, nil)
 }
 
@@ -770,7 +792,7 @@ func (c *Client) DetachAddon(project, name, app string) error {
 func (c *Client) UpgradeAddon(project, name, version string) (AddonInfo, error) {
 	var out AddonInfo
 	err := c.do("POST",
-		"/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/upgrade",
+		c.EnvPath(project, c.env)+"/addons/"+url.PathEscape(name)+"/upgrade",
 		map[string]string{"version": version}, &out)
 	return out, err
 }
@@ -797,7 +819,7 @@ func (c *Client) AddonURL(project, name string) (envKey, connURL string, err err
 		EnvKey string `json:"env_key"`
 		URL    string `json:"url"`
 	}
-	err = c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/url", nil, &out)
+	err = c.do("GET", c.EnvPath(project, c.env)+"/addons/"+url.PathEscape(name)+"/url", nil, &out)
 	return out.EnvKey, out.URL, err
 }
 
@@ -818,7 +840,7 @@ func (c *Client) RestoreAddon(project, name string, dump io.Reader) error {
 		return err
 	}
 	return c.doMultipart("POST",
-		"/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/restore",
+		c.EnvPath(project, c.env)+"/addons/"+url.PathEscape(name)+"/restore",
 		w.FormDataContentType(), &buf, nil)
 }
 
@@ -842,7 +864,7 @@ func (c *Client) Rollback(project, app string, deployID string) (int64, error) {
 		DeploymentID string `json:"deployment_id"`
 		Seq          int64  `json:"seq"`
 	}
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/rollback",
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/rollback",
 		map[string]string{"deploy_id": deployID}, &out)
 	return out.Seq, err
 }
@@ -876,7 +898,7 @@ func (c *Client) DeleteProjectS3(project string) error {
 
 // SetAppS3Env toggles LUNCUR_S3_* env injection for one app.
 func (c *Client) SetAppS3Env(project, app string, enabled bool) error {
-	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/s3",
+	return c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/s3",
 		map[string]bool{"enabled": enabled}, nil)
 }
 
@@ -904,7 +926,7 @@ func (c *Client) CreateRun(project, app string, nodes int, framework string) (Ru
 	if framework != "" {
 		body["framework"] = framework
 	}
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/runs", body, &out)
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/runs", body, &out)
 	return out, err
 }
 
@@ -913,14 +935,14 @@ func (c *Client) CreateRun(project, app string, nodes int, framework string) (Ru
 // the raw LUNCUR_* contract only). This is the fallback startRun uses when a
 // run request doesn't override nodes/framework itself.
 func (c *Client) SetTraining(project, app string, nodes int, framework string) error {
-	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/training",
+	return c.do("PUT", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/training",
 		map[string]any{"nodes": nodes, "framework": framework}, nil)
 }
 
 // ListRuns fetches a job app's run history (newest first).
 func (c *Client) ListRuns(project, app string) ([]RunInfo, error) {
 	var out []RunInfo
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/runs", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/runs", nil, &out)
 	return out, err
 }
 
@@ -1001,28 +1023,28 @@ func (c *Client) StartSweep(project, app, paramsYAML, metric, direction string, 
 		"nodes":       nodes,
 		"framework":   framework,
 	}
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/sweeps", body, &out)
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/sweeps", body, &out)
 	return out, err
 }
 
 // ListSweeps fetches a job app's sweeps (newest first).
 func (c *Client) ListSweeps(project, app string) ([]SweepInfo, error) {
 	var out []SweepInfo
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/sweeps", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/sweeps", nil, &out)
 	return out, err
 }
 
 // GetSweep fetches one sweep's status plus its full trial list.
 func (c *Client) GetSweep(project, app, id string) (SweepInfo, error) {
 	var out SweepInfo
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/sweeps/"+url.PathEscape(id), nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/sweeps/"+url.PathEscape(id), nil, &out)
 	return out, err
 }
 
 // StopSweep stops a running sweep; idempotent — a second call is a no-op.
 func (c *Client) StopSweep(project, app, id string) (SweepInfo, error) {
 	var out SweepInfo
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/sweeps/"+url.PathEscape(id)+"/stop", nil, &out)
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/sweeps/"+url.PathEscape(id)+"/stop", nil, &out)
 	return out, err
 }
 
@@ -1266,7 +1288,7 @@ func (c *Client) EjectApp(project, app string) (yaml, savedTo string, err error)
 		YAML    string `json:"yaml"`
 		SavedTo string `json:"saved_to"`
 	}
-	err = c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/eject", nil, &out)
+	err = c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/eject", nil, &out)
 	return out.YAML, out.SavedTo, err
 }
 
@@ -1278,7 +1300,7 @@ func (c *Client) AdoptApp(project, app string) (string, error) {
 		Warning string `json:"warning"`
 	}
 	err := c.do("POST",
-		"/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/adopt", nil, &out)
+		c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/adopt", nil, &out)
 	return out.Warning, err
 }
 
@@ -1295,7 +1317,7 @@ type WebhookInfo struct {
 // webhook. The returned secret is shown ONLY in this response.
 func (c *Client) WebhookEnable(project, app string) (WebhookInfo, error) {
 	var out WebhookInfo
-	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/webhook", nil, &out)
+	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/webhook", nil, &out)
 	return out, err
 }
 
@@ -1303,13 +1325,13 @@ func (c *Client) WebhookEnable(project, app string) (WebhookInfo, error) {
 // (never its secret).
 func (c *Client) WebhookShow(project, app string) (WebhookInfo, error) {
 	var out WebhookInfo
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/webhook", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/webhook", nil, &out)
 	return out, err
 }
 
 // WebhookDisable turns off an app's deploy webhook.
 func (c *Client) WebhookDisable(project, app string) error {
-	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/webhook", nil, nil)
+	return c.do("DELETE", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/webhook", nil, nil)
 }
 
 // RegistryGCReport is one registry GC sweep's result, as returned by POST
@@ -1396,7 +1418,7 @@ func (c *Client) AppPods(project, app string) ([]Pod, error) {
 	var out struct {
 		Pods []Pod `json:"pods"`
 	}
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/pods", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/pods", nil, &out)
 	return out.Pods, err
 }
 
@@ -1412,7 +1434,7 @@ func (c *Client) MetricsHistory(project, app string) ([]MetricSample, error) {
 	var out struct {
 		Samples []MetricSample `json:"samples"`
 	}
-	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/metrics/history", nil, &out)
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/metrics/history", nil, &out)
 	return out.Samples, err
 }
 
@@ -1576,4 +1598,53 @@ func (c *Client) SetProjectQuota(project string, cpuMilli, memMB int64) error {
 	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/quota", map[string]int64{
 		"cpu_milli": cpuMilli, "memory_mb": memMB,
 	}, nil)
+}
+
+// EnvInfo is one deployment environment of a project, as returned by the
+// envs API. It mirrors the server's environmentJSON shape.
+type EnvInfo struct {
+	Name         string `json:"name"`
+	Namespace    string `json:"namespace"`
+	Kind         string `json:"kind"`
+	IsDefault    bool   `json:"is_default"`
+	BaseBranch   string `json:"base_branch"`
+	SourceBranch string `json:"source_branch"`
+}
+
+// ListEnvs lists a project's deployment environments.
+func (c *Client) ListEnvs(project string) ([]EnvInfo, error) {
+	var out []EnvInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/envs", nil, &out)
+	return out, err
+}
+
+// CreateEnv creates a new standing environment. baseBranch may be empty.
+func (c *Client) CreateEnv(project, name, baseBranch string) (EnvInfo, error) {
+	var out EnvInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/envs",
+		map[string]string{"name": name, "base_branch": baseBranch}, &out)
+	return out, err
+}
+
+// DeleteEnv removes an environment; force deletes it even if it has live apps
+// (the server refuses without it, and always refuses on the default env).
+func (c *Client) DeleteEnv(project, name string, force bool) error {
+	path := "/v1/projects/" + url.PathEscape(project) + "/envs/" + url.PathEscape(name)
+	if force {
+		path += "?force=1"
+	}
+	return c.do("DELETE", path, nil, nil)
+}
+
+// SetDefaultEnv makes env the project's default (the one legacy/env-less
+// calls resolve to).
+func (c *Client) SetDefaultEnv(project, env string) error {
+	return c.do("PUT",
+		"/v1/projects/"+url.PathEscape(project)+"/envs/"+url.PathEscape(env)+"/default", nil, nil)
+}
+
+// SetPreviewBase sets the environment new preview environments clone from.
+func (c *Client) SetPreviewBase(project, env string) error {
+	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/preview-base",
+		map[string]string{"env": env}, nil)
 }

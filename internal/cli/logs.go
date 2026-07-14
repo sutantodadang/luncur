@@ -10,7 +10,7 @@ import (
 // build log (add -f to follow a build in progress); without it, it streams
 // the app's runtime pod logs.
 func logsCmd() *cobra.Command {
-	var project string
+	var project, env string
 	var deploy string
 	var follow bool
 	var tail int64
@@ -24,6 +24,7 @@ func logsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(env)
 			if deploy != "" && (tail > 0 || since != "") {
 				return fmt.Errorf("--tail/--since apply to runtime logs only, not --deploy build logs")
 			}
@@ -44,6 +45,7 @@ func logsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project name")
 	cmd.MarkFlagRequired("project")
+	cmd.Flags().StringVar(&env, "env", "", "environment (default: the project's default env)")
 	cmd.Flags().StringVar(&deploy, "deploy", "", "deployment id (build log; omit for runtime logs)")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "stream live")
 	cmd.Flags().Int64Var(&tail, "tail", 0, "only the last N log lines (0 = all)")
