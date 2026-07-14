@@ -23,7 +23,7 @@ var errSealerUnavailable = errors.New("sealer is not configured")
 // (handleUIEnvSet): seal the value, upsert it, then opportunistically sync
 // if the app is live. A *store.ValidationError means the key/value were
 // rejected by the store; any other error is an internal failure.
-func (s *server) setAppEnv(ctx context.Context, p store.Project, a store.App, key, value string) error {
+func (s *server) setAppEnv(ctx context.Context, p store.Project, env store.Environment, a store.App, key, value string) error {
 	if a.Ejected {
 		return errAppEjected
 	}
@@ -40,7 +40,7 @@ func (s *server) setAppEnv(ctx context.Context, p store.Project, a store.App, ke
 		return err
 	}
 
-	s.syncIfLive(ctx, p, a)
+	s.syncIfLive(ctx, p, env, a)
 	return nil
 }
 
@@ -49,7 +49,7 @@ func (s *server) setAppEnv(ctx context.Context, p store.Project, a store.App, ke
 // sealed and stored one by one (store validation can still fail a key
 // mid-batch — earlier keys stay set, same as re-pasting would) and the
 // app is synced once at the end instead of per key.
-func (s *server) setAppEnvBulk(ctx context.Context, p store.Project, a store.App, vars map[string]string) error {
+func (s *server) setAppEnvBulk(ctx context.Context, p store.Project, env store.Environment, a store.App, vars map[string]string) error {
 	if a.Ejected {
 		return errAppEjected
 	}
@@ -70,31 +70,31 @@ func (s *server) setAppEnvBulk(ctx context.Context, p store.Project, a store.App
 			return err
 		}
 	}
-	s.syncIfLive(ctx, p, a)
+	s.syncIfLive(ctx, p, env, a)
 	return nil
 }
 
 // unsetAppEnv is the shared core of handleUnsetEnv and its UI twin
 // (handleUIEnvUnset): delete the var, then opportunistically sync if the
 // app is live. Returns store.ErrNotFound when the key doesn't exist.
-func (s *server) unsetAppEnv(ctx context.Context, p store.Project, a store.App, key string) error {
+func (s *server) unsetAppEnv(ctx context.Context, p store.Project, env store.Environment, a store.App, key string) error {
 	if a.Ejected {
 		return errAppEjected
 	}
 	if err := s.st.UnsetEnv(a.ID, key); err != nil {
 		return err
 	}
-	s.syncIfLive(ctx, p, a)
+	s.syncIfLive(ctx, p, env, a)
 	return nil
 }
 
 // handleGetEnv returns an app's env vars, unsealed to plaintext.
 func (s *server) handleGetEnv(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -110,26 +110,26 @@ func (s *server) handleGetEnv(w http.ResponseWriter, r *http.Request, u store.Us
 		return
 	}
 
-	env := make(map[string]string, len(sealed))
+	plain := make(map[string]string, len(sealed))
 	for k, v := range sealed {
-		plain, err := s.sealer.Open(v)
+		val, err := s.sealer.Open(v)
 		if err != nil {
 			log.Printf("unseal env %q: %v", k, err)
 			writeError(w, http.StatusInternalServerError, "internal", "internal error")
 			return
 		}
-		env[k] = string(plain)
+		plain[k] = string(val)
 	}
-	writeJSON(w, http.StatusOK, env)
+	writeJSON(w, http.StatusOK, plain)
 }
 
 // handleSetEnv seals and upserts one env var, then opportunistically syncs.
 func (s *server) handleSetEnv(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -143,7 +143,7 @@ func (s *server) handleSetEnv(w http.ResponseWriter, r *http.Request, u store.Us
 		return
 	}
 
-	if err := s.setAppEnv(r.Context(), p, a, req.Key, req.Value); err != nil {
+	if err := s.setAppEnv(r.Context(), p, env, a, req.Key, req.Value); err != nil {
 		var ve *store.ValidationError
 		switch {
 		case errors.Is(err, errAppEjected):
@@ -164,11 +164,11 @@ func (s *server) handleSetEnv(w http.ResponseWriter, r *http.Request, u store.Us
 
 // handleBulkSetEnv accepts raw .env text and upserts every pair in it.
 func (s *server) handleBulkSetEnv(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -191,7 +191,7 @@ func (s *server) handleBulkSetEnv(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 
-	if err := s.setAppEnvBulk(r.Context(), p, a, vars); err != nil {
+	if err := s.setAppEnvBulk(r.Context(), p, env, a, vars); err != nil {
 		var ve *store.ValidationError
 		switch {
 		case errors.Is(err, errAppEjected):
@@ -212,17 +212,17 @@ func (s *server) handleBulkSetEnv(w http.ResponseWriter, r *http.Request, u stor
 
 // handleUnsetEnv deletes one env var, then opportunistically syncs.
 func (s *server) handleUnsetEnv(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
 
 	key := r.PathValue("key")
-	if err := s.unsetAppEnv(r.Context(), p, a, key); err != nil {
+	if err := s.unsetAppEnv(r.Context(), p, env, a, key); err != nil {
 		switch {
 		case errors.Is(err, errAppEjected):
 			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())
@@ -242,25 +242,25 @@ func (s *server) handleUnsetEnv(w http.ResponseWriter, r *http.Request, u store.
 // editor: store the patch, then opportunistically sync if the app is live.
 // A *store.ValidationError means the patch was rejected by the store; any
 // other error is an internal failure.
-func (s *server) setOverride(ctx context.Context, p store.Project, a store.App, kind, patch string) error {
+func (s *server) setOverride(ctx context.Context, p store.Project, env store.Environment, a store.App, kind, patch string) error {
 	if a.Ejected {
 		return errAppEjected
 	}
 	if err := s.st.SetOverride(a.ID, kind, patch); err != nil {
 		return err
 	}
-	s.syncIfLive(ctx, p, a)
+	s.syncIfLive(ctx, p, env, a)
 	return nil
 }
 
 // handleSetOverride stores a raw strategic-merge-patch for one manifest
 // kind, then opportunistically syncs. The request body IS the patch.
 func (s *server) handleSetOverride(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -273,7 +273,7 @@ func (s *server) handleSetOverride(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
-	if err := s.setOverride(r.Context(), p, a, kind, string(body)); err != nil {
+	if err := s.setOverride(r.Context(), p, env, a, kind, string(body)); err != nil {
 		var ve *store.ValidationError
 		switch {
 		case errors.Is(err, errAppEjected):
@@ -293,11 +293,11 @@ func (s *server) handleSetOverride(w http.ResponseWriter, r *http.Request, u sto
 // handleDeleteOverride removes one manifest kind's override, then
 // opportunistically syncs.
 func (s *server) handleDeleteOverride(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -316,7 +316,7 @@ func (s *server) handleDeleteOverride(w http.ResponseWriter, r *http.Request, u 
 		return
 	}
 
-	s.syncIfLive(r.Context(), p, a)
+	s.syncIfLive(r.Context(), p, env, a)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -338,11 +338,11 @@ func (s *server) appImage(a store.App) (string, error) {
 // YAML. Uses the latest deployment's image, or a placeholder if the app
 // has never been deployed. ?base=1 renders without overrides applied.
 func (s *server) handleRawManifest(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -355,7 +355,7 @@ func (s *server) handleRawManifest(w http.ResponseWriter, r *http.Request, u sto
 	}
 
 	withOverrides := r.URL.Query().Get("base") != "1"
-	rendered, err := s.renderApp(p, a, image, withOverrides)
+	rendered, err := s.renderApp(p, env, a, image, withOverrides)
 	if err != nil {
 		log.Printf("render app: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")

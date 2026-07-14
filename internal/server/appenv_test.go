@@ -129,10 +129,14 @@ func TestRenderInjectsPortEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	env, err := st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	secretJSON := func(t *testing.T) string {
 		t.Helper()
-		rendered, err := s.renderApp(p, a, "nginx:1", true)
+		rendered, err := s.renderApp(p, env, a, "nginx:1", true)
 		if err != nil {
 			t.Fatal(err)
 		}
