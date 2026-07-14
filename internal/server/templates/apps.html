@@ -1,7 +1,13 @@
 {{define "apps.html"}}
 {{template "head" .}}{{template "nav" .}}
 <p class="mb-1 font-mono text-[11px] text-mut"><a class="hover:text-inkhi" href="/ui/">&larr; Projects</a></p>
-<h1 class="mb-4 text-xl font-semibold text-inkhi">{{.Project.Name}}</h1>
+<div class="mb-4 flex flex-wrap items-center gap-3">
+  <h1 class="text-xl font-semibold text-inkhi">{{.Project.Name}}</h1>
+  {{if not .Env.Default}}<span class="chip {{if .Env.Preview}}chip-warn{{else}}chip-muted{{end}}">{{.Env.Name}}</span>{{end}}
+  <select class="input ml-auto w-auto" onchange="if(this.value) location.href=this.value">
+  {{range .Envs}}<option value="/ui/projects/{{$.Project.Name}}/envs/{{.Name}}"{{if eq .Name $.Env.Name}} selected{{end}}>env: {{.Name}}{{if .Default}} (default){{end}}{{if .Preview}} (preview){{end}}</option>{{end}}
+  </select>
+</div>
 {{if .Banner}}<p class="err mb-4">{{.Banner}}</p>{{end}}
 {{if .PErrNote}}<p class="err mb-4">{{.PErrNote}}</p>{{end}}
 
@@ -113,7 +119,7 @@ function uiPresetChange(preset) {
 {{range .Apps}}
 <div class="card">
   <div class="mb-1 flex items-center justify-between">
-    <a class="font-medium text-inkhi hover:text-signal" href="/ui/projects/{{$.Project.Name}}/apps/{{.Name}}">{{.Name}}</a>
+    <a class="font-medium text-inkhi hover:text-signal" href="{{if $.Env.Default}}/ui/projects/{{$.Project.Name}}/apps/{{.Name}}{{else}}/ui/projects/{{$.Project.Name}}/envs/{{$.Env.Name}}/apps/{{.Name}}{{end}}">{{.Name}}</a>
     <span class="flex gap-1">
       {{if .Status}}<span class="status-{{.Status}}">{{.Status}}</span>{{else}}<span class="chip chip-muted">no deploys</span>{{end}}
       {{if ne .Kind "web"}}<span class="chip chip-muted">{{.Kind}}</span>{{end}}

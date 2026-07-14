@@ -65,6 +65,9 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/rename", s.uiPage(s.handleUIProjectRename))
 	mux.HandleFunc("POST /ui/projects/{project}/delete", s.uiPage(s.handleUIProjectDelete))
 	mux.HandleFunc("GET /ui/projects/{project}", s.uiPage(s.handleUIApps))
+	// Env-scoped twin of the project page: same handler, resolves env from
+	// the path instead of defaulting (Task 11's environment selector).
+	mux.HandleFunc("GET /ui/projects/{project}/envs/{env}", s.uiPage(s.handleUIApps))
 	mux.HandleFunc("POST /ui/projects/{project}/apps", s.uiPage(s.handleUICreateApp))
 	mux.HandleFunc("POST /ui/projects/{project}/gpu-quota", s.uiPage(s.handleUIGPUQuota))
 	mux.HandleFunc("POST /ui/projects/{project}/quota", s.uiPage(s.handleUIQuota))
@@ -78,6 +81,10 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/pipelines/{name}/runs/{id}/stop", s.uiPage(s.handleUIPipelineRunStop))
 	mux.HandleFunc("GET /ui/projects/{project}/pipelines/{name}/runs/{id}/steps", s.uiPage(s.handleUIPipelineRunSteps))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}", s.uiPage(s.handleUIApp))
+	// Env-scoped twin: disambiguates an app name that exists in more than
+	// one of the project's environments (uiApp resolves via this path
+	// value, defaulting to the project's default env when absent).
+	mux.HandleFunc("GET /ui/projects/{project}/envs/{env}/apps/{app}", s.uiPage(s.handleUIApp))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/open", s.uiPage(s.handleUIAppOpen))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/chip", s.uiPage(s.handleUIChip))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/chart", s.uiPage(s.handleUIAppChart))
@@ -322,9 +329,17 @@ func (s *server) uiAdmin(w http.ResponseWriter, u store.User) bool {
 }
 
 // uiApp is requireApp's UI twin: 404s with plain text instead of a JSON
-// envelope.
+// envelope. Resolves the app within r.PathValue("env") (the project's
+// default environment when absent, e.g. every legacy /apps/{app} route),
+// mirroring requireApp's own env-scoped lookup — necessary since two apps
+// may now share a name across environments in the same project (Task 11),
+// so a plain project+name lookup would be ambiguous.
 func (s *server) uiApp(w http.ResponseWriter, r *http.Request, p store.Project) (store.App, bool) {
-	a, err := s.st.GetApp(p.ID, r.PathValue("app"))
+	env, ok := s.uiEnv(w, r, p)
+	if !ok {
+		return store.App{}, false
+	}
+	a, err := s.st.GetAppInEnv(env.ID, r.PathValue("app"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return store.App{}, false
@@ -362,6 +377,72 @@ func (s *server) uiDefaultEnv(w http.ResponseWriter, p store.Project) (store.Env
 		return store.Environment{}, false
 	}
 	return env, true
+}
+
+// uiEnv resolves r.PathValue("env") to one of p's environments, falling
+// back to p.DefaultEnv when the path carries none (every legacy route, plus
+// the plain project page) — the UI's twin of requireEnv's own "" ->
+// default-env fallback. 404s with plain text on an unknown, explicitly
+// requested env name.
+//
+// A project with no environments row at all (created directly via
+// store.CreateProject, bypassing handleCreateProject's seeding — legacy
+// fixtures, or any project older than the environments migration that
+// backfillEnvironments hasn't reached) still resolves the *legacy*
+// (env-less) request: apps created the same way default to
+// environment_id=0, so a synthetic Environment{ID:0, Namespace:p.Namespace}
+// reproduces exactly the pre-environments behavior every UI handler already
+// assumed. An explicit /envs/{env} request on such a project still 404s —
+// there is genuinely no such environment to view.
+func (s *server) uiEnv(w http.ResponseWriter, r *http.Request, p store.Project) (store.Environment, bool) {
+	name := r.PathValue("env")
+	fellBackToDefault := name == ""
+	if fellBackToDefault {
+		name = p.DefaultEnv
+	}
+	env, err := s.st.GetEnvironment(p.ID, name)
+	if errors.Is(err, store.ErrNotFound) {
+		if fellBackToDefault {
+			return store.Environment{Name: p.DefaultEnv, Namespace: p.Namespace, IsDefault: true}, true
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+		return store.Environment{}, false
+	}
+	if err != nil {
+		log.Printf("ui get environment %s/%s: %v", p.Name, name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return store.Environment{}, false
+	}
+	return env, true
+}
+
+// uiEnvChip is the environment selector's per-option view model — reused
+// both for the current env (a single value, "Env" in the app/project page
+// data) and the full list to switch between ("Envs"). Default envs get no
+// special badge; Preview marks the chip a non-default env needs to look
+// visually distinct (chip-warn vs chip-muted — see app.html/apps.html).
+type uiEnvChip struct {
+	Name    string
+	Default bool
+	Preview bool
+}
+
+// uiEnvChipFrom builds one uiEnvChip from a store.Environment.
+func uiEnvChipFrom(e store.Environment) uiEnvChip {
+	return uiEnvChip{Name: e.Name, Default: e.IsDefault, Preview: e.Kind == "preview"}
+}
+
+// uiEnvChips lists every environment on p, for the selector's option list.
+func (s *server) uiEnvChips(p store.Project) ([]uiEnvChip, error) {
+	envs, err := s.st.ListEnvironments(p.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]uiEnvChip, 0, len(envs))
+	for _, e := range envs {
+		out = append(out, uiEnvChipFrom(e))
+	}
+	return out, nil
 }
 
 // uiAddon is requireAddon's UI twin: 404s with plain text instead of a JSON
@@ -651,27 +732,34 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	if !ok {
 		return
 	}
-	list, err := s.st.ListApps(p.ID)
+	env, ok := s.uiEnv(w, r, p)
+	if !ok {
+		return
+	}
+	list, err := s.st.ListAppsInEnv(env.ID)
 	if err != nil {
 		log.Printf("ui apps: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	envs, err := s.uiEnvChips(p)
+	if err != nil {
+		log.Printf("ui apps: list environments: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	rows := make([]uiAppRow, 0, len(list))
 	for _, a := range list {
-		url := s.appURL(a)
+		// Every row here is already scoped to env (ListAppsInEnv), so its
+		// public/internal URL is built directly off env rather than a
+		// per-app re-lookup by EnvironmentID.
+		url := s.appURLForEnv(a, env.Name, p.DefaultEnv)
 		internalURL := ""
 		if a.Kind != "web" {
 			url = ""
 		} else if a.Internal {
 			url = ""
-			// A project-wide listing spans every environment's apps; this
-			// app's own environment (set at create) gives its namespace.
-			if env, err := s.st.GetEnvironmentByID(a.EnvironmentID); err == nil {
-				internalURL = internalURLFor(a.Name, env.Namespace)
-			} else {
-				log.Printf("ui apps: get environment for %s: %v", a.Name, err)
-			}
+			internalURL = internalURLFor(a.Name, env.Namespace)
 		}
 		status := ""
 		if d, err := s.st.LatestDeployment(a.ID); err == nil {
@@ -726,6 +814,7 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin", "PErrNote": perrNote,
 		"GPUQuota": p.GPUQuota, "Pipelines": pipelines,
 		"CPUQuotaMilli": p.CPUQuotaMilli, "MemQuotaMB": p.MemQuotaMB,
+		"Env": uiEnvChipFrom(env), "Envs": envs,
 	})
 }
 
@@ -1307,6 +1396,12 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 	if sweep != nil {
 		sweep.ProjectName, sweep.AppName, sweep.CSRF = p.Name, a.Name, csrf
 	}
+	envs, err := s.uiEnvChips(p)
+	if err != nil {
+		log.Printf("ui app detail: list environments: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	data := map[string]any{
 		"User": u, "Project": p, "App": a,
 		"Status": status, "LatestID": latestID, "URL": url, "InternalURL": internalURL,
@@ -1321,6 +1416,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"CronRuns": cronRuns,
 		"Sweeps":   sweepRows, "Sweep": sweep,
 		"CSRF": csrf, "IsAdmin": u.Role == "admin",
+		"Env": uiEnvChipFrom(env), "Envs": envs,
 	}
 	for k, v := range extra {
 		data[k] = v
