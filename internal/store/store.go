@@ -133,6 +133,27 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	// schema.sql's CREATE TABLE IF NOT EXISTS already creates this table on
+	// every Open (it runs unconditionally before migrate), but an explicit
+	// exec here mirrors the deployments-index precedent below and makes the
+	// legacy-DB path self-evident without relying on Open's call order.
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS environments (
+  id              INTEGER PRIMARY KEY,
+  project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  k8s_namespace   TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'standing' CHECK (kind IN ('standing','preview')),
+  is_default      INTEGER NOT NULL DEFAULT 0,
+  base_branch     TEXT NOT NULL DEFAULT '',
+  source_branch   TEXT NOT NULL DEFAULT '',
+  last_active_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (project_id, name)
+)`); err != nil {
+		return fmt.Errorf("create environments table: %w", err)
+	}
+
 	if err := backfillGPUExternalRef(db); err != nil {
 		return fmt.Errorf("backfill gpu_instances.external_ref: %w", err)
 	}

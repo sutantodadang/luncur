@@ -33,6 +33,20 @@ CREATE TABLE IF NOT EXISTS project_members (
   PRIMARY KEY (project_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS environments (
+  id              INTEGER PRIMARY KEY,
+  project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  k8s_namespace   TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'standing' CHECK (kind IN ('standing','preview')),
+  is_default      INTEGER NOT NULL DEFAULT 0,
+  base_branch     TEXT NOT NULL DEFAULT '',
+  source_branch   TEXT NOT NULL DEFAULT '',
+  last_active_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (project_id, name)
+);
+
 CREATE TABLE IF NOT EXISTS apps (
   id            INTEGER PRIMARY KEY,
   project_id    INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
