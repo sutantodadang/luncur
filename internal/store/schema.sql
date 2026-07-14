@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS projects (
   gpu_quota     INTEGER NOT NULL DEFAULT 0,
   cpu_quota_milli INTEGER NOT NULL DEFAULT 0,
   mem_quota_mb  INTEGER NOT NULL DEFAULT 0,
+  default_env      TEXT NOT NULL DEFAULT 'production',
+  preview_base_env TEXT NOT NULL DEFAULT 'develop',
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

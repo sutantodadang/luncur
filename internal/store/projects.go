@@ -26,6 +26,15 @@ type Project struct {
 	// limits.cpu/limits.memory via a ResourceQuota. 0 means unlimited;
 	// enforced by a namespace ResourceQuota on limits.cpu/limits.memory.
 	CPUQuotaMilli, MemQuotaMB int64
+	// DefaultEnv is the environment name legacy (env-less) routes and CLI
+	// calls resolve to. "production" at the SQL level for a bare row;
+	// project creation (server layer) seeds the 3 standard envs and confirms
+	// this explicitly.
+	DefaultEnv string
+	// PreviewBaseEnv is the environment new preview environments clone their
+	// app specs and addon data from. "develop" at the SQL level for a bare
+	// row.
+	PreviewBaseEnv string
 }
 
 func (s *Store) CreateProject(name string) (Project, error) {
@@ -89,8 +98,8 @@ func (s *Store) DeleteProject(id int64) error {
 func (s *Store) GetProject(name string) (Project, error) {
 	var p Project
 	err := s.db.QueryRow(
-		`SELECT id, name, k8s_namespace, gpu_quota, cpu_quota_milli, mem_quota_mb FROM projects WHERE name = ?`, name,
-	).Scan(&p.ID, &p.Name, &p.Namespace, &p.GPUQuota, &p.CPUQuotaMilli, &p.MemQuotaMB)
+		`SELECT id, name, k8s_namespace, gpu_quota, cpu_quota_milli, mem_quota_mb, default_env, preview_base_env FROM projects WHERE name = ?`, name,
+	).Scan(&p.ID, &p.Name, &p.Namespace, &p.GPUQuota, &p.CPUQuotaMilli, &p.MemQuotaMB, &p.DefaultEnv, &p.PreviewBaseEnv)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -102,8 +111,8 @@ func (s *Store) GetProject(name string) (Project, error) {
 func (s *Store) GetProjectByID(id int64) (Project, error) {
 	var p Project
 	err := s.db.QueryRow(
-		`SELECT id, name, k8s_namespace, gpu_quota, cpu_quota_milli, mem_quota_mb FROM projects WHERE id = ?`, id,
-	).Scan(&p.ID, &p.Name, &p.Namespace, &p.GPUQuota, &p.CPUQuotaMilli, &p.MemQuotaMB)
+		`SELECT id, name, k8s_namespace, gpu_quota, cpu_quota_milli, mem_quota_mb, default_env, preview_base_env FROM projects WHERE id = ?`, id,
+	).Scan(&p.ID, &p.Name, &p.Namespace, &p.GPUQuota, &p.CPUQuotaMilli, &p.MemQuotaMB, &p.DefaultEnv, &p.PreviewBaseEnv)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -111,7 +120,7 @@ func (s *Store) GetProjectByID(id int64) (Project, error) {
 }
 
 func (s *Store) ListProjects() ([]Project, error) {
-	rows, err := s.db.Query(`SELECT id, name, k8s_namespace, gpu_quota, cpu_quota_milli, mem_quota_mb FROM projects ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id, name, k8s_namespace, gpu_quota, cpu_quota_milli, mem_quota_mb, default_env, preview_base_env FROM projects ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +128,7 @@ func (s *Store) ListProjects() ([]Project, error) {
 	var out []Project
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.Namespace, &p.GPUQuota, &p.CPUQuotaMilli, &p.MemQuotaMB); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Namespace, &p.GPUQuota, &p.CPUQuotaMilli, &p.MemQuotaMB, &p.DefaultEnv, &p.PreviewBaseEnv); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -153,6 +162,49 @@ func (s *Store) SetProjectResourceQuota(projectID, cpuMilli, memMB int64) error 
 		return fmt.Errorf("cpu and memory quota must be >= 0")
 	}
 	res, err := s.db.Exec(`UPDATE projects SET cpu_quota_milli = ?, mem_quota_mb = ? WHERE id = ?`, cpuMilli, memMB, projectID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetDefaultEnv sets the environment name legacy (env-less) routes and CLI
+// calls resolve to. The caller (server layer) is responsible for confirming
+// env exists; the store only validates the name shape.
+func (s *Store) SetDefaultEnv(projectID int64, env string) error {
+	if !validName(env) {
+		return validationErrorf("invalid environment name %q (lowercase letters, digits, dashes; max 40 chars)", env)
+	}
+	res, err := s.db.Exec(`UPDATE projects SET default_env = ? WHERE id = ?`, env, projectID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetPreviewBaseEnv sets the environment new preview environments clone
+// their app specs and addon data from. The caller (server layer) is
+// responsible for confirming env exists; the store only validates the name
+// shape.
+func (s *Store) SetPreviewBaseEnv(projectID int64, env string) error {
+	if !validName(env) {
+		return validationErrorf("invalid environment name %q (lowercase letters, digits, dashes; max 40 chars)", env)
+	}
+	res, err := s.db.Exec(`UPDATE projects SET preview_base_env = ? WHERE id = ?`, env, projectID)
 	if err != nil {
 		return err
 	}
