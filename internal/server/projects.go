@@ -60,6 +60,49 @@ func (s *server) requireProjectWrite(w http.ResponseWriter, u store.User, name s
 	return p, true
 }
 
+// requireEnv resolves a project (membership-checked exactly like
+// requireProject) and then one of its environments: envName=="" resolves to
+// the project's DefaultEnv, so every legacy (env-less) caller keeps
+// resolving to the same environment it always implicitly used. A missing
+// project or environment writes the response and returns ok=false.
+func (s *server) requireEnv(w http.ResponseWriter, r *http.Request, u store.User, project, envName string) (store.Project, store.Environment, bool) {
+	p, ok := s.requireProject(w, u, project)
+	if !ok {
+		return store.Project{}, store.Environment{}, false
+	}
+	return s.resolveEnv(w, p, envName)
+}
+
+// requireEnvWrite is requireEnv plus write authorization: global admins and
+// role=member pass; role=viewer gets 403 read_only, mirroring
+// requireProjectWrite.
+func (s *server) requireEnvWrite(w http.ResponseWriter, r *http.Request, u store.User, project, envName string) (store.Project, store.Environment, bool) {
+	p, ok := s.requireProjectWrite(w, u, project)
+	if !ok {
+		return store.Project{}, store.Environment{}, false
+	}
+	return s.resolveEnv(w, p, envName)
+}
+
+// resolveEnv is requireEnv/requireEnvWrite's shared tail: look up the named
+// environment (project.DefaultEnv when envName is empty), 404 on missing.
+func (s *server) resolveEnv(w http.ResponseWriter, p store.Project, envName string) (store.Project, store.Environment, bool) {
+	if envName == "" {
+		envName = p.DefaultEnv
+	}
+	env, err := s.st.GetEnvironment(p.ID, envName)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "no such environment")
+		return store.Project{}, store.Environment{}, false
+	}
+	if err != nil {
+		log.Printf("get environment: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return store.Project{}, store.Environment{}, false
+	}
+	return p, env, true
+}
+
 func (s *server) handleCreateProject(w http.ResponseWriter, r *http.Request, _ store.User) {
 	var req struct {
 		Name string `json:"name"`

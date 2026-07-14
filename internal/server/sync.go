@@ -21,11 +21,37 @@ func hostFor(app, externalIP string) string {
 	return app + "." + strings.ReplaceAll(externalIP, ".", "-") + ".sslip.io"
 }
 
+// hostForEnv is hostFor with a per-environment suffix so the same app name
+// can coexist across environments without colliding: in the project's
+// default environment the host is unchanged (hostFor(app, ip)); in any
+// other environment the app name gets a "-<env>" suffix before the sslip.io
+// host is built.
+func hostForEnv(app, env, defaultEnv, externalIP string) string {
+	if env == defaultEnv {
+		return hostFor(app, externalIP)
+	}
+	return hostFor(app+"-"+env, externalIP)
+}
+
 // appURL is the app's public URL shown in the UI/API and sent in deploy
 // notifications: its first non-wildcard custom domain when one exists
 // (https once the cert is issued or externally managed), else the assigned
 // sslip.io host over plain HTTP.
 func (s *server) appURL(a store.App) string {
+	return s.appURLWithHost(a, hostFor(a.Name, s.externalIP))
+}
+
+// appURLForEnv is appURL made environment-aware: the sslip.io fallback host
+// carries a "-<env>" suffix in every environment but the project's default,
+// via hostForEnv. Not yet wired into any handler (that's Task 7); Task 5
+// only introduces the resolver and the building block it needs.
+func (s *server) appURLForEnv(a store.App, env, defaultEnv string) string {
+	return s.appURLWithHost(a, hostForEnv(a.Name, env, defaultEnv, s.externalIP))
+}
+
+// appURLWithHost is appURL's shared core: prefer a routable custom domain,
+// else fall back to the given sslip.io host.
+func (s *server) appURLWithHost(a store.App, fallbackHost string) string {
 	if domains, err := s.st.ListDomains(a.ID); err == nil {
 		for _, d := range domains {
 			if strings.HasPrefix(d.Hostname, "*.") {
@@ -37,7 +63,7 @@ func (s *server) appURL(a store.App) string {
 			return "http://" + d.Hostname
 		}
 	}
-	return "http://" + hostFor(a.Name, s.externalIP)
+	return "http://" + fallbackHost
 }
 
 // internalURLFor is the cluster-internal address an internal web app is

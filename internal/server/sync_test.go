@@ -175,3 +175,17 @@ func TestRenderAppIngressHosts(t *testing.T) {
 		}
 	})
 }
+
+// TestHostForEnv covers hostForEnv's default-vs-non-default branching: the
+// project's default environment gets the plain hostFor host, any other
+// environment gets an "-<env>" suffix on the app name so the same app name
+// can coexist across environments.
+func TestHostForEnv(t *testing.T) {
+	ip := "1.2.3.4"
+	if got := hostForEnv("api", "production", "production", ip); got != "api.1-2-3-4.sslip.io" {
+		t.Fatalf("default env host = %q", got)
+	}
+	if got := hostForEnv("api", "develop", "production", ip); got != "api-develop.1-2-3-4.sslip.io" {
+		t.Fatalf("non-default host = %q", got)
+	}
+}
