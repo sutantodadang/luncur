@@ -267,11 +267,185 @@ func (s *server) teardownPreview(ctx context.Context, p store.Project, env store
 	return nil
 }
 
-// ensurePreview will create (or return an existing) preview environment for
-// branch, cloning app specs and addon data from the project's preview base
-// environment (p.PreviewBaseEnv). Implemented in Task 13 (sanitizeBranch +
-// the create-and-clone core); stubbed here so routeBranch compiles and has
-// somewhere to call.
+// maxSanitizedBranch caps sanitizeBranch's output length: short enough that
+// "<app>-<env>" (hostForEnv's non-default-environment host label) still
+// fits comfortably under validName's 40-char DNS-1123 limit alongside a
+// realistic app name.
+const maxSanitizedBranch = 30
+
+// sanitizeBranch turns an arbitrary git branch name into a DNS-1123-safe
+// environment name: lowercase, every character outside [a-z0-9] (including
+// "/" and any other punctuation) becomes "-", repeated dashes collapse to
+// one, and leading/trailing dashes are trimmed. The result is truncated to
+// maxSanitizedBranch chars (trimming any dash truncation lands on) so it
+// always passes store.validName — non-empty, DNS-1123 label shaped.
+func sanitizeBranch(b string) string {
+	b = strings.ToLower(b)
+	var sb strings.Builder
+	for _, r := range b {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			sb.WriteRune(r)
+		} else {
+			sb.WriteByte('-')
+		}
+	}
+	s := sb.String()
+	for strings.Contains(s, "--") {
+		s = strings.ReplaceAll(s, "--", "-")
+	}
+	s = strings.Trim(s, "-")
+	if len(s) > maxSanitizedBranch {
+		s = strings.Trim(s[:maxSanitizedBranch], "-")
+	}
+	if s == "" {
+		s = "branch"
+	}
+	return s
+}
+
+// ensurePreview returns the preview environment for branch on project p,
+// creating one if it doesn't already exist. A second call for the same
+// branch is a no-op that returns the existing environment unchanged — the
+// caller (routeBranch) redeploys into it either way, so ensurePreview never
+// needs to distinguish a fresh preview from a repeat push.
+//
+// A freshly created preview is cloned from p.PreviewBaseEnv (falling back
+// to "develop" when unset, matching the SQL-level default): every app in
+// the base environment gets a same-shaped counterpart (CreateAppInEnv plus
+// the scalar setters — kind/port came from CreateAppInEnv itself) with
+// replicas capped low, its env vars copied, and — for a git-source app —
+// the same repo with git_branch overridden to the pushed branch. Addon
+// data seeding is Task 14 (clonePreviewAddons is stubbed until then).
 func (s *server) ensurePreview(ctx context.Context, p store.Project, branch string) (store.Environment, error) {
-	return store.Environment{}, fmt.Errorf("ensurePreview: not yet implemented (Task 13)")
+	name := sanitizeBranch(branch)
+	if existing, err := s.st.GetEnvironment(p.ID, name); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return store.Environment{}, fmt.Errorf("get environment: %w", err)
+	}
+
+	baseName := p.PreviewBaseEnv
+	if baseName == "" {
+		baseName = "develop"
+	}
+	base, err := s.st.GetEnvironment(p.ID, baseName)
+	if err != nil {
+		return store.Environment{}, fmt.Errorf("get base environment %q: %w", baseName, err)
+	}
+
+	env, err := s.st.CreateEnvironment(p.ID, name, "preview", "")
+	if err != nil {
+		return store.Environment{}, fmt.Errorf("create preview environment: %w", err)
+	}
+	if err := s.st.SetEnvironmentSourceBranch(env.ID, branch); err != nil {
+		return store.Environment{}, fmt.Errorf("set source branch: %w", err)
+	}
+	env.SourceBranch = branch
+
+	if s.kube != nil {
+		if err := s.ensureEnvNamespace(ctx, env); err != nil {
+			return store.Environment{}, fmt.Errorf("ensure namespace: %w", err)
+		}
+	}
+
+	baseApps, err := s.st.ListAppsInEnv(base.ID)
+	if err != nil {
+		return store.Environment{}, fmt.Errorf("list base apps: %w", err)
+	}
+	for _, a := range baseApps {
+		if err := s.clonePreviewApp(env, a, branch); err != nil {
+			log.Printf("ensure preview: clone app %s: %v", a.Name, err)
+		}
+	}
+
+	// Addon data seeding (postgres/redis dump->restore, empty minio/mlflow)
+	// is Task 14 — clonePreviewAddons is stubbed until then.
+	if warnings := s.clonePreviewAddons(ctx, base, env); len(warnings) > 0 {
+		log.Printf("ensure preview: addon clone warnings: %v", warnings)
+	}
+
+	return env, nil
+}
+
+// clonePreviewApp creates one preview-environment counterpart of a base-env
+// app: same kind/port (via CreateAppInEnv), then resources/health/internal/
+// gpu/inject_s3 copied and replicas capped low (1) so a preview doesn't
+// reproduce its base's full footprint. A git-source app gets the same repo
+// with git_branch overridden to the pushed branch. Env vars are cloned
+// separately (clonePreviewEnvVars) since they're sealed bytes, not scalar
+// columns.
+func (s *server) clonePreviewApp(env store.Environment, base store.App, branch string) error {
+	a, err := s.st.CreateAppInEnv(env.ID, base.Name, base.Port, base.Kind, base.Schedule)
+	if err != nil {
+		return fmt.Errorf("create app: %w", err)
+	}
+
+	replicas := base.Replicas
+	if replicas > 1 {
+		replicas = 1
+	}
+	if err := s.st.SetReplicas(a.ID, replicas); err != nil {
+		return fmt.Errorf("set replicas: %w", err)
+	}
+	if base.CPUMilli > 0 || base.MemoryMB > 0 {
+		if err := s.st.SetResources(a.ID, base.CPUMilli, base.MemoryMB); err != nil {
+			return fmt.Errorf("set resources: %w", err)
+		}
+	}
+	if base.HealthPath != "" {
+		if err := s.st.SetHealthPath(a.ID, base.HealthPath); err != nil {
+			return fmt.Errorf("set health path: %w", err)
+		}
+	}
+	if base.Internal {
+		if err := s.st.SetInternal(a.ID, true); err != nil {
+			return fmt.Errorf("set internal: %w", err)
+		}
+	}
+	if base.GPUCount > 0 {
+		if err := s.st.SetGPU(a.ID, base.GPUCount); err != nil {
+			return fmt.Errorf("set gpu: %w", err)
+		}
+	}
+	if base.InjectS3 {
+		if err := s.st.SetInjectS3(a.ID, true); err != nil {
+			return fmt.Errorf("set inject s3: %w", err)
+		}
+	}
+	if base.SourceType == "git" {
+		if err := s.st.SetAppGitSource(a.ID, base.GitURL, branch); err != nil {
+			return fmt.Errorf("set git source: %w", err)
+		}
+	}
+	if err := s.clonePreviewEnvVars(base.ID, a.ID); err != nil {
+		return fmt.Errorf("clone env vars: %w", err)
+	}
+	return nil
+}
+
+// clonePreviewEnvVars copies every env var from a base-env app to its
+// preview-env counterpart. Values arrive already sealed (ListEnv/SetEnv
+// never see plaintext), so this is a pure sealed-bytes copy — no sealer
+// round trip needed.
+func (s *server) clonePreviewEnvVars(baseAppID, previewAppID int64) error {
+	vars, err := s.st.ListEnv(baseAppID)
+	if err != nil {
+		return err
+	}
+	for k, v := range vars {
+		if err := s.st.SetEnv(previewAppID, k, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// clonePreviewAddons seeds a preview environment's addon data from its base
+// environment: postgres/redis via dump->restore, minio/mlflow created
+// empty, each addon's failure degrading to a warning rather than failing
+// the whole preview. Stubbed here — Task 14 implements the real dump/
+// restore/create logic; this gives ensurePreview a call site to wire it
+// into once that lands.
+func (s *server) clonePreviewAddons(ctx context.Context, base, preview store.Environment) []string {
+	return nil
 }

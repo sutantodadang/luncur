@@ -190,3 +190,18 @@ func (s *Store) TouchEnvironment(id int64) error {
 	}
 	return nil
 }
+
+// SetEnvironmentSourceBranch sets the git branch a preview environment was
+// created from (Environment.SourceBranch). Only meaningful for kind
+// 'preview' rows; the server layer (ensurePreview) enforces that — the
+// store only persists the value.
+func (s *Store) SetEnvironmentSourceBranch(id int64, branch string) error {
+	res, err := s.db.Exec(`UPDATE environments SET source_branch = ? WHERE id = ?`, branch, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

@@ -268,6 +268,28 @@ func (s *Store) CreateGitApp(projectID int64, name string, port int, gitURL, git
 	}, nil
 }
 
+// SetAppGitSource converts an app to (or updates) a git source: source_type
+// becomes 'git' and git_url/git_branch are set. Used by ensurePreview
+// (server/preview.go) to give a cloned preview app the same git source as
+// its base-environment counterpart, with git_branch overridden to the
+// pushed branch.
+func (s *Store) SetAppGitSource(id int64, url, branch string) error {
+	if url == "" {
+		return fmt.Errorf("git url is required")
+	}
+	if branch == "" {
+		branch = "main"
+	}
+	res, err := s.db.Exec(`UPDATE apps SET source_type = 'git', git_url = ?, git_branch = ? WHERE id = ?`, url, branch, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetGitToken stores the sealed git access token for a private-repo clone.
 // The value arrives already sealed — the store never sees plaintext. A nil or
 // empty slice clears it. Returns ErrNotFound if the app does not exist.
