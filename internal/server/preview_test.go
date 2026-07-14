@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/secret"
+	"github.com/sutantodadang/luncur/internal/store"
 )
 
 // TestSanitizeBranch covers the common shapes: lowercasing, "/" and other
@@ -73,6 +75,14 @@ func previewTestServer(t *testing.T) (*server, *[]string) {
 	var actions []string
 	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
 		actions = append(actions, a.GetVerb()+" "+a.GetResource().Resource)
+		if a.GetVerb() == "get" || a.GetVerb() == "list" {
+			// Let the default tracker answer reads (e.g. minio addon
+			// creation's ensureMinioBucket polls StatefulSetReady in the
+			// background — a swallowed nil object there is a nil-pointer
+			// panic, not a clean "not found") — same convention as
+			// addonTestServer's reactor (addons_test.go).
+			return false, nil, nil
+		}
 		return true, nil, nil
 	})
 	dyn.PrependReactor("get", "jobs", func(a ktesting.Action) (bool, runtime.Object, error) {
@@ -284,5 +294,213 @@ func TestEnsurePreview(t *testing.T) {
 	apps2, err := st.ListAppsInEnv(env.ID)
 	if err != nil || len(apps2) != 1 {
 		t.Fatalf("apps after 2nd call = %+v, err %v", apps2, err)
+	}
+}
+
+// seedPreviewAddon creates an addon of typ directly (bypassing createAddon's
+// kube/exec machinery, like backup_test.go's seedBackupAddon) and attributes
+// it to env, mirroring what createAddon now does via SetAddonEnvironmentID.
+func seedPreviewAddon(t *testing.T, srv *server, st *store.Store, env store.Environment, typ, name string) store.Addon {
+	t.Helper()
+	creds, err := newAddonCreds(typ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := srv.sealCreds(creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ad, err := st.CreateAddon(env.ProjectID, typ, name, "", 1, sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAddonEnvironmentID(ad.ID, env.ID); err != nil {
+		t.Fatal(err)
+	}
+	ad.EnvironmentID = env.ID
+	return ad
+}
+
+// TestClonePreviewAddons covers Task 14's core: a base postgres addon's dump
+// is piped straight into the freshly created preview addon's restore (the
+// same fakeExecer capture backup_test.go uses — the LAST ExecPod call's
+// cmd/stdin, i.e. the restore, is what's asserted), a minio addon has no
+// logical dump so it's created empty with a warning, and an app attached to
+// the base addon gets its preview counterpart attached to the new addon too.
+func TestClonePreviewAddons(t *testing.T) {
+	srv, _ := previewTestServer(t)
+	exec := &fakeExecer{out: "PGDUMPDATA"}
+	srv.execer = exec
+	st := srv.st
+
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := st.GetEnvironment(p.ID, "develop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := st.CreateEnvironment(p.ID, "feature-clone", "preview", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pgAddon := seedPreviewAddon(t, srv, st, dev, "postgres", "db1")
+	seedPreviewAddon(t, srv, st, dev, "minio", "store1")
+
+	// An app in dev attached to the postgres addon, plus its already-cloned
+	// preview counterpart (clonePreviewApp normally does this cloning; here
+	// it's done directly since this test targets clonePreviewAddons alone).
+	devApp, err := st.CreateAppInEnv(dev.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AttachAddon(pgAddon.ID, devApp.ID); err != nil {
+		t.Fatal(err)
+	}
+	previewApp, err := st.CreateAppInEnv(preview.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := srv.clonePreviewAddons(context.Background(), dev, preview)
+
+	previewAddons, err := st.AddonsForEnv(preview.ID)
+	if err != nil || len(previewAddons) != 2 {
+		t.Fatalf("preview addons = %+v, err %v, want 2", previewAddons, err)
+	}
+	var previewPG, previewMinio store.Addon
+	for _, a := range previewAddons {
+		switch a.Type {
+		case "postgres":
+			previewPG = a
+		case "minio":
+			previewMinio = a
+		}
+	}
+	if previewPG.ID == 0 {
+		t.Fatalf("no postgres addon cloned into preview: %+v", previewAddons)
+	}
+	if previewPG.Name == pgAddon.Name {
+		t.Fatalf("preview addon reused base's name %q, want a distinct auto-minted name", previewPG.Name)
+	}
+	if previewMinio.ID == 0 {
+		t.Fatalf("no minio addon cloned into preview: %+v", previewAddons)
+	}
+
+	// The dump->restore round trip: the fake execer's last call is the
+	// restore, with the dump's bytes piped in as stdin.
+	if string(exec.stdin) != "PGDUMPDATA" {
+		t.Fatalf("restore stdin = %q, want PGDUMPDATA", exec.stdin)
+	}
+	if !strings.Contains(strings.Join(exec.cmd, " "), "pg_restore") {
+		t.Fatalf("last exec cmd = %v, want pg_restore", exec.cmd)
+	}
+
+	foundMinioWarning := false
+	for _, w := range warnings {
+		if strings.Contains(w, "store1") {
+			foundMinioWarning = true
+		}
+	}
+	if !foundMinioWarning {
+		t.Fatalf("warnings = %v, want a minio warning mentioning store1", warnings)
+	}
+
+	// Attachment re-pointing: the preview app is now attached to the
+	// preview's own postgres addon (not the base's).
+	attached, err := st.AddonsForApp(previewApp.ID)
+	if err != nil || len(attached) != 1 || attached[0].ID != previewPG.ID {
+		t.Fatalf("preview app addon attachments = %+v, err %v, want [%d]", attached, err, previewPG.ID)
+	}
+}
+
+// TestClonePreviewAddonsPerAddonFailureWarns covers per-addon degrade: with
+// every ExecPod call failing, both a postgres and a redis base addon still
+// get created (empty) in the preview — the exec failure only turns into a
+// warning for that one addon, it never aborts the rest of the loop.
+func TestClonePreviewAddonsPerAddonFailureWarns(t *testing.T) {
+	srv, _ := previewTestServer(t)
+	srv.execer = &fakeExecer{err: fmt.Errorf("pod gone")}
+	st := srv.st
+
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := st.GetEnvironment(p.ID, "develop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := st.CreateEnvironment(p.ID, "feature-fail", "preview", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seedPreviewAddon(t, srv, st, dev, "postgres", "db1")
+	seedPreviewAddon(t, srv, st, dev, "redis", "cache1")
+
+	warnings := srv.clonePreviewAddons(context.Background(), dev, preview)
+	if len(warnings) != 2 {
+		t.Fatalf("warnings = %v, want 2 (one dump failure per addon)", warnings)
+	}
+
+	previewAddons, err := st.AddonsForEnv(preview.ID)
+	if err != nil || len(previewAddons) != 2 {
+		t.Fatalf("preview addons = %+v, err %v, want 2 (created empty despite dump failure)", previewAddons, err)
+	}
+}
+
+// TestClonePreviewAddonsNoExecerWarns covers the s.execer == nil guard: a
+// postgres addon is still created (empty) in the preview, with a warning
+// explaining exec was unavailable rather than a panic or hard failure.
+func TestClonePreviewAddonsNoExecerWarns(t *testing.T) {
+	srv, _ := previewTestServer(t) // execer left nil
+	st := srv.st
+
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := st.GetEnvironment(p.ID, "develop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := st.CreateEnvironment(p.ID, "feature-noexec", "preview", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seedPreviewAddon(t, srv, st, dev, "postgres", "db1")
+
+	warnings := srv.clonePreviewAddons(context.Background(), dev, preview)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "exec unavailable") {
+		t.Fatalf("warnings = %v, want one exec-unavailable warning", warnings)
+	}
+	previewAddons, err := st.AddonsForEnv(preview.ID)
+	if err != nil || len(previewAddons) != 1 {
+		t.Fatalf("preview addons = %+v, err %v, want 1 (created empty)", previewAddons, err)
 	}
 }

@@ -314,8 +314,9 @@ func sanitizeBranch(b string) string {
 // the base environment gets a same-shaped counterpart (CreateAppInEnv plus
 // the scalar setters — kind/port came from CreateAppInEnv itself) with
 // replicas capped low, its env vars copied, and — for a git-source app —
-// the same repo with git_branch overridden to the pushed branch. Addon
-// data seeding is Task 14 (clonePreviewAddons is stubbed until then).
+// the same repo with git_branch overridden to the pushed branch. Addon data
+// (postgres/redis via dump->restore, minio/mlflow created empty) is seeded
+// separately by clonePreviewAddons, below.
 func (s *server) ensurePreview(ctx context.Context, p store.Project, branch string) (store.Environment, error) {
 	name := sanitizeBranch(branch)
 	if existing, err := s.st.GetEnvironment(p.ID, name); err == nil {
@@ -358,8 +359,6 @@ func (s *server) ensurePreview(ctx context.Context, p store.Project, branch stri
 		}
 	}
 
-	// Addon data seeding (postgres/redis dump->restore, empty minio/mlflow)
-	// is Task 14 — clonePreviewAddons is stubbed until then.
 	if warnings := s.clonePreviewAddons(ctx, base, env); len(warnings) > 0 {
 		log.Printf("ensure preview: addon clone warnings: %v", warnings)
 	}
@@ -441,11 +440,98 @@ func (s *server) clonePreviewEnvVars(baseAppID, previewAppID int64) error {
 }
 
 // clonePreviewAddons seeds a preview environment's addon data from its base
-// environment: postgres/redis via dump->restore, minio/mlflow created
-// empty, each addon's failure degrading to a warning rather than failing
-// the whole preview. Stubbed here — Task 14 implements the real dump/
-// restore/create logic; this gives ensurePreview a call site to wire it
-// into once that lands.
+// environment: for every addon actually provisioned into base
+// (AddonsForEnv, not the whole-project ListAddons), create a same-typed
+// addon in preview via createAddon — the same core handleCreateAddon uses,
+// so the preview's creds/secret get minted and applied identically. name is
+// left "" so createAddon mints its own project-wide-unique name (addons.go's
+// UNIQUE(project_id, name) means the preview's clone is a genuinely separate
+// provisioned instance, never the base's own row). postgres/redis then get
+// their data seeded via the same dump->restore path backup/restore use;
+// minio/mlflow have no logical dump, so the clone is left freshly
+// provisioned and empty. Any single addon's failure (create, dump, or
+// restore) degrades to a warning rather than aborting the rest — a partial
+// preview beats none, mirroring createBackup's per-addon resilience.
+// Returns the warnings for the caller (ensurePreview) to log.
 func (s *server) clonePreviewAddons(ctx context.Context, base, preview store.Environment) []string {
-	return nil
+	addons, err := s.st.AddonsForEnv(base.ID)
+	if err != nil {
+		return []string{fmt.Sprintf("list base addons: %v", err)}
+	}
+	if len(addons) == 0 {
+		return nil
+	}
+	if s.kube == nil {
+		return []string{"kubernetes unavailable, addons not cloned"}
+	}
+	p, err := s.st.GetProjectByID(base.ProjectID)
+	if err != nil {
+		return []string{fmt.Sprintf("get project: %v", err)}
+	}
+
+	var warnings []string
+	for _, ad := range addons {
+		newAddon, err := s.createAddon(ctx, p, preview, ad.Type, "", ad.Version, ad.SizeGB, "")
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("create %s addon %s: %v", ad.Type, ad.Name, err))
+			continue
+		}
+
+		switch ad.Type {
+		case "postgres", "redis":
+			if s.execer == nil {
+				warnings = append(warnings, fmt.Sprintf("addon %s: exec unavailable, addon created empty", ad.Name))
+				continue
+			}
+			dump, _, err := s.dumpAddon(ctx, ad)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("dump addon %s: %v", ad.Name, err))
+				continue
+			}
+			if err := s.restoreAddon(ctx, newAddon, dump); err != nil {
+				warnings = append(warnings, fmt.Sprintf("restore addon %s data into %s: %v", ad.Name, newAddon.Name, err))
+			}
+		default:
+			warnings = append(warnings, fmt.Sprintf("addon %s (%s): created empty, no data clone supported", ad.Name, ad.Type))
+		}
+
+		// Re-point the preview apps' addon attachments the same way base's
+		// were wired: any base app attached to ad gets its already-cloned
+		// preview counterpart (clonePreviewApp always runs before this, in
+		// ensurePreview) attached to newAddon instead.
+		for _, w := range s.clonePreviewAddonAttachments(preview, ad, newAddon) {
+			warnings = append(warnings, w)
+		}
+	}
+	return warnings
+}
+
+// clonePreviewAddonAttachments replicates base's app-addon attachments onto
+// preview: for every app in base attached to ad, the same-named app in
+// preview gets newAddon attached via the store directly (not the
+// name-keyed attachAddon helper — apps can share a name across
+// environments, e.g. base and preview both have "api", and attachAddon's
+// project+name lookup can't tell them apart; GetAppInEnv can). A base app
+// clonePreviewApp failed to clone has no preview counterpart and is
+// skipped, not an error — it simply has nothing to attach to.
+func (s *server) clonePreviewAddonAttachments(preview store.Environment, base, newAddon store.Addon) []string {
+	baseApps, err := s.st.AppsForAddon(base.ID)
+	if err != nil {
+		return []string{fmt.Sprintf("list apps attached to %s: %v", base.Name, err)}
+	}
+	var warnings []string
+	for _, ba := range baseApps {
+		previewApp, err := s.st.GetAppInEnv(preview.ID, ba.Name)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf("look up preview app %s: %v", ba.Name, err))
+			continue
+		}
+		if err := s.st.AttachAddon(newAddon.ID, previewApp.ID); err != nil {
+			warnings = append(warnings, fmt.Sprintf("attach %s to %s: %v", newAddon.Name, ba.Name, err))
+		}
+	}
+	return warnings
 }

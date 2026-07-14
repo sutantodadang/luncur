@@ -103,6 +103,32 @@ func (s *Store) AddonsForApp(appID int64) ([]Addon, error) {
 		 WHERE t.app_id = ? ORDER BY a.id`, appID)
 }
 
+// AddonsForEnv returns every addon actually provisioned into envID
+// (Addon.EnvironmentID == envID) — the ones scoped to that environment's
+// namespace, as opposed to ListAddons' whole-project view. Rows written
+// before environment-scoped addon creation existed keep environment_id 0
+// and never match here; backfillEnvironments re-parents those to each
+// project's production environment at migration time.
+func (s *Store) AddonsForEnv(envID int64) ([]Addon, error) {
+	return s.listAddons(`SELECT `+addonCols+` FROM addons WHERE environment_id = ? ORDER BY id`, envID)
+}
+
+// SetAddonEnvironmentID re-parents an addon to a different environment. The
+// server layer calls this right after CreateAddon (which only takes a
+// project_id) so a freshly provisioned addon is attributed to the caller's
+// resolved environment instead of environment_id=0 — mirrors
+// SetAppEnvironmentID.
+func (s *Store) SetAddonEnvironmentID(id, envID int64) error {
+	res, err := s.db.Exec(`UPDATE addons SET environment_id = ? WHERE id = ?`, envID, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetAddonVersion updates an addon's recorded version. The caller is
 // responsible for re-rendering and applying the addon's manifests.
 func (s *Store) SetAddonVersion(id int64, version string) error {

@@ -240,6 +240,14 @@ func (s *server) createAddon(ctx context.Context, p store.Project, env store.Env
 	if err != nil {
 		return store.Addon{}, err
 	}
+	// CreateAddon only takes a project_id; attribute the row to the
+	// environment it's actually being provisioned into (mirrors
+	// SetAppEnvironmentID's use right after CreateApp/CreateGitApp) so
+	// env-scoped lookups (AddonsForEnv) and preview teardown can find it.
+	if err := s.st.SetAddonEnvironmentID(a.ID, env.ID); err != nil {
+		return store.Addon{}, err
+	}
+	a.EnvironmentID = env.ID
 
 	params := addon.Params{
 		Namespace: env.Namespace, Type: a.Type, Name: a.Name, Version: a.Version,
