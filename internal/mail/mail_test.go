@@ -2,7 +2,10 @@ package mail
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
+	"mime"
+	"mime/multipart"
 	"net"
 	"strconv"
 	"strings"
@@ -11,7 +14,7 @@ import (
 )
 
 func TestMessage(t *testing.T) {
-	got := string(Message("a@x.co", "b@y.co", "hi", "line1\nline2\n"))
+	got := string(Message("a@x.co", "b@y.co", "hi", "line1\nline2\n", ""))
 	want := "From: a@x.co\r\n" +
 		"To: b@y.co\r\n" +
 		"Subject: hi\r\n" +
@@ -21,6 +24,68 @@ func TestMessage(t *testing.T) {
 		"line1\r\nline2\r\n"
 	if got != want {
 		t.Fatalf("Message:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+// TestMessageMultipart: html != "" renders multipart/alternative with both
+// parts base64-encoded, and each part decodes back to the original text.
+func TestMessageMultipart(t *testing.T) {
+	text := "hi there\nplain body\n"
+	html := "<p>hi there</p><p>html body</p>"
+	got := string(Message("a@x.co", "b@y.co", "hi", text, html))
+
+	if !strings.Contains(got, "Content-Type: multipart/alternative;") {
+		t.Fatalf("message missing multipart/alternative header:\n%s", got)
+	}
+
+	headerEnd := strings.Index(got, "\r\n\r\n")
+	if headerEnd < 0 {
+		t.Fatalf("message missing header/body separator:\n%s", got)
+	}
+	headers := got[:headerEnd]
+	var contentType string
+	for _, line := range strings.Split(headers, "\r\n") {
+		if strings.HasPrefix(line, "Content-Type:") {
+			contentType = strings.TrimSpace(strings.TrimPrefix(line, "Content-Type:"))
+		}
+	}
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		t.Fatalf("parse content-type %q: %v", contentType, err)
+	}
+
+	mr := multipart.NewReader(strings.NewReader(got[headerEnd+4:]), params["boundary"])
+	var gotText, gotHTML string
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			break
+		}
+		b := make([]byte, 0, 256)
+		buf := make([]byte, 256)
+		for {
+			n, rerr := part.Read(buf)
+			b = append(b, buf[:n]...)
+			if rerr != nil {
+				break
+			}
+		}
+		dec, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(string(b), "\r\n", ""))
+		if err != nil {
+			t.Fatalf("decode part: %v", err)
+		}
+		switch part.Header.Get("Content-Type") {
+		case "text/plain; charset=utf-8":
+			gotText = string(dec)
+		case "text/html; charset=utf-8":
+			gotHTML = string(dec)
+		}
+	}
+	if gotText != normalizeCRLF(text) {
+		t.Fatalf("text part = %q, want %q", gotText, normalizeCRLF(text))
+	}
+	if gotHTML != normalizeCRLF(html) {
+		t.Fatalf("html part = %q, want %q", gotHTML, normalizeCRLF(html))
 	}
 }
 
@@ -88,7 +153,7 @@ func TestSMTPSend(t *testing.T) {
 	port, _ := strconv.Atoi(portStr)
 
 	m := SMTP{Host: host, Port: port, From: "luncur@x.co"}
-	if err := m.Send("new@y.co", "invite", "hello\n"); err != nil {
+	if err := m.Send("new@y.co", "invite", "hello\n", ""); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	select {

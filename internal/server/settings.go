@@ -7,11 +7,31 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/sutantodadang/luncur/internal/store"
 )
+
+// emailRe is a permissive email-shape check for notify_email: it guards
+// against obviously malformed input, not deliverability.
+var emailRe = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
+
+// validEmailCSV reports whether v is a non-empty CSV of one or more
+// addresses, each matching emailRe.
+func validEmailCSV(v string) bool {
+	if strings.TrimSpace(v) == "" {
+		return false
+	}
+	for _, part := range strings.Split(v, ",") {
+		addr := strings.TrimSpace(part)
+		if addr == "" || !emailRe.MatchString(addr) {
+			return false
+		}
+	}
+	return true
+}
 
 // settableKeys guards the settings API: only install-level knobs luncur
 // understands, with per-key validation.
@@ -60,6 +80,7 @@ var settableKeys = map[string]func(string) bool{
 	"notify_url":              func(v string) bool { return v != "" },
 	"notify_format":           func(v string) bool { return notifyFormats[v] },
 	"notify_telegram_chat":    func(v string) bool { return v != "" },
+	"notify_email":            validEmailCSV,
 	"notify_events":           validNotifyEvents,
 	"build_cache":             func(v string) bool { return v == "on" || v == "off" },
 	"build_timeout_minutes": func(v string) bool {

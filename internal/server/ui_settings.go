@@ -53,8 +53,9 @@ var settingGroups = []settingGroup{
 	}},
 	{Title: "Notifications", Fields: []settingField{
 		{Key: "notify_url", Sealed: true},
-		{Key: "notify_format", Options: []string{"generic", "discord", "slack", "telegram"}},
+		{Key: "notify_format", Options: []string{"generic", "discord", "slack", "telegram", "email"}},
 		{Key: "notify_telegram_chat"},
+		{Key: "notify_email"},
 		{Key: "notify_events"},
 	}},
 	{Title: "Backups", Fields: []settingField{

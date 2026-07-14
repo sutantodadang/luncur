@@ -34,6 +34,7 @@ var notifyFormats = map[string]bool{
 	"discord":  true,
 	"slack":    true,
 	"telegram": true,
+	"email":    true,
 }
 
 // validNotifyEvents reports whether v is a non-empty, whitespace-tolerant
@@ -76,14 +77,27 @@ type notifyEvent struct {
 	Message  string // free-form text for event "pipeline" (notify actions + run finish summaries)
 }
 
-// notify is the best-effort entry point: it reads notify_url/notify_events,
-// bails out if the feature is off or this event isn't subscribed to, and —
-// otherwise — spawns a single delivery attempt in a goroutine. Never blocks
-// or fails the calling path.
+// notify is the best-effort entry point: it reads notify_format to pick the
+// delivery gate — notify_email (plain) for format "email", sealed
+// notify_url for every webhook format — bails out if the feature is off or
+// this event isn't subscribed to, and otherwise spawns a single delivery
+// attempt in a goroutine. Never blocks or fails the calling path.
 func (s *server) notify(ev notifyEvent) {
-	url, err := s.sealedSetting("notify_url")
-	if err != nil || url == "" {
-		return // unset/unconfigured = feature off
+	format, err := s.st.GetSetting("notify_format")
+	if err != nil || format == "" {
+		format = "generic"
+	}
+
+	if format == "email" {
+		email, err := s.st.GetSetting("notify_email")
+		if err != nil || email == "" {
+			return // unset/unconfigured = feature off
+		}
+	} else {
+		url, err := s.sealedSetting("notify_url")
+		if err != nil || url == "" {
+			return // unset/unconfigured = feature off
+		}
 	}
 
 	eventsCSV, err := s.st.GetSetting("notify_events")
@@ -101,17 +115,23 @@ func (s *server) notify(ev notifyEvent) {
 	go s.sendNotify(ev)
 }
 
-// sendNotify builds the format-specific payload and POSTs it: one attempt,
+// sendNotify builds the format-specific payload and POSTs it (or, for
+// notify_format=email, hands off to sendNotifyEmail): one attempt,
 // s.httpClient's timeout, failures logged only — never surfaced to callers.
 func (s *server) sendNotify(ev notifyEvent) {
-	url, err := s.sealedSetting("notify_url")
-	if err != nil || url == "" {
-		return
-	}
-
 	format, err := s.st.GetSetting("notify_format")
 	if err != nil || format == "" {
 		format = "generic"
+	}
+
+	if format == "email" {
+		s.sendNotifyEmail(ev)
+		return
+	}
+
+	url, err := s.sealedSetting("notify_url")
+	if err != nil || url == "" {
+		return
 	}
 
 	chat, _ := s.st.GetSetting("notify_telegram_chat")
@@ -141,6 +161,63 @@ func (s *server) sendNotify(ev notifyEvent) {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.Printf("notify: %s: server returned %d", ev.Event, resp.StatusCode)
+	}
+}
+
+// sendNotifyEmail delivers ev as an HTML email to each address in
+// notify_email (a CSV setting, not sealed — see settings.go). Best-effort:
+// a missing recipient list, an unconfigured mailer (mail.ErrUnconfigured),
+// or a per-recipient send failure is logged only, never surfaced — mirrors
+// sendNotify's webhook path.
+func (s *server) sendNotifyEmail(ev notifyEvent) {
+	csv, err := s.st.GetSetting("notify_email")
+	if err != nil || csv == "" {
+		log.Printf("notify: email format configured without notify_email, skipping %s", ev.Event)
+		return
+	}
+	var recipients []string
+	for _, part := range strings.Split(csv, ",") {
+		addr := strings.TrimSpace(part)
+		if addr != "" {
+			recipients = append(recipients, addr)
+		}
+	}
+	if len(recipients) == 0 {
+		return
+	}
+
+	m, err := s.mailer()
+	if err != nil {
+		log.Printf("notify: mailer unavailable, skipping %s: %v", ev.Event, err)
+		return
+	}
+
+	subject := fmt.Sprintf("[luncur] %s", notifySubjectLine(ev))
+	text := notifyMessage(ev)
+	html, err := renderNotifyHTML(ev)
+	if err != nil {
+		log.Printf("notify: render html for %s: %v", ev.Event, err)
+		return
+	}
+
+	for _, addr := range recipients {
+		if err := m.Send(addr, subject, text, html); err != nil {
+			log.Printf("notify: email %s to %s: %v", ev.Event, addr, err)
+		}
+	}
+}
+
+// notifySubjectLine renders the "event — project/app" portion of a
+// notification email's subject; cert/backup events carry no App (and
+// backup_failed carries no Project either).
+func notifySubjectLine(ev notifyEvent) string {
+	switch {
+	case ev.App != "":
+		return fmt.Sprintf("%s — %s/%s", ev.Event, ev.Project, ev.App)
+	case ev.Project != "":
+		return fmt.Sprintf("%s — %s", ev.Event, ev.Project)
+	default:
+		return ev.Event
 	}
 }
 
