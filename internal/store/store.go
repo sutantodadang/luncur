@@ -121,6 +121,11 @@ func migrate(db *sql.DB) error {
 		{"projects", "gpu_quota", `ALTER TABLE projects ADD COLUMN gpu_quota INTEGER NOT NULL DEFAULT 0`},
 		{"projects", "cpu_quota_milli", `ALTER TABLE projects ADD COLUMN cpu_quota_milli INTEGER NOT NULL DEFAULT 0`},
 		{"projects", "mem_quota_mb", `ALTER TABLE projects ADD COLUMN mem_quota_mb INTEGER NOT NULL DEFAULT 0`},
+		// default_env/preview_base_env must land here, before
+		// backfillEnvironments below runs (it writes both columns) — see the
+		// ALTER-loop-before-backfill ordering note on that call.
+		{"projects", "default_env", `ALTER TABLE projects ADD COLUMN default_env TEXT NOT NULL DEFAULT 'production'`},
+		{"projects", "preview_base_env", `ALTER TABLE projects ADD COLUMN preview_base_env TEXT NOT NULL DEFAULT 'develop'`},
 	} {
 		var n int
 		if err := db.QueryRow(
@@ -154,6 +159,10 @@ CREATE TABLE IF NOT EXISTS environments (
   UNIQUE (project_id, name)
 )`); err != nil {
 		return fmt.Errorf("create environments table: %w", err)
+	}
+
+	if err := backfillEnvironments(db); err != nil {
+		return fmt.Errorf("backfill environments: %w", err)
 	}
 
 	if err := backfillGPUExternalRef(db); err != nil {
@@ -206,6 +215,104 @@ CREATE TABLE IF NOT EXISTS environments (
 func backfillGPUExternalRef(db *sql.DB) error {
 	_, err := db.Exec(`UPDATE gpu_instances SET external_ref = CAST(external_id AS TEXT) WHERE external_ref = '' AND external_id != 0`)
 	return err
+}
+
+// backfillEnvironments seeds a production/develop/staging environment set
+// for every project that predates the environments table (i.e. has no
+// environments row yet), re-parents that project's apps and addons into
+// "production" (keeping its existing k8s_namespace so cluster objects don't
+// move), and points the project's default_env/preview_base_env at the new
+// rows. Idempotent: guarded per-project on an environments-row-count == 0
+// check, so re-running only touches projects that are still bare.
+func backfillEnvironments(db *sql.DB) error {
+	rows, err := db.Query(`SELECT id, name, k8s_namespace FROM projects`)
+	if err != nil {
+		return err
+	}
+	type legacyProject struct {
+		id        int64
+		name      string
+		namespace string
+	}
+	var projects []legacyProject
+	for rows.Next() {
+		var p legacyProject
+		if err := rows.Scan(&p.id, &p.name, &p.namespace); err != nil {
+			rows.Close()
+			return err
+		}
+		projects = append(projects, p)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	for _, p := range projects {
+		var n int
+		if err := db.QueryRow(`SELECT count(*) FROM environments WHERE project_id = ?`, p.id).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if err := backfillProjectEnvironments(db, p.id, p.name, p.namespace); err != nil {
+			return fmt.Errorf("project %d: %w", p.id, err)
+		}
+	}
+	return nil
+}
+
+// backfillProjectEnvironments does the per-project work for
+// backfillEnvironments: create production (keeping the project's existing
+// namespace), re-parent its apps/addons, create develop/staging, and point
+// the project's default_env/preview_base_env at production/develop.
+func backfillProjectEnvironments(db *sql.DB, projectID int64, name, namespace string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+
+	res, err := tx.Exec(
+		`INSERT INTO environments (project_id, name, k8s_namespace, kind, is_default, base_branch)
+		 VALUES (?, 'production', ?, 'standing', 1, 'main')`,
+		projectID, namespace,
+	)
+	if err != nil {
+		return fmt.Errorf("insert production env: %w", err)
+	}
+	prodID, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`UPDATE apps SET environment_id = ? WHERE project_id = ? AND environment_id = 0`, prodID, projectID); err != nil {
+		return fmt.Errorf("reparent apps: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE addons SET environment_id = ? WHERE project_id = ? AND environment_id = 0`, prodID, projectID); err != nil {
+		return fmt.Errorf("reparent addons: %w", err)
+	}
+
+	for _, e := range [2]struct{ name, base string }{
+		{"develop", "develop"},
+		{"staging", "staging"},
+	} {
+		if _, err := tx.Exec(
+			`INSERT INTO environments (project_id, name, k8s_namespace, kind, is_default, base_branch)
+			 VALUES (?, ?, ?, 'standing', 0, ?)`,
+			projectID, e.name, envNamespace(name, e.name), e.base,
+		); err != nil {
+			return fmt.Errorf("insert %s env: %w", e.name, err)
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE projects SET default_env = 'production', preview_base_env = 'develop' WHERE id = ?`, projectID); err != nil {
+		return fmt.Errorf("set project default/preview-base env: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 // deploymentsTextSchema is the current deployments table shape (kept in sync
