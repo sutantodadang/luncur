@@ -86,6 +86,29 @@ func (s *Store) CreateEnvironment(projectID int64, name, kind, baseBranch string
 	return s.GetEnvironmentByID(id)
 }
 
+// SeedProjectEnvironments creates a fresh project's standard 3 environments
+// (production/develop/staging) and sets its default_env/preview_base_env,
+// via the exact same core backfillEnvironments uses for legacy projects at
+// migration time: production reuses the project's own k8s_namespace (so a
+// brand new project's default-environment behavior is byte-identical to the
+// pre-environments behavior — no "-production" suffix), develop/staging get
+// their own namespaces. Idempotent in effect: a project that already has
+// environments is left untouched (mirrors backfillEnvironments' guard).
+func (s *Store) SeedProjectEnvironments(projectID int64) error {
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM environments WHERE project_id = ?`, projectID).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	p, err := s.GetProjectByID(projectID)
+	if err != nil {
+		return err
+	}
+	return backfillProjectEnvironments(s.db, p.ID, p.Name, p.Namespace)
+}
+
 // GetEnvironment looks up an environment by its project-scoped name.
 func (s *Store) GetEnvironment(projectID int64, name string) (Environment, error) {
 	return scanEnvironmentRow(s.db.QueryRow(

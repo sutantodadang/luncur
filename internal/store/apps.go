@@ -568,6 +568,21 @@ func (s *Store) SetAppSuspended(id int64, suspended bool) error {
 	return nil
 }
 
+// SetAppEnvironmentID re-parents an app to a different environment. Used
+// right after CreateApp/CreateGitApp/CreateModelApp (which only take a
+// project_id, not an environment_id) so a newly created app lands in the
+// caller's resolved environment instead of environment_id=0.
+func (s *Store) SetAppEnvironmentID(id, envID int64) error {
+	res, err := s.db.Exec(`UPDATE apps SET environment_id = ? WHERE id = ?`, envID, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // appEnvCols is the full apps column list (matching GetApp/GetAppByID/
 // ListApps above) used by the environment-scoped app methods below.
 const appEnvCols = `id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu, suspended, environment_id`
