@@ -128,6 +128,16 @@ func (s *server) handleCreateProject(w http.ResponseWriter, r *http.Request, _ s
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	// Every project needs a resolvable default environment for requireEnv to
+	// fall back to (env-less legacy routes/CLI calls resolve envName==""
+	// to p.DefaultEnv). Full env CRUD + CLI (Task 8) comes later; this seeds
+	// the same production/develop/staging trio backfillEnvironments gives
+	// legacy projects, so a freshly created project behaves identically.
+	if err := s.st.SeedProjectEnvironments(p.ID); err != nil {
+		log.Printf("seed project environments: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
 	writeJSON(w, http.StatusCreated, projectJSON(p))
 }
 
@@ -186,16 +196,24 @@ func (s *server) handleRenameProject(w http.ResponseWriter, r *http.Request, u s
 // drop the project's namespace, then the project row itself. A mid-way
 // error is safe to retry — nothing here is destroyed twice.
 func (s *server) deleteProject(ctx context.Context, p store.Project, apps []store.App, addons []store.Addon) error {
+	// The whole project is being torn down at once (every environment along
+	// with it, once multi-environment teardown lands — see Task 15's
+	// teardownPreview); today that's just the default (production)
+	// environment, whose namespace is byte-identical to p.Namespace.
+	env, err := s.st.GetEnvironment(p.ID, p.DefaultEnv)
+	if err != nil {
+		return fmt.Errorf("get default environment: %w", err)
+	}
 	for _, ad := range addons {
 		// force=true: the project is being destroyed outright, so an
 		// addon still attached to one of its own apps isn't a reason to
 		// stop. keepData=false: volumes go with everything else.
-		if err := s.removeAddon(ctx, p, ad, true, false); err != nil {
+		if err := s.removeAddon(ctx, p, env, ad, true, false); err != nil {
 			return fmt.Errorf("remove addon %s: %w", ad.Name, err)
 		}
 	}
 	for _, a := range apps {
-		if err := s.destroyApp(ctx, p, a); err != nil {
+		if err := s.destroyApp(ctx, p, env, a); err != nil {
 			return fmt.Errorf("destroy app %s: %w", a.Name, err)
 		}
 	}

@@ -326,7 +326,12 @@ func (s *server) sweepTickOne(ctx context.Context, sw store.Sweep) {
 // tick (once other trials free up budget), exactly like a request that hit
 // quota gets retried by the caller.
 func (s *server) sweepLaunchTrial(ctx context.Context, sw store.Sweep, tr store.SweepTrial, app store.App, project store.Project, mlflowURL string) {
-	run, err := s.startRun(ctx, project, app, runOpts{
+	env, err := s.st.GetEnvironmentByID(app.EnvironmentID)
+	if err != nil {
+		log.Printf("sweep %s: launch trial %s: get environment: %v", sw.ID, tr.ID, err)
+		return
+	}
+	run, err := s.startRun(ctx, project, env, app, runOpts{
 		Nodes:     sw.Nodes,
 		Framework: sw.Framework,
 		Env:       trialEnv(sw, tr, mlflowURL),
@@ -689,11 +694,11 @@ func sweepJSON(sw store.Sweep, trials []store.SweepTrial) map[string]any {
 
 // handleCreateSweep starts a hyperparameter sweep over a kind=job app.
 func (s *server) handleCreateSweep(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	a, ok := s.requireJobApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -733,11 +738,11 @@ func (s *server) handleCreateSweep(w http.ResponseWriter, r *http.Request, u sto
 }
 
 func (s *server) handleListSweeps(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	a, ok := s.requireJobApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -776,11 +781,11 @@ func (s *server) requireSweep(w http.ResponseWriter, a store.App, id string) (st
 }
 
 func (s *server) handleGetSweep(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	a, ok := s.requireJobApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -801,11 +806,11 @@ func (s *server) handleGetSweep(w http.ResponseWriter, r *http.Request, u store.
 // running trials killed and finishes "stopped"; an already-stopped (or
 // done/failed) sweep is a 200 no-op that just reports current state.
 func (s *server) handleStopSweep(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	a, ok := s.requireJobApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}

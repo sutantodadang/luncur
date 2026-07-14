@@ -68,8 +68,12 @@ func TestRenderS3EnvInjection(t *testing.T) {
 	s := newServer(Deps{Store: st, Sealer: sealer, ExternalIP: "1.2.3.4"})
 
 	p, _ := st.CreateProject("ml")
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "train", 0, "job", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	ak, _ := sealer.Seal([]byte("AK"))
@@ -82,7 +86,7 @@ func TestRenderS3EnvInjection(t *testing.T) {
 	}
 
 	// Not opted in: no injection.
-	r, err := s.renderApp(p, a, "img:1", false)
+	r, err := s.renderApp(p, env, a, "img:1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +99,7 @@ func TestRenderS3EnvInjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.InjectS3 = true
-	r, err = s.renderApp(p, a, "img:1", false)
+	r, err = s.renderApp(p, env, a, "img:1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +120,7 @@ func TestRenderS3EnvInjection(t *testing.T) {
 	if err := st.SetEnv(a.ID, "LUNCUR_S3_BUCKET", sealed); err != nil {
 		t.Fatal(err)
 	}
-	r, err = s.renderApp(p, a, "img:1", false)
+	r, err = s.renderApp(p, env, a, "img:1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
