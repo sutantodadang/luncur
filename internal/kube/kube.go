@@ -15,6 +15,7 @@ import (
 
 	rbacv1 "k8s.io/api/rbac/v1"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -91,9 +92,10 @@ type Client struct {
 }
 
 // PodExecer runs a command inside a pod container. Faked in tests; the
-// real implementation streams over SPDY.
+// real implementation streams over SPDY. stdin may be nil when the command
+// needs no input (e.g. dumpAddon only reads stdout).
 type PodExecer interface {
-	ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdout, stderr io.Writer) error
+	ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error
 }
 
 // New builds a client from a kubeconfig path, or in-cluster config when
@@ -779,8 +781,9 @@ func (c *Client) PodLogStream(ctx context.Context, namespace, pod string, follow
 	return c.cs.CoreV1().Pods(namespace).GetLogs(pod, opts).Stream(ctx)
 }
 
-// ExecPod implements PodExecer via the pods/exec subresource.
-func (c *Client) ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdout, stderr io.Writer) error {
+// ExecPod implements PodExecer via the pods/exec subresource. stdin may be
+// nil when the command needs no input.
+func (c *Client) ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if c.cfg == nil {
 		return fmt.Errorf("exec unavailable: no rest config (test client?)")
 	}
@@ -789,13 +792,13 @@ func (c *Client) ExecPod(ctx context.Context, namespace, pod, container string, 
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: container, Command: cmd,
-			Stdout: true, Stderr: true,
+			Stdin: stdin != nil, Stdout: true, Stderr: true,
 		}, scheme.ParameterCodec)
 	exec, err := remotecommand.NewSPDYExecutor(c.cfg, "POST", req.URL())
 	if err != nil {
 		return err
 	}
-	return exec.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: stdout, Stderr: stderr})
+	return exec.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: stdin, Stdout: stdout, Stderr: stderr})
 }
 
 // WaitDeployment polls until the Deployment has at least one ready replica
@@ -1226,6 +1229,87 @@ func (c *Client) DeleteJob(ctx context.Context, ns, name string) error {
 		return fmt.Errorf("delete job %s: %w", name, err)
 	}
 	return nil
+}
+
+// CronRunInfo is one Job spawned by a cron app's CronJob (a scheduled fire
+// or a manual "run now"), with its terminal status as of the list call.
+type CronRunInfo struct {
+	Name        string `json:"name"`
+	Status      string `json:"status"` // "active" | "succeeded" | "failed"
+	StartTime   string `json:"start_time,omitempty"`
+	CompletionT string `json:"completion_time,omitempty"`
+}
+
+// TriggerCronJob creates a one-off Job from a cron app's live CronJob
+// JobTemplate — the manual "run now". The Job is owned by the CronJob so it
+// counts against the history limits and is cleaned up along with it.
+// Returns the created Job's name.
+func (c *Client) TriggerCronJob(ctx context.Context, namespace, name string, stamp int64) (string, error) {
+	cj, err := c.cs.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("get cronjob %s: %w", name, err)
+	}
+	jobName := fmt.Sprintf("%s-manual-%d", name, stamp)
+	controller := true
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobName,
+			Namespace: namespace,
+			Labels:    cj.Spec.JobTemplate.Labels,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion:         "batch/v1",
+				Kind:               "CronJob",
+				Name:               cj.Name,
+				UID:                cj.UID,
+				Controller:         &controller,
+				BlockOwnerDeletion: &controller,
+			}},
+		},
+		Spec: cj.Spec.JobTemplate.Spec,
+	}
+	created, err := c.cs.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("create job %s: %w", jobName, err)
+	}
+	return created.Name, nil
+}
+
+// CronRuns lists a cron app's recent Jobs (spawned by its CronJob's schedule
+// plus any manual "run now" runs), newest first, with each Job's terminal
+// status. Capped at the 10 most recent.
+func (c *Client) CronRuns(ctx context.Context, namespace, app string) ([]CronRunInfo, error) {
+	list, err := c.cs.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/name=" + app,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list jobs: %w", err)
+	}
+	items := list.Items
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CreationTimestamp.After(items[j].CreationTimestamp.Time)
+	})
+	if len(items) > 10 {
+		items = items[:10]
+	}
+	out := make([]CronRunInfo, 0, len(items))
+	for _, job := range items {
+		status := "active"
+		switch {
+		case job.Status.Succeeded > 0 || job.Status.CompletionTime != nil:
+			status = "succeeded"
+		case job.Status.Failed > 0:
+			status = "failed"
+		}
+		info := CronRunInfo{Name: job.Name, Status: status}
+		if job.Status.StartTime != nil {
+			info.StartTime = job.Status.StartTime.Format(time.RFC3339)
+		}
+		if job.Status.CompletionTime != nil {
+			info.CompletionT = job.Status.CompletionTime.Format(time.RFC3339)
+		}
+		out = append(out, info)
+	}
+	return out, nil
 }
 
 // GPUBusyNodes reports which nodes currently have a GPU-requesting pod

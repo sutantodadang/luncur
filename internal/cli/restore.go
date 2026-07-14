@@ -188,20 +188,12 @@ func restoreCmd() *cobra.Command {
 			cmd.Println("     kubectl -n luncur-system scale deploy/luncur --replicas=0   # if it was running against this data dir")
 			cmd.Println("     kubectl -n luncur-system scale deploy/luncur --replicas=1")
 			if len(addons) > 0 {
-				cmd.Println("  2. re-create each addon (luncur addon create ... with the same names), then restore its data:")
+				cmd.Println("  2. re-create each addon (luncur addon create ... with the same names), then restore its data automatically:")
 				for _, m := range addons {
 					base := strings.TrimPrefix(m, "addons/")
 					name := strings.TrimSuffix(strings.TrimSuffix(base, ".pgdump"), ".rdb")
-					switch {
-					case strings.HasSuffix(m, ".pgdump"):
-						cmd.Printf("     # %s (postgres)\n", name)
-						cmd.Printf("     kubectl -n <project-ns> exec -i addon-<name>-0 -- sh -c 'PGPASSWORD=\"$POSTGRES_PASSWORD\" pg_restore -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" --clean' < %s\n", base)
-					case strings.HasSuffix(m, ".rdb"):
-						cmd.Printf("     # %s (redis)\n", name)
-						cmd.Printf("     # scale the addon StatefulSet to 0, copy %s onto its PVC as dump.rdb, scale back to 1\n", base)
-					}
+					cmd.Printf("     luncur addon restore %s --project <project> --file %s\n", name, args[0])
 				}
-				cmd.Println("     (extract the addon dump files from the archive: tar -xzf <archive> addons/)")
 			}
 			return nil
 		},

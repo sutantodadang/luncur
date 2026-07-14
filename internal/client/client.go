@@ -458,6 +458,42 @@ func (c *Client) Redeploy(project, app string) (DeployResult, error) {
 	return out, err
 }
 
+// PauseCron suspends a cron app's schedule (kind=cron only).
+func (c *Client) PauseCron(project, app string) error {
+	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/pause", nil, nil)
+}
+
+// ResumeCron resumes a suspended cron app's schedule (kind=cron only).
+func (c *Client) ResumeCron(project, app string) error {
+	return c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/resume", nil, nil)
+}
+
+// TriggerCron manually fires a cron app's CronJob ("run now"), returning the
+// created Job's name.
+func (c *Client) TriggerCron(project, app string) (string, error) {
+	var out struct {
+		Job string `json:"job"`
+	}
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/trigger", nil, &out)
+	return out.Job, err
+}
+
+// CronRunInfo is one Job spawned by a cron app's CronJob, as returned by the
+// cron-runs API.
+type CronRunInfo struct {
+	Name           string `json:"name"`
+	Status         string `json:"status"`
+	StartTime      string `json:"start_time,omitempty"`
+	CompletionTime string `json:"completion_time,omitempty"`
+}
+
+// CronRuns fetches a cron app's recent Jobs (newest first).
+func (c *Client) CronRuns(project, app string) ([]CronRunInfo, error) {
+	var out []CronRunInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/cron-runs", nil, &out)
+	return out, err
+}
+
 // SetGitToken stores a sealed private-repo clone token for a git-source app.
 func (c *Client) SetGitToken(project, app, token string) error {
 	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/apps/"+url.PathEscape(app)+"/git-token",
@@ -763,6 +799,27 @@ func (c *Client) AddonURL(project, name string) (envKey, connURL string, err err
 	}
 	err = c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/url", nil, &out)
 	return out.EnvKey, out.URL, err
+}
+
+// RestoreAddon uploads a logical dump (a raw .pgdump/.rdb, extracted from a
+// backup archive or produced directly) and restores it into the named
+// addon's pod — the inverse of the backup archive's addons/* member.
+func (c *Client) RestoreAddon(project, name string, dump io.Reader) error {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, err := w.CreateFormFile("dump", "dump")
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(part, dump); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.doMultipart("POST",
+		"/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/restore",
+		w.FormDataContentType(), &buf, nil)
 }
 
 func (c *Client) GetSetting(key string) (string, error) {

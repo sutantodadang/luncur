@@ -78,7 +78,7 @@ type fakeGCExecer struct {
 	commands  [][]string
 }
 
-func (f *fakeGCExecer) ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdout, stderr io.Writer) error {
+func (f *fakeGCExecer) ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	f.commands = append(f.commands, cmd)
 	joined := strings.Join(cmd, " ")
 	switch {

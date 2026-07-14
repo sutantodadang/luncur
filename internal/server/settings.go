@@ -7,11 +7,31 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/sutantodadang/luncur/internal/store"
 )
+
+// emailRe is a permissive email-shape check for notify_email: it guards
+// against obviously malformed input, not deliverability.
+var emailRe = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
+
+// validEmailCSV reports whether v is a non-empty CSV of one or more
+// addresses, each matching emailRe.
+func validEmailCSV(v string) bool {
+	if strings.TrimSpace(v) == "" {
+		return false
+	}
+	for _, part := range strings.Split(v, ",") {
+		addr := strings.TrimSpace(part)
+		if addr == "" || !emailRe.MatchString(addr) {
+			return false
+		}
+	}
+	return true
+}
 
 // settableKeys guards the settings API: only install-level knobs luncur
 // understands, with per-key validation.
@@ -47,7 +67,8 @@ var settableKeys = map[string]func(string) bool{
 	"smtp_pass": func(v string) bool { return v != "" },
 	"smtp_from": func(v string) bool { return v != "" },
 	"dns_provider": func(v string) bool {
-		return v == "cloudflare" || v == "route53" || v == "rfc2136" || v == "none"
+		return v == "cloudflare" || v == "route53" || v == "rfc2136" ||
+			v == "desec" || v == "hetzner" || v == "digitalocean" || v == "none"
 	},
 	"dns_cloudflare_token":    func(v string) bool { return v != "" },
 	"dns_route53_access_key":  func(v string) bool { return v != "" },
@@ -57,9 +78,13 @@ var settableKeys = map[string]func(string) bool{
 	"dns_rfc2136_tsig_name":   func(v string) bool { return v != "" },
 	"dns_rfc2136_tsig_secret": func(v string) bool { return v != "" },
 	"dns_rfc2136_tsig_algo":   func(v string) bool { return v != "" },
+	"dns_desec_token":         func(v string) bool { return v != "" },
+	"dns_hetzner_token":       func(v string) bool { return v != "" },
+	"dns_digitalocean_token":  func(v string) bool { return v != "" },
 	"notify_url":              func(v string) bool { return v != "" },
 	"notify_format":           func(v string) bool { return notifyFormats[v] },
 	"notify_telegram_chat":    func(v string) bool { return v != "" },
+	"notify_email":            validEmailCSV,
 	"notify_events":           validNotifyEvents,
 	"build_cache":             func(v string) bool { return v == "on" || v == "off" },
 	"build_timeout_minutes": func(v string) bool {
@@ -102,6 +127,9 @@ var sealedKeys = map[string]bool{
 	"dns_cloudflare_token":    true,
 	"dns_route53_secret_key":  true,
 	"dns_rfc2136_tsig_secret": true,
+	"dns_desec_token":         true,
+	"dns_hetzner_token":       true,
+	"dns_digitalocean_token":  true,
 	"notify_url":              true,
 	"metrics_token":           true,
 }

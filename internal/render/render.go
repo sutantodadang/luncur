@@ -33,6 +33,9 @@ type Input struct {
 	Kind string
 	// Schedule is a 5-field cron expression; cron kind only.
 	Schedule string
+	// Suspended maps to CronJob.Spec.Suspend: true stops the schedule from
+	// firing new runs without losing history/config. Cron kind only.
+	Suspended bool
 	// CPUMilli and MemoryMB are the container's requests==limits (Guaranteed
 	// QoS); 0 means unset — no resources block is rendered for that resource.
 	CPUMilli int64
@@ -118,6 +121,8 @@ func VolumeClaimName(appName, volumeName string) string {
 }
 
 func int32Ptr(n int32) *int32 { return &n }
+
+func boolPtr(b bool) *bool { return &b }
 
 type Object struct {
 	Kind string
@@ -632,10 +637,16 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			ObjectMeta: meta(in, in.AppName),
 			Spec: batchv1.CronJobSpec{
 				Schedule:                   in.Schedule,
+				Suspend:                    boolPtr(in.Suspended),
 				ConcurrencyPolicy:          batchv1.ForbidConcurrent,
 				SuccessfulJobsHistoryLimit: int32Ptr(3),
 				FailedJobsHistoryLimit:     int32Ptr(3),
 				JobTemplate: batchv1.JobTemplateSpec{
+					// Labeled so the Jobs it spawns (and manual "run now"
+					// Jobs built from this same JobTemplate) carry the app
+					// label — CronRuns finds them via
+					// app.kubernetes.io/name=<app>.
+					ObjectMeta: metav1.ObjectMeta{Labels: labels(in.AppName)},
 					Spec: batchv1.JobSpec{
 						BackoffLimit: int32Ptr(2),
 						Template: corev1.PodTemplateSpec{

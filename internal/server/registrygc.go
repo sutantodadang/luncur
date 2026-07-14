@@ -180,7 +180,7 @@ func (s *server) execRegistryGC(ctx context.Context) (int64, error) {
 	var out, errBuf bytes.Buffer
 	if err := s.execer.ExecPod(ctx, s.systemNamespace, pod, "registry",
 		[]string{"registry", "garbage-collect", "--delete-untagged=false", "/etc/docker/registry/config.yml"},
-		&out, &errBuf); err != nil {
+		nil, &out, &errBuf); err != nil {
 		return 0, fmt.Errorf("garbage-collect: %v: %s", err, strings.TrimSpace(errBuf.String()))
 	}
 
@@ -196,7 +196,7 @@ func (s *server) execRegistryGC(ctx context.Context) (int64, error) {
 func (s *server) duRegistryKiB(ctx context.Context, pod string) (int64, error) {
 	var out, errBuf bytes.Buffer
 	if err := s.execer.ExecPod(ctx, s.systemNamespace, pod, "registry",
-		[]string{"du", "-sk", "/var/lib/registry"}, &out, &errBuf); err != nil {
+		[]string{"du", "-sk", "/var/lib/registry"}, nil, &out, &errBuf); err != nil {
 		return 0, fmt.Errorf("%v: %s", err, strings.TrimSpace(errBuf.String()))
 	}
 	fields := strings.Fields(out.String())

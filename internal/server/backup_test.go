@@ -19,18 +19,31 @@ import (
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
-// fakeExecer serves canned bytes for addon dump commands.
+// fakeExecer serves canned bytes for addon dump commands and, for restore
+// commands, captures whatever was piped in on stdin so tests can assert the
+// dump was forwarded correctly.
 type fakeExecer struct {
 	out string
 	err error
+
+	stdin []byte   // captured stdin from the last ExecPod call, if any
+	cmd   []string // captured cmd from the last ExecPod call
 }
 
-func (f *fakeExecer) ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdout, stderr io.Writer) error {
+func (f *fakeExecer) ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	f.cmd = cmd
+	if stdin != nil {
+		b, err := io.ReadAll(stdin)
+		if err != nil {
+			return err
+		}
+		f.stdin = b
+	}
 	if f.err != nil {
 		return f.err
 	}
 	joined := strings.Join(cmd, " ")
-	if strings.Contains(joined, "pg_dump") || strings.Contains(joined, "redis-cli") {
+	if strings.Contains(joined, "pg_dump") || strings.Contains(joined, "redis-cli") || strings.Contains(joined, "pg_restore") || strings.Contains(joined, "DEBUG RELOAD") {
 		fmt.Fprint(stdout, f.out)
 		return nil
 	}

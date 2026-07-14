@@ -105,7 +105,7 @@ func buildDownPlan(opts downOpts) []downStep {
 				}
 				defer f.Close()
 				return opts.KubeClient.ExecPod(ctx, downSystemNamespace, pods[0], downSystemApp,
-					[]string{"cat", downDBPathInPod}, f, io.Discard)
+					[]string{"cat", downDBPathInPod}, nil, f, io.Discard)
 			},
 		})
 	}

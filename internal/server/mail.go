@@ -68,8 +68,12 @@ func (s *server) emailInvite(r *http.Request, addr string, inv store.Invite) err
 		return err
 	}
 	link := requestBaseURL(r) + "/ui/register?token=" + inv.Token
-	body := "You have been invited to luncur (role " + inv.Role + ").\n\n" +
+	text := "You have been invited to luncur (role " + inv.Role + ").\n\n" +
 		"Register here: " + link + "\n\n" +
 		"The link is single-use and expires " + inv.ExpiresAt + ".\n"
-	return m.Send(addr, "You're invited to luncur", body)
+	html, err := renderInviteHTML(inv.Role, link, inv.ExpiresAt)
+	if err != nil {
+		return err
+	}
+	return m.Send(addr, "You're invited to luncur", text, html)
 }

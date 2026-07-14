@@ -143,12 +143,12 @@ func TestUsersListAndDelete(t *testing.T) {
 
 // fakeMailer records the one message it was asked to send.
 type fakeMailer struct {
-	to, subject, body string
-	err               error
+	to, subject, body, html string
+	err                     error
 }
 
-func (f *fakeMailer) Send(to, subject, body string) error {
-	f.to, f.subject, f.body = to, subject, body
+func (f *fakeMailer) Send(to, subject, text, html string) error {
+	f.to, f.subject, f.body, f.html = to, subject, text, html
 	return f.err
 }
 

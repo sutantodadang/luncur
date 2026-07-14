@@ -533,6 +533,38 @@ func TestSetInternal(t *testing.T) {
 	}
 }
 
+func TestSetAppSuspended(t *testing.T) {
+	s := openTest(t)
+	p := seedProject(t, s)
+	a, err := s.CreateApp(p.ID, "nightly", 0, "cron", "0 3 * * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Suspended {
+		t.Fatalf("want suspended=false by default, got %+v", a)
+	}
+
+	if err := s.SetAppSuspended(a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetApp(p.ID, "nightly")
+	if err != nil || !got.Suspended {
+		t.Fatalf("get after suspend: %+v %v", got, err)
+	}
+
+	if err := s.SetAppSuspended(a.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetApp(p.ID, "nightly")
+	if err != nil || got.Suspended {
+		t.Fatalf("get after resume: %+v %v", got, err)
+	}
+
+	if err := s.SetAppSuspended(99999, true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: %v, want ErrNotFound", err)
+	}
+}
+
 func TestSetWebhookSecret(t *testing.T) {
 	s := openTest(t)
 	p := seedProject(t, s)

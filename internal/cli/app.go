@@ -201,7 +201,8 @@ func appCmd() *cobra.Command {
 	training.MarkFlagRequired("nodes")
 	training.Flags().StringVar(&trainFramework, "framework", "", "rendezvous env preset: torchrun|torch (empty = LUNCUR_* contract only)")
 
-	cmd.AddCommand(create, list, info, raw, training, gitTokenCmd(), ejectCmd(), adoptCmd(), appS3EnvCmd())
+	cmd.AddCommand(create, list, info, raw, training, gitTokenCmd(), ejectCmd(), adoptCmd(), appS3EnvCmd(),
+		pauseCmd(), resumeCmd(), runNowCmd(), cronRunsCmd())
 	return cmd
 }
 

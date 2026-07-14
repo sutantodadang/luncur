@@ -544,7 +544,7 @@ func TestStatefulSetReady(t *testing.T) {
 func TestClientImplementsPodExecer(t *testing.T) {
 	var _ PodExecer = (*Client)(nil)
 	c := NewForTest(nil, nil)
-	err := c.ExecPod(context.Background(), "ns", "pod", "c", []string{"true"}, io.Discard, io.Discard)
+	err := c.ExecPod(context.Background(), "ns", "pod", "c", []string{"true"}, nil, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "exec unavailable") {
 		t.Fatalf("cfg-less exec: %v", err)
 	}
@@ -960,6 +960,117 @@ func TestDeleteJob(t *testing.T) {
 	// Idempotent: deleting a missing job is success, not an error.
 	if err := c.DeleteJob(context.Background(), "ns-train", "does-not-exist"); err != nil {
 		t.Fatalf("delete missing job: %v", err)
+	}
+}
+
+// TestTriggerCronJob covers the manual "run now" path: a Job is built from
+// the live CronJob's JobTemplate, carries the app label and an owner
+// reference back to the CronJob, and is named deterministically from the
+// caller-supplied stamp.
+func TestTriggerCronJob(t *testing.T) {
+	cj := &batchv1.CronJob{
+		ObjectMeta: metav1.ObjectMeta{Name: "nightly", Namespace: "ns-cron", UID: "cj-uid-1"},
+		Spec: batchv1.CronJobSpec{
+			Schedule: "0 3 * * *",
+			JobTemplate: batchv1.JobTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/name": "nightly"}},
+				Spec: batchv1.JobSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							RestartPolicy: corev1.RestartPolicyOnFailure,
+							Containers:    []corev1.Container{{Name: "app", Image: "nightly:1"}},
+						},
+					},
+				},
+			},
+		},
+	}
+	cs := k8sfake.NewSimpleClientset(cj)
+	c := NewForTest(nil, cs)
+
+	name, err := c.TriggerCronJob(context.Background(), "ns-cron", "nightly", 1700000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "nightly-manual-1700000000" {
+		t.Fatalf("job name: got %q", name)
+	}
+
+	job, err := cs.BatchV1().Jobs("ns-cron").Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("created job not found: %v", err)
+	}
+	if job.Labels["app.kubernetes.io/name"] != "nightly" {
+		t.Fatalf("job labels: %+v", job.Labels)
+	}
+	if len(job.OwnerReferences) != 1 || job.OwnerReferences[0].Kind != "CronJob" || job.OwnerReferences[0].Name != "nightly" {
+		t.Fatalf("job owner references: %+v", job.OwnerReferences)
+	}
+	if job.Spec.Template.Spec.Containers[0].Image != "nightly:1" {
+		t.Fatalf("job spec not copied from JobTemplate: %+v", job.Spec)
+	}
+}
+
+// TestTriggerCronJobMissingCronJob covers the "not deployed yet" case: no
+// live CronJob to build the manual run from.
+func TestTriggerCronJobMissingCronJob(t *testing.T) {
+	cs := k8sfake.NewSimpleClientset()
+	c := NewForTest(nil, cs)
+	if _, err := c.TriggerCronJob(context.Background(), "ns-cron", "nightly", 1700000000); err == nil {
+		t.Fatal("want error when the CronJob does not exist")
+	}
+}
+
+// TestCronRuns covers the run-history listing: newest first, status derived
+// from the Job's terminal counters, capped at 10.
+func TestCronRuns(t *testing.T) {
+	mk := func(name string, created time.Time, succeeded, failed int32, completed bool) *batchv1.Job {
+		j := &batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name, Namespace: "ns-cron",
+				Labels:            map[string]string{"app.kubernetes.io/name": "nightly"},
+				CreationTimestamp: metav1.NewTime(created),
+			},
+			Status: batchv1.JobStatus{Succeeded: succeeded, Failed: failed},
+		}
+		start := metav1.NewTime(created)
+		j.Status.StartTime = &start
+		if completed {
+			end := metav1.NewTime(created.Add(time.Minute))
+			j.Status.CompletionTime = &end
+		}
+		return j
+	}
+	now := time.Now()
+	older := mk("nightly-28392000", now.Add(-2*time.Hour), 1, 0, true)
+	newer := mk("nightly-28392033", now.Add(-1*time.Hour), 0, 0, false)
+	failed := mk("nightly-manual-1", now, 0, 1, false)
+	other := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name: "other-run", Namespace: "ns-cron",
+		Labels: map[string]string{"app.kubernetes.io/name": "other"},
+	}}
+	cs := k8sfake.NewSimpleClientset(older, newer, failed, other)
+	c := NewForTest(nil, cs)
+
+	runs, err := c.CronRuns(context.Background(), "ns-cron", "nightly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("want 3 runs (excluding other app's job), got %+v", runs)
+	}
+	// Newest first.
+	if runs[0].Name != "nightly-manual-1" || runs[0].Status != "failed" {
+		t.Fatalf("runs[0]: %+v", runs[0])
+	}
+	if runs[1].Name != "nightly-28392033" || runs[1].Status != "active" {
+		t.Fatalf("runs[1]: %+v", runs[1])
+	}
+	if runs[2].Name != "nightly-28392000" || runs[2].Status != "succeeded" {
+		t.Fatalf("runs[2]: %+v", runs[2])
+	}
+	if runs[2].StartTime == "" || runs[2].CompletionT == "" {
+		t.Fatalf("runs[2] missing timestamps: %+v", runs[2])
 	}
 }
 

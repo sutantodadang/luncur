@@ -210,8 +210,8 @@ func TestRestoreCommandS3Source(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dataDir, "luncur.db")); err != nil {
 		t.Fatalf("restored db missing: %v", err)
 	}
-	if !strings.Contains(out, "pg_restore") || !strings.Contains(out, "dump.rdb") {
-		t.Fatalf("missing guided addon steps:\n%s", out)
+	if !strings.Contains(out, "luncur addon restore proj-pg1") || !strings.Contains(out, "luncur addon restore proj-red1") {
+		t.Fatalf("missing guided addon restore commands:\n%s", out)
 	}
 	if !strings.Contains(out, "kubectl -n luncur-system scale deploy/luncur") {
 		t.Fatalf("missing scale reminder:\n%s", out)

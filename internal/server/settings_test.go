@@ -382,7 +382,7 @@ func TestSettingsDNSKeys(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	for _, v := range []string{"cloudflare", "route53", "rfc2136", "none"} {
+	for _, v := range []string{"cloudflare", "route53", "rfc2136", "desec", "hetzner", "digitalocean", "none"} {
 		resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/dns_provider", admin, `{"value":"`+v+`"}`)
 		if resp.StatusCode != 204 {
 			t.Fatalf("provider %s: want 204, got %d", v, resp.StatusCode)
@@ -405,6 +405,36 @@ func TestSettingsDNSKeys(t *testing.T) {
 	resp.Body.Close()
 	if out.Value != "(set)" {
 		t.Fatalf("token read = %q, want (set)", out.Value)
+	}
+
+	// desec/hetzner/digitalocean tokens are sealed the same way as the
+	// cloudflare token above.
+	for _, key := range []string{"dns_desec_token", "dns_hetzner_token", "dns_digitalocean_token"} {
+		resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/"+key, admin, `{"value":"tok"}`)
+		if resp.StatusCode != 204 {
+			t.Fatalf("put %s: want 204, got %d", key, resp.StatusCode)
+		}
+		resp.Body.Close()
+
+		resp = doAuthed(t, "GET", srv.URL+"/v1/settings/"+key, admin, "")
+		var tokOut struct {
+			Value string `json:"value"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&tokOut); err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if tokOut.Value != "(set)" {
+			t.Fatalf("%s read = %q, want (set)", key, tokOut.Value)
+		}
+
+		raw, err := st.GetSetting(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(raw, "sealed:") {
+			t.Fatalf("raw %s = %q, want sealed: prefix", key, raw)
+		}
 	}
 }
 
@@ -470,7 +500,7 @@ func TestSettingsNotifyFormatAndEvents(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	for _, v := range []string{"generic", "discord", "slack", "telegram"} {
+	for _, v := range []string{"generic", "discord", "slack", "telegram", "email"} {
 		resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/notify_format", admin, `{"value":"`+v+`"}`)
 		if resp.StatusCode != 204 {
 			t.Fatalf("format %s: want 204, got %d", v, resp.StatusCode)
@@ -516,4 +546,41 @@ func TestSettingsNotifyFormatAndEvents(t *testing.T) {
 		t.Fatalf("put telegram chat: want 204, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+// TestSettingsNotifyEmailValidation: notify_email must be a non-empty CSV
+// of addresses that each look like an email address; it is a plain
+// (non-sealed) setting, unlike notify_url.
+func TestSettingsNotifyEmailValidation(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	for _, bad := range []string{"", "not-an-email", "a@b.co,not-an-email", "a@b.co,"} {
+		resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/notify_email", admin, `{"value":"`+bad+`"}`)
+		if resp.StatusCode != 400 {
+			t.Fatalf("notify_email %q: want 400, got %d", bad, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/notify_email", admin, `{"value":"a@b.co, c@d.co"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("valid notify_email: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "GET", srv.URL+"/v1/settings/notify_email", admin, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("get: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.Value != "a@b.co, c@d.co" {
+		t.Fatalf("notify_email roundtrip = %q (not sealed, should echo)", out.Value)
+	}
 }

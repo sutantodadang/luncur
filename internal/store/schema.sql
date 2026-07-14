@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS apps (
   autoscale_min INTEGER NOT NULL DEFAULT 0,
   autoscale_max INTEGER NOT NULL DEFAULT 0,
   autoscale_cpu INTEGER NOT NULL DEFAULT 0,
+  suspended     INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, name)
 );

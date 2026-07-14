@@ -34,7 +34,7 @@ var settingGroups = []settingGroup{
 		{Key: "panel_domain"},
 	}},
 	{Title: "DNS", Fields: []settingField{
-		{Key: "dns_provider", Options: []string{"cloudflare", "route53", "rfc2136", "none"}},
+		{Key: "dns_provider", Options: []string{"cloudflare", "route53", "rfc2136", "desec", "hetzner", "digitalocean", "none"}},
 		{Key: "dns_cloudflare_token", Sealed: true},
 		{Key: "dns_route53_access_key"},
 		{Key: "dns_route53_secret_key", Sealed: true},
@@ -43,6 +43,9 @@ var settingGroups = []settingGroup{
 		{Key: "dns_rfc2136_tsig_name"},
 		{Key: "dns_rfc2136_tsig_secret", Sealed: true},
 		{Key: "dns_rfc2136_tsig_algo"},
+		{Key: "dns_desec_token", Sealed: true},
+		{Key: "dns_hetzner_token", Sealed: true},
+		{Key: "dns_digitalocean_token", Sealed: true},
 	}},
 	{Title: "SMTP", Fields: []settingField{
 		{Key: "smtp_host"},
@@ -53,8 +56,9 @@ var settingGroups = []settingGroup{
 	}},
 	{Title: "Notifications", Fields: []settingField{
 		{Key: "notify_url", Sealed: true},
-		{Key: "notify_format", Options: []string{"generic", "discord", "slack", "telegram"}},
+		{Key: "notify_format", Options: []string{"generic", "discord", "slack", "telegram", "email"}},
 		{Key: "notify_telegram_chat"},
+		{Key: "notify_email"},
 		{Key: "notify_events"},
 	}},
 	{Title: "Backups", Fields: []settingField{

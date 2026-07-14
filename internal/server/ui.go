@@ -99,6 +99,9 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/bulk", s.uiPage(s.handleUIEnvBulk))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env/delete", s.uiPage(s.handleUIEnvUnset))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/redeploy", s.uiPage(s.handleUIRedeploy))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/pause", s.uiPage(s.handleUIPauseCron))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/resume", s.uiPage(s.handleUIResumeCron))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/run-now", s.uiPage(s.handleUITriggerCron))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/git-token", s.uiPage(s.handleUIGitTokenSet))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/git-token/clear", s.uiPage(s.handleUIGitTokenClear))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/domains", s.uiPage(s.handleUIDomainAdd))
@@ -1067,6 +1070,10 @@ func uiRunRows(runs []store.JobRun) []uiRunRow {
 	return rows
 }
 
+// uiCronRunRow is app.html's cron Runs-card view model: kube.CronRunInfo
+// as-is, aliased so the template package doesn't need to import kube.
+type uiCronRunRow = kube.CronRunInfo
+
 func uiDeployRows(history []store.Deployment, limit int) []uiDeployRow {
 	seqByID := make(map[string]int64, len(history))
 	for _, d := range history {
@@ -1180,6 +1187,16 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		runRows = uiRunRows(runs)
 	}
 
+	// Cron runs card is only meaningful for kind=cron apps; nil (empty table)
+	// for every other kind, and also when the cluster listing errs — same
+	// tolerance as the pods block above.
+	var cronRuns []uiCronRunRow
+	if a.Kind == "cron" && s.kube != nil {
+		if list, err := s.kube.CronRuns(r.Context(), p.Namespace, a.Name); err == nil {
+			cronRuns = list
+		}
+	}
+
 	// Sweeps card, likewise job-only: sweepRows is the history table (newest
 	// first); sweep is the most recent sweep's live detail (nil when the app
 	// has none yet) — the card only ever shows one sweep's trial table, not
@@ -1231,6 +1248,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"Domains": domains, "Volumes": volumes, "Warning": firstNonEmpty(r.URL.Query().Get("warn"), r.URL.Query().Get("err")),
 		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics, "Pods": pods,
 		"Runs": runRows, "TrainFrameworks": render.TrainFrameworks,
+		"CronRuns": cronRuns,
 		"Sweeps": sweepRows, "Sweep": sweep,
 		"CSRF": csrf, "IsAdmin": u.Role == "admin",
 	}

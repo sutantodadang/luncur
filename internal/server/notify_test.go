@@ -7,11 +7,49 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/sutantodadang/luncur/internal/mail"
 	"github.com/sutantodadang/luncur/internal/secret"
 )
+
+// mailMsg is one message recorded by recordingMailer.
+type mailMsg struct{ to, subject, text, html string }
+
+// recordingMailer is a mail.Mailer test double that records every Send and
+// also delivers each one on a channel, so tests can wait for N async sends
+// (sendNotifyEmail always fires from notify()'s goroutine).
+type recordingMailer struct {
+	mu   sync.Mutex
+	sent []mailMsg
+	ch   chan mailMsg
+}
+
+func newRecordingMailer(buf int) *recordingMailer {
+	return &recordingMailer{ch: make(chan mailMsg, buf)}
+}
+
+func (m *recordingMailer) Send(to, subject, text, html string) error {
+	msg := mailMsg{to, subject, text, html}
+	m.mu.Lock()
+	m.sent = append(m.sent, msg)
+	m.mu.Unlock()
+	m.ch <- msg
+	return nil
+}
+
+func recvMail(t *testing.T, ch chan mailMsg, timeout time.Duration) mailMsg {
+	t.Helper()
+	select {
+	case m := <-ch:
+		return m
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for notification email")
+		return mailMsg{}
+	}
+}
 
 func TestValidNotifyEvents(t *testing.T) {
 	cases := []struct {
@@ -422,5 +460,126 @@ func TestNotify500LoggedNotFatal(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("sendNotify blocked on 500 response")
+	}
+}
+
+// TestNotifyEmailFormatSendsHTMLToEachRecipient: notify_format=email works
+// with no notify_url set at all, delivers to every notify_email address,
+// and a *_failed event's HTML carries the fail color plus an
+// html-escaped error string (never raw-concatenated).
+func TestNotifyEmailFormatSendsHTMLToEachRecipient(t *testing.T) {
+	st := newTestStore(t)
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newServer(Deps{Store: st, Sealer: sealer, ExternalIP: "1.2.3.4"})
+	rm := newRecordingMailer(4)
+	s.mailer = func() (mail.Mailer, error) { return rm, nil }
+
+	if err := st.SetSetting("notify_format", "email"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting("notify_email", "a@x.co, b@y.co"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting("notify_events", "deploy_failed"); err != nil {
+		t.Fatal(err)
+	}
+
+	s.notify(notifyEvent{
+		Event: "deploy_failed", Project: "p", App: "a", DeployID: "1", Seq: 2,
+		Err: "<script>boom</script>",
+	})
+
+	m1 := recvMail(t, rm.ch, 2*time.Second)
+	m2 := recvMail(t, rm.ch, 2*time.Second)
+	got := map[string]mailMsg{m1.to: m1, m2.to: m2}
+	if _, ok := got["a@x.co"]; !ok {
+		t.Fatalf("no mail sent to a@x.co: %+v", got)
+	}
+	if _, ok := got["b@y.co"]; !ok {
+		t.Fatalf("no mail sent to b@y.co: %+v", got)
+	}
+
+	msg := got["a@x.co"]
+	if !strings.Contains(msg.subject, "deploy_failed") || !strings.Contains(msg.subject, "p/a") {
+		t.Fatalf("subject = %q", msg.subject)
+	}
+	if !strings.Contains(msg.html, "#D93336") {
+		t.Fatalf("html missing fail color:\n%s", msg.html)
+	}
+	if strings.Contains(msg.html, "<script>boom</script>") {
+		t.Fatalf("html contains raw unescaped error:\n%s", msg.html)
+	}
+	if !strings.Contains(msg.html, "&lt;script&gt;boom&lt;/script&gt;") {
+		t.Fatalf("html missing escaped error:\n%s", msg.html)
+	}
+}
+
+// TestNotifyEmailFormatSkipsNonSubscribedEvent: the notify_events
+// subscription filter applies to the email format exactly like the webhook
+// formats.
+func TestNotifyEmailFormatSkipsNonSubscribedEvent(t *testing.T) {
+	st := newTestStore(t)
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newServer(Deps{Store: st, Sealer: sealer, ExternalIP: "1.2.3.4"})
+	rm := newRecordingMailer(4)
+	s.mailer = func() (mail.Mailer, error) { return rm, nil }
+
+	if err := st.SetSetting("notify_format", "email"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting("notify_email", "a@x.co"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting("notify_events", "deploy_success"); err != nil {
+		t.Fatal(err)
+	}
+
+	s.notify(notifyEvent{Event: "deploy_failed", Project: "p", App: "a"})
+	select {
+	case m := <-rm.ch:
+		t.Fatalf("unexpected email for non-subscribed event: %+v", m)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// TestNotifyEmailFormatSkipsWithoutRecipients: notify_format=email with
+// notify_email unset is a no-op, not a panic or a send to "".
+func TestNotifyEmailFormatSkipsWithoutRecipients(t *testing.T) {
+	st := newTestStore(t)
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newServer(Deps{Store: st, Sealer: sealer, ExternalIP: "1.2.3.4"})
+	rm := newRecordingMailer(4)
+	s.mailer = func() (mail.Mailer, error) { return rm, nil }
+
+	if err := st.SetSetting("notify_format", "email"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting("notify_events", "deploy_failed"); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.notify(notifyEvent{Event: "deploy_failed", Project: "p", App: "a"})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("notify() blocked with notify_email unset")
+	}
+	select {
+	case m := <-rm.ch:
+		t.Fatalf("unexpected email with notify_email unset: %+v", m)
+	case <-time.After(200 * time.Millisecond):
 	}
 }
