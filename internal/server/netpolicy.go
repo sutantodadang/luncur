@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/sutantodadang/luncur/internal/kube"
+	"github.com/sutantodadang/luncur/internal/store"
 )
 
 // isolationOn reports whether the network_isolation setting is "on". Any
@@ -18,10 +19,13 @@ func (s *server) isolationOn() bool {
 	return v == "on"
 }
 
-// ensureProjectNamespace is the single choke-point every lazily-created
-// project namespace goes through, so the isolation NetworkPolicy always
-// rides along with namespace creation instead of needing a separate pass.
-func (s *server) ensureProjectNamespace(ctx context.Context, namespace string) error {
+// ensureNamespace is the shared core every lazily-created namespace goes
+// through: stamp the namespace (PodSecurity baseline, via
+// kube.EnsureNamespace) and, if network_isolation is on, apply the
+// project-isolation NetworkPolicy right alongside it. Per-namespace
+// ResourceQuota/LimitRange are a separate concern (setGPUQuota/
+// setProjectQuota), not part of this choke-point.
+func (s *server) ensureNamespace(ctx context.Context, namespace string) error {
 	if err := s.kube.EnsureNamespace(ctx, namespace); err != nil {
 		return err
 	}
@@ -29,6 +33,25 @@ func (s *server) ensureProjectNamespace(ctx context.Context, namespace string) e
 		return s.kube.ApplyIsolation(ctx, namespace)
 	}
 	return nil
+}
+
+// ensureProjectNamespace is a thin, namespace-string wrapper over
+// ensureNamespace for callers not yet migrated to resolve an explicit
+// environment (see Task 7); today that's every caller, and they all pass
+// p.Namespace — the project's default (production) environment namespace.
+func (s *server) ensureProjectNamespace(ctx context.Context, namespace string) error {
+	return s.ensureNamespace(ctx, namespace)
+}
+
+// ensureEnvNamespace is ensureProjectNamespace's environment-aware sibling:
+// the same PodSecurity/NetworkPolicy isolation lands on env.Namespace
+// instead of the project's namespace directly, so a non-default
+// environment's namespace goes through the identical choke-point.
+// Per-namespace ResourceQuota/LimitRange (setGPUQuota/setProjectQuota) still
+// read and apply the env's project's quota unchanged for now — per-env
+// quota is a later refinement; v1 reuses the project's quota everywhere.
+func (s *server) ensureEnvNamespace(ctx context.Context, env store.Environment) error {
+	return s.ensureNamespace(ctx, env.Namespace)
 }
 
 // networkIsolationChanged runs after network_isolation is written via
