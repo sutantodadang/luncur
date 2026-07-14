@@ -211,11 +211,11 @@ func (s *server) watchBuildPod(ctx context.Context, d store.Deployment, jobName 
 // rendered and applied, waited on, and — on success — the app's manifests
 // are applied against the resulting image. Errors are logged, not returned;
 // callers observe outcome via the deployment row (GET .../deploys/{id}).
-func (s *server) startBuild(p store.Project, a store.App, d store.Deployment) {
+func (s *server) startBuild(p store.Project, env store.Environment, a store.App, d store.Deployment) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), s.buildTimeout())
 		defer cancel()
-		if err := s.runBuild(ctx, p, a, d); err != nil {
+		if err := s.runBuild(ctx, p, env, a, d); err != nil {
 			log.Printf("build deploy %s failed: %v", d.ID, err)
 		}
 	}()
@@ -223,8 +223,8 @@ func (s *server) startBuild(p store.Project, a store.App, d store.Deployment) {
 
 // runBuild renders and applies the Build Job into the system namespace,
 // waits for it to finish, then (on success) applies the app's manifests
-// against the built image into the project namespace.
-func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d store.Deployment) error {
+// against the built image into the environment's namespace.
+func (s *server) runBuild(ctx context.Context, p store.Project, env store.Environment, a store.App, d store.Deployment) error {
 	fail := func(err error) error {
 		s.buildLogf(d, "build failed: %v", err)
 		if e := s.st.SetDeploymentStatus(d.ID, "failed"); e != nil {
@@ -312,7 +312,7 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 		return fail(fmt.Errorf("build job failed"))
 	}
 
-	if err := s.finishDeploy(ctx, p, a, d, imageRef); err != nil {
+	if err := s.finishDeploy(ctx, p, env, a, d, imageRef); err != nil {
 		return fail(err)
 	}
 	return nil
@@ -322,7 +322,7 @@ func (s *server) runBuild(ctx context.Context, p store.Project, a store.App, d s
 // the deployment live: the shared tail end of both runBuild's
 // Job-succeeded path and reconcileUnfinished's resume path (a 'deploying'
 // deployment already has image_ref set — re-setting it here is harmless).
-func (s *server) finishDeploy(ctx context.Context, p store.Project, a store.App, d store.Deployment, imageRef string) error {
+func (s *server) finishDeploy(ctx context.Context, p store.Project, env store.Environment, a store.App, d store.Deployment, imageRef string) error {
 	if err := s.st.SetDeploymentImage(d.ID, imageRef); err != nil {
 		return err
 	}
@@ -330,19 +330,19 @@ func (s *server) finishDeploy(ctx context.Context, p store.Project, a store.App,
 		return err
 	}
 
-	rendered, err := s.renderApp(p, a, imageRef, true)
+	rendered, err := s.renderApp(p, env, a, imageRef, true)
 	if err != nil {
 		return err
 	}
-	if err := s.ensureProjectNamespace(ctx, p.Namespace); err != nil {
+	if err := s.ensureEnvNamespace(ctx, env); err != nil {
 		return err
 	}
-	if err := s.kube.Apply(ctx, p.Namespace, rendered.Objects); err != nil {
+	if err := s.kube.Apply(ctx, env.Namespace, rendered.Objects); err != nil {
 		return err
 	}
 	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
 		log.Printf("mark deploy %s live (kube apply already succeeded): %v", d.ID, err)
 	}
-	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: s.appURL(a)})
+	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: s.appURLForEnv(a, env.Name, p.DefaultEnv)})
 	return nil
 }

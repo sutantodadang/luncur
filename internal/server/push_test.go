@@ -72,8 +72,12 @@ func TestPushBackendHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,8 +163,12 @@ func TestPushBackendBuildFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 

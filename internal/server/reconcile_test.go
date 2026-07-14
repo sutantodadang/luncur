@@ -57,8 +57,12 @@ func TestReconcileBuildingNoJobMarksFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
@@ -88,8 +92,12 @@ func TestReconcileBuildingJobStillRunningEndsLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
@@ -117,8 +125,12 @@ func TestReconcileDeployingResumesLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "deploying", "registry.luncur-system:5000/web-api:7", 0)
@@ -147,8 +159,12 @@ func TestReconcileSkipsWithoutKube(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)

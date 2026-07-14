@@ -72,6 +72,11 @@ func (b *PushBackend) Push(ctx context.Context, u store.User, project, app strin
 		return fmt.Errorf("load app: %w", err)
 	}
 
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		return fmt.Errorf("load environment: %w", err)
+	}
+
 	d, err := s.st.CreateDeployment(a.ID, "building", "", u.ID)
 	if err != nil {
 		return fmt.Errorf("create deployment: %w", err)
@@ -92,7 +97,7 @@ func (b *PushBackend) Push(ctx context.Context, u store.User, project, app strin
 		tailFile(done, s.src.LogPath(d.ID), progress)
 	}()
 
-	err = s.runBuild(ctx, p, a, d)
+	err = s.runBuild(ctx, p, env, a, d)
 	close(done)
 	// Join: tailFile's final drain writes progress too — without this the
 	// closing Fprintf below (and the caller closing the connection after
@@ -102,7 +107,7 @@ func (b *PushBackend) Push(ctx context.Context, u store.User, project, app strin
 	if err != nil {
 		return fmt.Errorf("deploy %s failed — see: luncur logs %s --project %s --deploy %s", d.ID, app, project, d.ID)
 	}
-	fmt.Fprintf(progress, "-----> app live: %s\n", s.appURL(a))
+	fmt.Fprintf(progress, "-----> app live: %s\n", s.appURLForEnv(a, env.Name, p.DefaultEnv))
 	return nil
 }
 

@@ -73,8 +73,12 @@ func TestRunBuildSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
@@ -82,7 +86,7 @@ func TestRunBuildSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+	if err := srv.runBuild(context.Background(), p, env, a, d); err != nil {
 		t.Fatalf("runBuild: %v", err)
 	}
 
@@ -175,8 +179,12 @@ func TestRunBuildIncludesCacheRefByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
@@ -184,14 +192,14 @@ func TestRunBuildIncludesCacheRefByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+	if err := srv.runBuild(context.Background(), p, env, a, d); err != nil {
 		t.Fatalf("runBuild: %v", err)
 	}
 
-	env := jobJSONEnv(t, *jobJSON)
+	envVars := jobJSONEnv(t, *jobJSON)
 	want := "registry.luncur-system:5000/luncur-cache/web-api:buildcache"
-	if env["LUNCUR_CACHE_REF"] != want {
-		t.Fatalf("LUNCUR_CACHE_REF=%q, want %q", env["LUNCUR_CACHE_REF"], want)
+	if envVars["LUNCUR_CACHE_REF"] != want {
+		t.Fatalf("LUNCUR_CACHE_REF=%q, want %q", envVars["LUNCUR_CACHE_REF"], want)
 	}
 }
 
@@ -206,11 +214,15 @@ func TestRunBuildIncludesAppEnvAsBuildArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.setAppEnv(context.Background(), p, a, "VITE_API_URL", "https://api.example.com"); err != nil {
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.setAppEnv(context.Background(), p, env, a, "VITE_API_URL", "https://api.example.com"); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
@@ -218,13 +230,13 @@ func TestRunBuildIncludesAppEnvAsBuildArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+	if err := srv.runBuild(context.Background(), p, env, a, d); err != nil {
 		t.Fatalf("runBuild: %v", err)
 	}
 
-	env := jobJSONEnv(t, *jobJSON)
-	if env["LUNCUR_BUILDARG_VITE_API_URL"] != "https://api.example.com" {
-		t.Fatalf("LUNCUR_BUILDARG_VITE_API_URL=%q, want https://api.example.com", env["LUNCUR_BUILDARG_VITE_API_URL"])
+	envVars := jobJSONEnv(t, *jobJSON)
+	if envVars["LUNCUR_BUILDARG_VITE_API_URL"] != "https://api.example.com" {
+		t.Fatalf("LUNCUR_BUILDARG_VITE_API_URL=%q, want https://api.example.com", envVars["LUNCUR_BUILDARG_VITE_API_URL"])
 	}
 }
 
@@ -237,8 +249,12 @@ func TestRunBuildOmitsBuildArgsWithNoEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
@@ -246,14 +262,14 @@ func TestRunBuildOmitsBuildArgsWithNoEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+	if err := srv.runBuild(context.Background(), p, env, a, d); err != nil {
 		t.Fatalf("runBuild: %v", err)
 	}
 
-	env := jobJSONEnv(t, *jobJSON)
-	for k := range env {
+	envVars := jobJSONEnv(t, *jobJSON)
+	for k := range envVars {
 		if strings.HasPrefix(k, "LUNCUR_BUILDARG_") {
-			t.Fatalf("unexpected build-arg env var %q present: %+v", k, env)
+			t.Fatalf("unexpected build-arg env var %q present: %+v", k, envVars)
 		}
 	}
 }
@@ -267,8 +283,12 @@ func TestRunBuildOmitsCacheRefWhenDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
@@ -276,13 +296,13 @@ func TestRunBuildOmitsCacheRefWhenDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+	if err := srv.runBuild(context.Background(), p, env, a, d); err != nil {
 		t.Fatalf("runBuild: %v", err)
 	}
 
-	env := jobJSONEnv(t, *jobJSON)
-	if _, ok := env["LUNCUR_CACHE_REF"]; ok {
-		t.Fatalf("LUNCUR_CACHE_REF present, want absent: %+v", env)
+	envVars := jobJSONEnv(t, *jobJSON)
+	if _, ok := envVars["LUNCUR_CACHE_REF"]; ok {
+		t.Fatalf("LUNCUR_CACHE_REF present, want absent: %+v", envVars)
 	}
 }
 
@@ -350,8 +370,12 @@ func TestRunBuildNotifiesOnSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
@@ -359,7 +383,7 @@ func TestRunBuildNotifiesOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+	if err := srv.runBuild(context.Background(), p, env, a, d); err != nil {
 		t.Fatalf("runBuild: %v", err)
 	}
 
@@ -398,8 +422,12 @@ func TestRunBuildNotifiesOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
@@ -407,7 +435,7 @@ func TestRunBuildNotifiesOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := srv.runBuild(context.Background(), p, a, d); err == nil {
+	if err := srv.runBuild(context.Background(), p, env, a, d); err == nil {
 		t.Fatal("runBuild: want error for a failed build Job")
 	}
 
@@ -438,8 +466,12 @@ func TestRunBuildWritesMilestoneLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
@@ -447,7 +479,7 @@ func TestRunBuildWritesMilestoneLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := srv.runBuild(context.Background(), p, a, d); err != nil {
+	if err := srv.runBuild(context.Background(), p, env, a, d); err != nil {
 		t.Fatalf("runBuild: %v", err)
 	}
 
@@ -471,8 +503,12 @@ func TestRunBuildFailureLogsMilestone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
@@ -480,7 +516,7 @@ func TestRunBuildFailureLogsMilestone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := srv.runBuild(context.Background(), p, a, d); err == nil {
+	if err := srv.runBuild(context.Background(), p, env, a, d); err == nil {
 		t.Fatal("runBuild: want error for a failed build Job")
 	}
 
@@ -522,8 +558,12 @@ func watcherTestServer(t *testing.T, cs *k8sfake.Clientset) (*server, store.Depl
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.CreateDeployment(a.ID, "building", "", 0)
