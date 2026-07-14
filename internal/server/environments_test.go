@@ -4,8 +4,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	ktesting "k8s.io/client-go/testing"
+
+	"github.com/sutantodadang/luncur/internal/kube"
+	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
@@ -191,21 +198,12 @@ func TestEnvCRUD(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// An env with a live app refuses deletion unless ?force=1. The
-	// env-scoped app-create route lands in Task 9; here the store creates
-	// the app directly in "develop" (bypassing the still-legacy-only HTTP
-	// app routes) purely to populate ListAppsInEnv for this check.
-	proj, err := st.GetProject("p")
-	if err != nil {
-		t.Fatal(err)
+	// An env with a live app refuses deletion unless ?force=1.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/p/envs/develop/apps", admin, `{"name":"api","port":3000}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create app in develop: want 201, got %d", resp.StatusCode)
 	}
-	developEnv, err := st.GetEnvironment(proj.ID, "develop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.CreateAppInEnv(developEnv.ID, "api", 3000, "web", ""); err != nil {
-		t.Fatal(err)
-	}
+	resp.Body.Close()
 
 	resp = doAuthed(t, "DELETE", srv.URL+"/v1/projects/p/envs/develop", admin, "")
 	if resp.StatusCode != http.StatusConflict {
@@ -253,4 +251,101 @@ func TestSetPreviewBase(t *testing.T) {
 		t.Fatalf("set preview base unknown env: want 404, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+// dynNSServer is kubeServer's (apps_test.go) twin, extended to record the
+// target namespace alongside verb+resource for every kube action — Task 9's
+// alias test needs to prove not just that a namespace was touched, but
+// which one, to catch a twin route accidentally resolving the wrong env.
+func dynNSServer(t *testing.T) (*httptestServer, *store.Store, *[]string) {
+	t.Helper()
+	st := newTestStore(t)
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	var actions []string
+	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		actions = append(actions, a.GetVerb()+" "+a.GetResource().Resource+" "+a.GetNamespace())
+		return true, nil, nil
+	})
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newHTTPTest(t, Deps{Store: st, Kube: kube.NewFromDynamic(dyn), Sealer: sealer, ExternalIP: "1.2.3.4"})
+	return srv, st, &actions
+}
+
+// deployedNamespaces extracts the set of namespaces a "patch deployments"
+// (or "create deployments") action targeted, keyed for exact-match lookups
+// so "luncur-p" and "luncur-p-develop" can never be confused for each other
+// (unlike a plain substring/prefix check).
+func deployedNamespaces(actions []string) map[string]bool {
+	out := map[string]bool{}
+	for _, a := range actions {
+		fields := strings.Fields(a)
+		if len(fields) == 3 && fields[1] == "deployments" {
+			out[fields[2]] = true
+		}
+	}
+	return out
+}
+
+// TestEnvScopedRoutesAlias is Task 9's alias test: deploying via the legacy
+// /apps/... path and via the explicit /envs/production/... twin both must
+// land in the project's production namespace (luncur-p, no suffix — the
+// default env reuses the project's own namespace), while /envs/develop/...
+// must land in luncur-p-develop, and never leak into the other namespace.
+func TestEnvScopedRoutesAlias(t *testing.T) {
+	srv, st, actions := dynNSServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
+
+	// Legacy route resolves to the default (production) env.
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/p/apps", admin, `{"name":"api","port":3000}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create app: want 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	*actions = nil
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/p/apps/api/deploy", admin, `{"image":"nginx:1"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("legacy deploy: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if !deployedNamespaces(*actions)["luncur-p"] {
+		t.Fatalf("legacy deploy did not target luncur-p: %v", *actions)
+	}
+
+	// Same app, reached through the explicit /envs/production twin.
+	*actions = nil
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/p/envs/production/apps/api/deploy", admin, `{"image":"nginx:2"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("envs/production deploy: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if !deployedNamespaces(*actions)["luncur-p"] {
+		t.Fatalf("envs/production deploy did not target luncur-p: %v", *actions)
+	}
+
+	// A different app, created and deployed entirely through /envs/develop.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/p/envs/develop/apps", admin, `{"name":"api2","port":3000}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create app in develop: want 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	*actions = nil
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/p/envs/develop/apps/api2/deploy", admin, `{"image":"nginx:1"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("develop deploy: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	ns := deployedNamespaces(*actions)
+	if !ns["luncur-p-develop"] {
+		t.Fatalf("develop deploy did not target luncur-p-develop: %v", *actions)
+	}
+	if ns["luncur-p"] {
+		t.Fatalf("develop deploy leaked into luncur-p: %v", *actions)
+	}
 }
