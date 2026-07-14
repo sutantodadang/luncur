@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS projects (
   mem_quota_mb  INTEGER NOT NULL DEFAULT 0,
   default_env      TEXT NOT NULL DEFAULT 'production',
   preview_base_env TEXT NOT NULL DEFAULT 'develop',
+  webhook_secret BLOB,
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -126,6 +126,7 @@ func migrate(db *sql.DB) error {
 		// ALTER-loop-before-backfill ordering note on that call.
 		{"projects", "default_env", `ALTER TABLE projects ADD COLUMN default_env TEXT NOT NULL DEFAULT 'production'`},
 		{"projects", "preview_base_env", `ALTER TABLE projects ADD COLUMN preview_base_env TEXT NOT NULL DEFAULT 'develop'`},
+		{"projects", "webhook_secret", `ALTER TABLE projects ADD COLUMN webhook_secret BLOB`},
 	} {
 		var n int
 		if err := db.QueryRow(
