@@ -308,6 +308,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{project}/addons/{name}/detach", s.authed(s.handleDetachAddon))
 	mux.HandleFunc("DELETE /v1/projects/{project}/addons/{name}", s.authed(s.handleDeleteAddon))
 	mux.HandleFunc("POST /v1/projects/{project}/addons/{name}/upgrade", s.authed(s.handleUpgradeAddon))
+	mux.HandleFunc("POST /v1/projects/{project}/addons/{name}/restore", s.authed(s.handleRestoreAddon))
 	mux.HandleFunc("GET /v1/projects/{project}/addons/{name}/url", s.authed(s.handleAddonURL))
 	mux.HandleFunc("POST /v1/system/update", s.adminOnly(s.handleSystemUpdate))
 	mux.HandleFunc("POST /v1/system/argo-install", s.adminOnly(s.handleArgoInstall))

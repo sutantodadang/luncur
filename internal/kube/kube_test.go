@@ -544,7 +544,7 @@ func TestStatefulSetReady(t *testing.T) {
 func TestClientImplementsPodExecer(t *testing.T) {
 	var _ PodExecer = (*Client)(nil)
 	c := NewForTest(nil, nil)
-	err := c.ExecPod(context.Background(), "ns", "pod", "c", []string{"true"}, io.Discard, io.Discard)
+	err := c.ExecPod(context.Background(), "ns", "pod", "c", []string{"true"}, nil, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "exec unavailable") {
 		t.Fatalf("cfg-less exec: %v", err)
 	}

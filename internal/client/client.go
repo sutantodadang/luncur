@@ -801,6 +801,27 @@ func (c *Client) AddonURL(project, name string) (envKey, connURL string, err err
 	return out.EnvKey, out.URL, err
 }
 
+// RestoreAddon uploads a logical dump (a raw .pgdump/.rdb, extracted from a
+// backup archive or produced directly) and restores it into the named
+// addon's pod — the inverse of the backup archive's addons/* member.
+func (c *Client) RestoreAddon(project, name string, dump io.Reader) error {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, err := w.CreateFormFile("dump", "dump")
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(part, dump); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.doMultipart("POST",
+		"/v1/projects/"+url.PathEscape(project)+"/addons/"+url.PathEscape(name)+"/restore",
+		w.FormDataContentType(), &buf, nil)
+}
+
 func (c *Client) GetSetting(key string) (string, error) {
 	var out struct {
 		Value string `json:"value"`

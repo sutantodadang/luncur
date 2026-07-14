@@ -92,9 +92,10 @@ type Client struct {
 }
 
 // PodExecer runs a command inside a pod container. Faked in tests; the
-// real implementation streams over SPDY.
+// real implementation streams over SPDY. stdin may be nil when the command
+// needs no input (e.g. dumpAddon only reads stdout).
 type PodExecer interface {
-	ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdout, stderr io.Writer) error
+	ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error
 }
 
 // New builds a client from a kubeconfig path, or in-cluster config when
@@ -780,8 +781,9 @@ func (c *Client) PodLogStream(ctx context.Context, namespace, pod string, follow
 	return c.cs.CoreV1().Pods(namespace).GetLogs(pod, opts).Stream(ctx)
 }
 
-// ExecPod implements PodExecer via the pods/exec subresource.
-func (c *Client) ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdout, stderr io.Writer) error {
+// ExecPod implements PodExecer via the pods/exec subresource. stdin may be
+// nil when the command needs no input.
+func (c *Client) ExecPod(ctx context.Context, namespace, pod, container string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if c.cfg == nil {
 		return fmt.Errorf("exec unavailable: no rest config (test client?)")
 	}
@@ -790,13 +792,13 @@ func (c *Client) ExecPod(ctx context.Context, namespace, pod, container string, 
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: container, Command: cmd,
-			Stdout: true, Stderr: true,
+			Stdin: stdin != nil, Stdout: true, Stderr: true,
 		}, scheme.ParameterCodec)
 	exec, err := remotecommand.NewSPDYExecutor(c.cfg, "POST", req.URL())
 	if err != nil {
 		return err
 	}
-	return exec.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: stdout, Stderr: stderr})
+	return exec.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: stdin, Stdout: stdout, Stderr: stderr})
 }
 
 // WaitDeployment polls until the Deployment has at least one ready replica

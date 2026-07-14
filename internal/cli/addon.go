@@ -1,7 +1,13 @@
 package cli
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 
@@ -9,6 +15,64 @@ import (
 
 	"github.com/sutantodadang/luncur/internal/client"
 )
+
+// dumpFromPath resolves <path> into a restore dump: either the raw file
+// itself (a .pgdump/.rdb produced directly, e.g. by hand), or — when it's a
+// luncur backup archive (.tar.gz) — that archive's addons/*-<name>.{pgdump,rdb}
+// member, extracted into memory. Detection is by content, not extension:
+// gzip.NewReader succeeding plus at least one addons/ member means archive.
+func dumpFromPath(path, name string) (io.ReadCloser, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		// Not gzip at all — stream the raw file as-is.
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			f.Close()
+			return nil, err
+		}
+		return f, nil
+	}
+	defer f.Close()
+
+	tr := tar.NewReader(gz)
+	pgSuffix := "-" + name + ".pgdump"
+	rdbSuffix := "-" + name + ".rdb"
+	sawAddons := false
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read archive: %w", err)
+		}
+		if !strings.HasPrefix(hdr.Name, "addons/") {
+			continue
+		}
+		sawAddons = true
+		base := strings.TrimPrefix(hdr.Name, "addons/")
+		if strings.HasSuffix(base, pgSuffix) || strings.HasSuffix(base, rdbSuffix) {
+			b, err := io.ReadAll(tr)
+			if err != nil {
+				return nil, err
+			}
+			return io.NopCloser(bytes.NewReader(b)), nil
+		}
+	}
+	if sawAddons {
+		return nil, fmt.Errorf("no addon dump for %q found in archive %s", name, path)
+	}
+	// Gzip, but not a luncur backup archive (no addons/ members at all) —
+	// fall back to streaming the raw file.
+	raw, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
 
 func addonCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -202,6 +266,33 @@ func addonCmd() *cobra.Command {
 	urlCmd.Flags().StringVar(&urlProject, "project", "", "project name")
 	urlCmd.MarkFlagRequired("project")
 
-	cmd.AddCommand(create, add, attach, detach, list, remove, upgrade, urlCmd)
+	var restoreProject, restoreFile string
+	restore := &cobra.Command{
+		Use:   "restore <name>",
+		Short: "Restore a postgres/redis addon's data from a dump or backup archive",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			dump, err := dumpFromPath(restoreFile, args[0])
+			if err != nil {
+				return err
+			}
+			defer dump.Close()
+			if err := c.RestoreAddon(restoreProject, args[0], dump); err != nil {
+				return err
+			}
+			cmd.Printf("restored %s\n", args[0])
+			return nil
+		},
+	}
+	restore.Flags().StringVar(&restoreProject, "project", "", "project name")
+	restore.MarkFlagRequired("project")
+	restore.Flags().StringVar(&restoreFile, "file", "", "path to a raw dump (.pgdump/.rdb) or a luncur backup archive (.tar.gz)")
+	restore.MarkFlagRequired("file")
+
+	cmd.AddCommand(create, add, attach, detach, list, remove, upgrade, urlCmd, restore)
 	return cmd
 }

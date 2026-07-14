@@ -195,7 +195,7 @@ func (s *server) dumpAddon(ctx context.Context, ad store.Addon) ([]byte, string,
 	var out, errBuf bytes.Buffer
 	dctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	if err := s.execer.ExecPod(dctx, p.Namespace, pod, ad.Type, cmd, &out, &errBuf); err != nil {
+	if err := s.execer.ExecPod(dctx, p.Namespace, pod, ad.Type, cmd, nil, &out, &errBuf); err != nil {
 		return nil, "", fmt.Errorf("%v: %s", err, strings.TrimSpace(errBuf.String()))
 	}
 	return out.Bytes(), member, nil
