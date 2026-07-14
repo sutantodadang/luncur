@@ -140,6 +140,13 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	// Rebuilds apps' uniqueness constraint from project-wide to
+	// environment-scoped; must run after the ALTER loop above (it depends
+	// on the environment_id column already existing).
+	if err := migrateAppsUniqueScope(db); err != nil {
+		return fmt.Errorf("migrate apps unique scope: %w", err)
+	}
+
 	// schema.sql's CREATE TABLE IF NOT EXISTS already creates this table on
 	// every Open (it runs unconditionally before migrate), but an explicit
 	// exec here mirrors the deployments-index precedent below and makes the
@@ -455,6 +462,109 @@ func migrateDeploymentIDsToText(db *sql.DB) error {
 		return fmt.Errorf("rename deployments_new: %w", err)
 	}
 
+	return tx.Commit()
+}
+
+// migrateAppsUniqueScope rebuilds the apps table when its uniqueness
+// constraint still predates environments (UNIQUE(project_id, name)):
+// environments let two apps share a name across environments within the
+// same project (e.g. "api" standing in both production and develop), so the
+// constraint must be scoped to (project_id, environment_id, name) instead.
+// SQLite can't ALTER a table's UNIQUE constraint, so this is a copy-rename
+// rebuild, same idiom as migrateAddonTypes; every dependent table (
+// deployments, domains, env_vars, ...) keeps referencing the same app ids,
+// which this rebuild preserves verbatim.
+func migrateAppsUniqueScope(db *sql.DB) error {
+	var tableSQL string
+	err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'apps'`,
+	).Scan(&tableSQL)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(tableSQL, "UNIQUE (project_id, name)") {
+		// Already migrated, or a fresh DB created straight from the
+		// updated schema.sql.
+		return nil
+	}
+
+	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	defer db.Exec(`PRAGMA foreign_keys=ON`) //nolint:errcheck
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+
+	if _, err := tx.Exec(`
+CREATE TABLE apps_new (
+  id            INTEGER PRIMARY KEY,
+  project_id    INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  environment_id INTEGER NOT NULL DEFAULT 0,
+  name          TEXT NOT NULL,
+  source_type   TEXT NOT NULL CHECK (source_type IN ('tarball','git')),
+  git_url       TEXT,
+  git_branch    TEXT,
+  git_token_enc BLOB,
+  port          INTEGER NOT NULL DEFAULT 8080,
+  replicas      INTEGER NOT NULL DEFAULT 1,
+  cpu_milli     INTEGER NOT NULL DEFAULT 0,
+  memory_mb     INTEGER NOT NULL DEFAULT 0,
+  health_path   TEXT NOT NULL DEFAULT '',
+  kind          TEXT NOT NULL DEFAULT 'web',
+  schedule      TEXT NOT NULL DEFAULT '',
+  webhook_secret BLOB,
+  build_path    TEXT NOT NULL DEFAULT '',
+  internal      INTEGER NOT NULL DEFAULT 0,
+  gpu_count     INTEGER NOT NULL DEFAULT 0,
+  inject_s3     INTEGER NOT NULL DEFAULT 0,
+  model_source  TEXT NOT NULL DEFAULT '',
+  runtime       TEXT NOT NULL DEFAULT '',
+  nodes         INTEGER NOT NULL DEFAULT 1,
+  framework     TEXT NOT NULL DEFAULT '',
+  autoscale_min INTEGER NOT NULL DEFAULT 0,
+  autoscale_max INTEGER NOT NULL DEFAULT 0,
+  autoscale_cpu INTEGER NOT NULL DEFAULT 0,
+  suspended     INTEGER NOT NULL DEFAULT 0,
+  ejected       INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (project_id, environment_id, name)
+)`); err != nil {
+		return fmt.Errorf("create apps_new: %w", err)
+	}
+	// Every column is selected from the legacy table, not defaulted: the
+	// ALTER loop above already added environment_id/ejected/... (with their
+	// own defaults) before this rebuild runs, so any value already written
+	// to them must survive.
+	if _, err := tx.Exec(`
+INSERT INTO apps_new (
+  id, project_id, environment_id, name, source_type, git_url, git_branch,
+  git_token_enc, port, replicas, cpu_milli, memory_mb, health_path, kind,
+  schedule, webhook_secret, build_path, internal, gpu_count, inject_s3,
+  model_source, runtime, nodes, framework, autoscale_min, autoscale_max,
+  autoscale_cpu, suspended, ejected, created_at
+)
+SELECT
+  id, project_id, environment_id, name, source_type, git_url, git_branch,
+  git_token_enc, port, replicas, cpu_milli, memory_mb, health_path, kind,
+  schedule, webhook_secret, build_path, internal, gpu_count, inject_s3,
+  model_source, runtime, nodes, framework, autoscale_min, autoscale_max,
+  autoscale_cpu, suspended, ejected, created_at
+FROM apps`); err != nil {
+		return fmt.Errorf("copy apps: %w", err)
+	}
+	if _, err := tx.Exec(`DROP TABLE apps`); err != nil {
+		return fmt.Errorf("drop legacy apps: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE apps_new RENAME TO apps`); err != nil {
+		return fmt.Errorf("rename apps_new: %w", err)
+	}
 	return tx.Commit()
 }
 
