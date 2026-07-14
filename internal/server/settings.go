@@ -67,7 +67,8 @@ var settableKeys = map[string]func(string) bool{
 	"smtp_pass": func(v string) bool { return v != "" },
 	"smtp_from": func(v string) bool { return v != "" },
 	"dns_provider": func(v string) bool {
-		return v == "cloudflare" || v == "route53" || v == "rfc2136" || v == "none"
+		return v == "cloudflare" || v == "route53" || v == "rfc2136" ||
+			v == "desec" || v == "hetzner" || v == "digitalocean" || v == "none"
 	},
 	"dns_cloudflare_token":    func(v string) bool { return v != "" },
 	"dns_route53_access_key":  func(v string) bool { return v != "" },
@@ -77,6 +78,9 @@ var settableKeys = map[string]func(string) bool{
 	"dns_rfc2136_tsig_name":   func(v string) bool { return v != "" },
 	"dns_rfc2136_tsig_secret": func(v string) bool { return v != "" },
 	"dns_rfc2136_tsig_algo":   func(v string) bool { return v != "" },
+	"dns_desec_token":         func(v string) bool { return v != "" },
+	"dns_hetzner_token":       func(v string) bool { return v != "" },
+	"dns_digitalocean_token":  func(v string) bool { return v != "" },
 	"notify_url":              func(v string) bool { return v != "" },
 	"notify_format":           func(v string) bool { return notifyFormats[v] },
 	"notify_telegram_chat":    func(v string) bool { return v != "" },
@@ -123,6 +127,9 @@ var sealedKeys = map[string]bool{
 	"dns_cloudflare_token":    true,
 	"dns_route53_secret_key":  true,
 	"dns_rfc2136_tsig_secret": true,
+	"dns_desec_token":         true,
+	"dns_hetzner_token":       true,
+	"dns_digitalocean_token":  true,
 	"notify_url":              true,
 	"metrics_token":           true,
 }

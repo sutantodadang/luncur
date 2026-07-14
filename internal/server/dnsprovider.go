@@ -67,6 +67,24 @@ func (s *server) dnsProviderFromSettings() (dns.Provider, error) {
 		}
 		algo, _ := s.st.GetSetting("dns_rfc2136_tsig_algo") // optional, default hmac-sha256
 		return &dns.RFC2136{Server: server, TSIGName: name, TSIGSecret: secretVal, TSIGAlgo: algo}, nil
+	case "desec":
+		token, err := s.sealedSetting("dns_desec_token")
+		if err != nil {
+			return nil, fmt.Errorf("dns_desec_token: %w", err)
+		}
+		return &dns.DeSEC{Token: token}, nil
+	case "hetzner":
+		token, err := s.sealedSetting("dns_hetzner_token")
+		if err != nil {
+			return nil, fmt.Errorf("dns_hetzner_token: %w", err)
+		}
+		return &dns.Hetzner{Token: token}, nil
+	case "digitalocean":
+		token, err := s.sealedSetting("dns_digitalocean_token")
+		if err != nil {
+			return nil, fmt.Errorf("dns_digitalocean_token: %w", err)
+		}
+		return &dns.DigitalOcean{Token: token}, nil
 	default:
 		return nil, errNoDNS
 	}
