@@ -6,6 +6,7 @@
   {{template "statuschip" .Chip}}
   {{if .App.Ejected}} <span class="status-failed">ejected</span>{{end}}
   {{if ne .App.Kind "web"}} <span class="status-pending">{{.App.Kind}}</span>{{end}}
+  {{if and (eq .App.Kind "cron") .App.Suspended}} <span class="status-failed">paused</span>{{end}}
   {{if .App.Internal}} <span class="chip chip-muted">internal</span>{{end}}
   {{if eq .App.Kind "web"}}{{if .App.Internal}}<code class="font-mono text-[11px] text-mut" title="cluster-only — not reachable from a browser">{{.InternalURL}}</code> <a class="font-mono text-[11px] text-mut hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/open" target="_blank" rel="noopener">open</a> <code class="font-mono text-[11px] text-mut">luncur forward {{.Project.Name}}/{{.App.Name}} {{.App.Port}}</code>{{else}}<a class="font-mono text-[11px] text-mut hover:text-signal" href="{{.URL}}">{{.URL}}</a>{{end}}{{end}}
   <div class="ml-auto flex gap-2">
@@ -143,6 +144,43 @@
 {{if .Sweep}}{{template "sweeptrials" .Sweep}}{{end}}
 {{else}}<p class="text-sm text-mut">No sweeps yet. Start one above.</p>{{end}}
 <div class="cli-echo mt-2">$ <b>luncur sweep ls {{.App.Name}} --project {{.Project.Name}}</b> &middot; $ <b>luncur sweep status &lt;id&gt; --app {{.App.Name}} --project {{.Project.Name}}</b></div>
+</div>
+{{end}}
+
+{{if eq .App.Kind "cron"}}
+<div class="card mb-6">
+<h2>Cron</h2>
+{{if not .App.Ejected}}
+<div class="mb-3 flex flex-wrap gap-2">
+{{if .App.Suspended}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/resume">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn">resume</button>
+</form>
+{{else}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/pause">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn-ghost" hx-confirm="Pause {{.App.Name}}? Its schedule stops firing until resumed.">pause</button>
+</form>
+{{end}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/run-now">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn">run now</button>
+</form>
+</div>
+<div class="cli-echo mb-3">$ <b>luncur app pause {{.App.Name}} --project {{.Project.Name}}</b> &middot; $ <b>luncur app resume {{.App.Name}} --project {{.Project.Name}}</b> &middot; $ <b>luncur app run-now {{.App.Name}} --project {{.Project.Name}}</b></div>
+{{end}}
+{{if .CronRuns}}
+<table class="tbl"><tr><th>Job</th><th>Status</th><th>Started</th><th>Finished</th></tr>
+{{range .CronRuns}}<tr>
+  <td class="font-mono text-xs">{{.Name}}</td>
+  <td><span class="status-{{.Status}}">{{.Status}}</span></td>
+  <td class="text-xs text-mut">{{if .StartTime}}{{.StartTime}}{{else}}&ndash;{{end}}</td>
+  <td class="text-xs text-mut">{{if .CompletionT}}{{.CompletionT}}{{else}}&ndash;{{end}}</td>
+</tr>{{end}}
+</table>
+{{else}}<p class="text-sm text-mut">No runs yet.</p>{{end}}
+<div class="cli-echo mt-2">$ <b>luncur app runs {{.App.Name}} --project {{.Project.Name}}</b></div>
 </div>
 {{end}}
 

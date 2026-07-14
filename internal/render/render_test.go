@@ -374,6 +374,28 @@ func TestRenderCronJob(t *testing.T) {
 	if len(c.Ports) != 0 {
 		t.Fatalf("want no container ports for cron, got %+v", c.Ports)
 	}
+	if cj.Spec.Suspend == nil || *cj.Spec.Suspend != false {
+		t.Fatalf("suspend: want false (default), got %v", cj.Spec.Suspend)
+	}
+	if got := cj.Spec.JobTemplate.ObjectMeta.Labels["app.kubernetes.io/name"]; got != "nightly" {
+		t.Fatalf("JobTemplate labels missing app label: %+v", cj.Spec.JobTemplate.ObjectMeta.Labels)
+	}
+}
+
+// TestRenderCronJobSuspended covers the pause/resume feature: Suspended maps
+// straight to CronJob.Spec.Suspend so a paused cron's schedule stops firing
+// without losing its stored schedule/history.
+func TestRenderCronJobSuspended(t *testing.T) {
+	in := cronInput()
+	in.Suspended = true
+	r := mustRender(t, in, nil)
+	var cj batchv1.CronJob
+	if err := json.Unmarshal(r.Objects[0].JSON, &cj); err != nil {
+		t.Fatal(err)
+	}
+	if cj.Spec.Suspend == nil || *cj.Spec.Suspend != true {
+		t.Fatalf("suspend: want true, got %v", cj.Spec.Suspend)
+	}
 }
 
 func TestRenderCronJobWithEnvAndResources(t *testing.T) {

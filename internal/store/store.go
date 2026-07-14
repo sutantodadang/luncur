@@ -112,6 +112,7 @@ func migrate(db *sql.DB) error {
 		{"apps", "autoscale_min", `ALTER TABLE apps ADD COLUMN autoscale_min INTEGER NOT NULL DEFAULT 0`},
 		{"apps", "autoscale_max", `ALTER TABLE apps ADD COLUMN autoscale_max INTEGER NOT NULL DEFAULT 0`},
 		{"apps", "autoscale_cpu", `ALTER TABLE apps ADD COLUMN autoscale_cpu INTEGER NOT NULL DEFAULT 0`},
+		{"apps", "suspended", `ALTER TABLE apps ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0`},
 		{"job_runs", "nodes", `ALTER TABLE job_runs ADD COLUMN nodes INTEGER NOT NULL DEFAULT 1`},
 		{"job_runs", "framework", `ALTER TABLE job_runs ADD COLUMN framework TEXT NOT NULL DEFAULT ''`},
 		{"gpu_instances", "external_ref", `ALTER TABLE gpu_instances ADD COLUMN external_ref TEXT NOT NULL DEFAULT ''`},

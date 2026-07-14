@@ -65,6 +65,10 @@ type App struct {
 	// for web/worker apps. AutoMin 0 means autoscale is off; when on, the HPA
 	// owns replica count and Replicas is only the value restored on disable.
 	AutoMin, AutoMax, AutoCPU int
+	// Suspended pauses a cron app's schedule: render maps it to
+	// CronJob.Spec.Suspend, so a suspended cron stops firing new runs without
+	// losing its stored schedule/history. Only meaningful for kind "cron".
+	Suspended bool
 }
 
 // TrainFrameworks are the valid values for apps.framework / job_runs.framework.
@@ -300,9 +304,9 @@ func (s *Store) GetApp(projectID int64, name string) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu FROM apps WHERE project_id = ? AND name = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu, suspended FROM apps WHERE project_id = ? AND name = ?`,
 		projectID, name,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU, &a.Suspended)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -321,9 +325,9 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 	var a App
 	var gitURL, gitBranch sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu FROM apps WHERE id = ?`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu, suspended FROM apps WHERE id = ?`,
 		id,
-	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU)
+	).Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU, &a.Suspended)
 	if errors.Is(err, sql.ErrNoRows) {
 		return App{}, ErrNotFound
 	}
@@ -337,7 +341,7 @@ func (s *Store) GetAppByID(id int64) (App, error) {
 
 func (s *Store) ListApps(projectID int64) ([]App, error) {
 	rows, err := s.db.Query(
-		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu FROM apps WHERE project_id = ? ORDER BY name`,
+		`SELECT id, project_id, name, port, replicas, source_type, git_url, git_branch, ejected, cpu_milli, memory_mb, health_path, kind, schedule, webhook_secret, build_path, internal, gpu_count, inject_s3, model_source, runtime, nodes, framework, autoscale_min, autoscale_max, autoscale_cpu, suspended FROM apps WHERE project_id = ? ORDER BY name`,
 		projectID,
 	)
 	if err != nil {
@@ -348,7 +352,7 @@ func (s *Store) ListApps(projectID int64) ([]App, error) {
 	for rows.Next() {
 		var a App
 		var gitURL, gitBranch sql.NullString
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Name, &a.Port, &a.Replicas, &a.SourceType, &gitURL, &gitBranch, &a.Ejected, &a.CPUMilli, &a.MemoryMB, &a.HealthPath, &a.Kind, &a.Schedule, &a.WebhookSecret, &a.BuildPath, &a.Internal, &a.GPUCount, &a.InjectS3, &a.ModelSource, &a.Runtime, &a.Nodes, &a.Framework, &a.AutoMin, &a.AutoMax, &a.AutoCPU, &a.Suspended); err != nil {
 			return nil, err
 		}
 		a.GitURL = gitURL.String
@@ -541,6 +545,20 @@ func (s *Store) SetAutoscale(id int64, min, max, cpu int) error {
 		return err
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetAppSuspended toggles a cron app's suspended flag; render maps it to
+// CronJob.Spec.Suspend so the schedule stops/resumes firing. The server
+// layer enforces kind=cron; the store only persists the flag.
+func (s *Store) SetAppSuspended(id int64, suspended bool) error {
+	res, err := s.db.Exec(`UPDATE apps SET suspended = ? WHERE id = ?`, suspended, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
 	return nil
