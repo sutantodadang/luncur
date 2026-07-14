@@ -101,9 +101,13 @@ func TestAddonCreateAttachInject(t *testing.T) {
 	}
 
 	// 3. renderApp injects DATABASE_URL for the attached addon.
+	env, err := st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	secretJSON := func(t *testing.T) string {
 		t.Helper()
-		rendered, err := s.renderApp(p, a, "nginx:1", true)
+		rendered, err := s.renderApp(p, env, a, "nginx:1", true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -244,7 +248,11 @@ func TestAddonSecondSameTypeSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rendered, err := s.renderApp(p, a, "nginx:1", true)
+	env, err := st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := s.renderApp(p, env, a, "nginx:1", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +375,11 @@ func TestMlflowInjectsTrackingURI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rendered, err := s.renderApp(p, a, "nginx:1", true)
+	env, err := st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := s.renderApp(p, env, a, "nginx:1", true)
 	if err != nil {
 		t.Fatal(err)
 	}
