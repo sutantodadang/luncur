@@ -2,13 +2,16 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 
 	"github.com/sutantodadang/luncur/internal/kube"
@@ -96,8 +99,13 @@ func previewTestServer(t *testing.T) (*server, *[]string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// kube.NewForTest (not NewFromDynamic): teardownPreview's DeleteNamespace
+	// goes through the typed clientset, which NewFromDynamic leaves nil —
+	// same fixture teardownPreview's own test coverage needs (see
+	// TestMultiEnvAppLifecycle, environments_test.go).
+	cs := k8sfake.NewSimpleClientset()
 	srv := newServer(Deps{
-		Store: st, Kube: kube.NewFromDynamic(dyn), Sealer: sealer,
+		Store: st, Kube: kube.NewForTest(dyn, cs), Sealer: sealer,
 		ExternalIP: "1.2.3.4", DataDir: t.TempDir(),
 	})
 	return srv, &actions
@@ -502,5 +510,222 @@ func TestClonePreviewAddonsNoExecerWarns(t *testing.T) {
 	previewAddons, err := st.AddonsForEnv(preview.ID)
 	if err != nil || len(previewAddons) != 1 {
 		t.Fatalf("preview addons = %+v, err %v, want 1 (created empty)", previewAddons, err)
+	}
+}
+
+// TestTeardownPreview covers Task 15's core: tearing down a preview deletes
+// its addon rows, its app rows, and the environment row itself.
+func TestTeardownPreview(t *testing.T) {
+	srv, _ := previewTestServer(t)
+	st := srv.st
+
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env, err := srv.ensurePreview(context.Background(), p, "feature/teardown")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ad := seedPreviewAddon(t, srv, st, env, "postgres", "pdb1")
+
+	if err := srv.teardownPreview(context.Background(), p, env); err != nil {
+		t.Fatalf("teardownPreview: %v", err)
+	}
+
+	if _, err := st.GetEnvironmentByID(env.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("environment row still present: %v", err)
+	}
+	if apps, err := st.ListAppsInEnv(env.ID); err != nil || len(apps) != 0 {
+		t.Fatalf("app rows still present: %+v, err %v", apps, err)
+	}
+	if addons, err := st.AddonsForEnv(env.ID); err != nil || len(addons) != 0 {
+		t.Fatalf("addon rows still present: %+v, err %v", addons, err)
+	}
+	allAddons, err := st.ListAddons(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range allAddons {
+		if a.ID == ad.ID {
+			t.Fatalf("addon %s row was not deleted", ad.Name)
+		}
+	}
+}
+
+// TestTeardownPreviewRefusesStanding is the defensive guard: a standing
+// environment (even one explicitly passed in, as if a caller's kind filter
+// had a bug) is never torn down.
+func TestTeardownPreviewRefusesStanding(t *testing.T) {
+	srv, _ := previewTestServer(t)
+	st := srv.st
+
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prod, err := st.GetEnvironment(p.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.teardownPreview(context.Background(), p, prod); err == nil {
+		t.Fatal("want error tearing down a standing environment")
+	}
+	if _, err := st.GetEnvironmentByID(prod.ID); err != nil {
+		t.Fatalf("standing environment must survive: %v", err)
+	}
+}
+
+// TestRouteBranchPRCloseTearsDownPreviewForReal is TestRouteBranch's final
+// assertion taken further now that teardownPreview is real (TestRouteBranch
+// itself is left untouched, only asserting no error): the PR-close/
+// branch-delete path actually removes the preview's environment row.
+func TestRouteBranchPRCloseTearsDownPreviewForReal(t *testing.T) {
+	srv, _ := previewTestServer(t)
+	st := srv.st
+
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.routeBranch(context.Background(), p, "feature/gone", false); err != nil {
+		t.Fatalf("routeBranch(create): %v", err)
+	}
+	preview, err := st.GetEnvironment(p.ID, sanitizeBranch("feature/gone"))
+	if err != nil {
+		t.Fatalf("preview not created: %v", err)
+	}
+
+	if err := srv.routeBranch(context.Background(), p, "feature/gone", true); err != nil {
+		t.Fatalf("routeBranch(delete): %v", err)
+	}
+	if _, err := st.GetEnvironmentByID(preview.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("preview environment should be torn down: %v", err)
+	}
+}
+
+// TestReapPreviews covers reapPreviews' core: a preview whose LastActiveAt
+// is older than the TTL is torn down; a fresh preview and a (deliberately
+// backdated) standing environment both survive — the kind=='preview' filter
+// protects standing environments regardless of age.
+func TestReapPreviews(t *testing.T) {
+	srv, _ := previewTestServer(t)
+	st := srv.st
+
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prod, err := st.GetEnvironment(p.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	old, err := srv.ensurePreview(context.Background(), p, "old-branch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := srv.ensurePreview(context.Background(), p, "fresh-branch")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	backdate := func(envID int64) {
+		t.Helper()
+		if _, err := st.DB().Exec(`UPDATE environments SET last_active_at = ? WHERE id = ?`, "2000-01-01 00:00:00", envID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backdate(old.ID)
+	backdate(prod.ID) // deliberately old too, to prove kind alone protects it
+
+	if err := st.SetSetting("preview_ttl_days", "7"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.reapPreviews(context.Background())
+
+	if _, err := st.GetEnvironmentByID(old.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("old preview should be reaped: %v", err)
+	}
+	if _, err := st.GetEnvironmentByID(fresh.ID); err != nil {
+		t.Fatalf("fresh preview should survive: %v", err)
+	}
+	if _, err := st.GetEnvironmentByID(prod.ID); err != nil {
+		t.Fatalf("standing environment should survive reap regardless of age: %v", err)
+	}
+}
+
+// TestReapPreviewsHonorsTTLSetting proves the preview_ttl_days setting
+// actually changes reapPreviews' cutoff, not just that some fixed TTL works.
+func TestReapPreviewsHonorsTTLSetting(t *testing.T) {
+	srv, _ := previewTestServer(t)
+	st := srv.st
+
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env, err := srv.ensurePreview(context.Background(), p, "branch-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	twoDaysAgo := srv.nowFn().UTC().Add(-48 * time.Hour).Format(previewLastActiveLayout)
+	if _, err := st.DB().Exec(`UPDATE environments SET last_active_at = ? WHERE id = ?`, twoDaysAgo, env.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default TTL (7 days): a 2-day-old preview survives.
+	srv.reapPreviews(context.Background())
+	if _, err := st.GetEnvironmentByID(env.ID); err != nil {
+		t.Fatalf("2-day-old preview should survive the default 7-day TTL: %v", err)
+	}
+
+	// Tighten the TTL to 1 day: the same preview is now reaped.
+	if err := st.SetSetting("preview_ttl_days", "1"); err != nil {
+		t.Fatal(err)
+	}
+	srv.reapPreviews(context.Background())
+	if _, err := st.GetEnvironmentByID(env.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("2-day-old preview should be reaped under a 1-day TTL: %v", err)
 	}
 }

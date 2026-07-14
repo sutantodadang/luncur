@@ -158,6 +158,7 @@ func NewWithBackend(d Deps) (http.Handler, *PushBackend, func(ctx context.Contex
 	start := func(ctx context.Context) {
 		s.StartCerts(ctx)
 		go s.StartBackups(ctx)
+		go s.StartPreviewReaper(ctx)
 		go s.StartRegistryGC(ctx)
 		go s.reconcileUnfinished(ctx)
 		go s.StartMonitor(ctx)

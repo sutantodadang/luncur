@@ -343,6 +343,12 @@ func (s *server) finishDeploy(ctx context.Context, p store.Project, env store.En
 	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
 		log.Printf("mark deploy %s live (kube apply already succeeded): %v", d.ID, err)
 	}
+	// See applyImageDeploy's identical call: every successful deploy touches
+	// its environment's LastActiveAt so an actively-deployed preview
+	// survives reapPreviews' idle-TTL sweep.
+	if err := s.st.TouchEnvironment(env.ID); err != nil {
+		log.Printf("touch environment %s after deploy: %v", env.Name, err)
+	}
 	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: s.appURLForEnv(a, env.Name, p.DefaultEnv)})
 	return nil
 }

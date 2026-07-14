@@ -10,7 +10,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -196,10 +198,9 @@ func (s *server) handleProjectWebhook(w http.ResponseWriter, r *http.Request) {
 //     deployGitApp core the per-app webhook and API/UI deploy paths share)
 //     and bumps its LastActiveAt.
 //   - Otherwise, a delete/PR-close event tears down the matching preview
-//     environment (teardownPreview — stubbed until Task 15) if one exists
-//     (matched on SourceBranch, not name — sanitizeBranch's naming scheme
-//     is Task 13's concern, not this dispatch); no matching preview is a
-//     no-op.
+//     environment (teardownPreview) if one exists (matched on SourceBranch,
+//     not name — sanitizeBranch's naming scheme is Task 13's concern, not
+//     this dispatch); no matching preview is a no-op.
 //   - Otherwise, the branch is routed to its preview environment
 //     (ensurePreview, Task 13), creating one on first push and reusing it
 //     on every later push, and that environment's git apps are (re)deployed.
@@ -235,7 +236,7 @@ func (s *server) routeBranch(ctx context.Context, p store.Project, branch string
 // environment" core for both a standing environment's base-branch match
 // and a preview environment's repeat push. Always touches the
 // environment's LastActiveAt (even if it has no git apps to deploy) so an
-// active preview survives Task 15's idle-TTL reaper. A single app's deploy
+// active preview survives reapPreviews' idle-TTL sweep. A single app's deploy
 // failure is logged and does not stop the others — best effort, mirroring
 // backup's per-item resilience.
 func (s *server) deployEnvGitApps(ctx context.Context, p store.Project, env store.Environment) error {
@@ -257,14 +258,130 @@ func (s *server) deployEnvGitApps(ctx context.Context, p store.Project, env stor
 	return nil
 }
 
-// teardownPreview tears down a preview environment (its namespace and every
-// row scoped to it). Stubbed here — Task 15 implements the real teardown
-// (PR-close/branch-delete, idle-TTL reaper, and manual delete all share
-// this core); for now it only logs, so routeBranch's delete path compiles
-// and has somewhere to call.
+// teardownPreview tears down a preview environment: its namespace (cascades
+// every pod/service/PVC inside — apps and addons alike) and every row
+// scoped to it — addons, then apps, then the environment row itself. Shared
+// core for routeBranch's PR-close/branch-delete path, reapPreviews' idle-TTL
+// loop, and any future manual delete. Defensively refuses anything but a
+// kind=='preview' environment: every caller already filters on kind before
+// reaching here, but this guard means a bug in one of them can never nuke a
+// standing environment's namespace and rows.
 func (s *server) teardownPreview(ctx context.Context, p store.Project, env store.Environment) error {
-	log.Printf("teardown preview %s/%s: not yet implemented (Task 15)", p.Name, env.Name)
-	return nil
+	if env.Kind != "preview" {
+		return fmt.Errorf("teardown preview: environment %q is kind %q, not preview — refusing", env.Name, env.Kind)
+	}
+
+	if s.kube != nil {
+		// Namespace may already be gone (e.g. a prior partial run); log and
+		// continue rather than fail the whole teardown on that alone —
+		// mirrors deleteEnvironment/deleteProject's own namespace-delete
+		// handling.
+		if err := s.kube.DeleteNamespace(ctx, env.Namespace); err != nil {
+			log.Printf("teardown preview %s/%s: delete namespace %s: %v", p.Name, env.Name, env.Namespace, err)
+		}
+	}
+
+	addons, err := s.st.AddonsForEnv(env.ID)
+	if err != nil {
+		return fmt.Errorf("list addons: %w", err)
+	}
+	for _, ad := range addons {
+		if err := s.st.DeleteAddon(ad.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("delete addon %s: %w", ad.Name, err)
+		}
+	}
+
+	apps, err := s.st.ListAppsInEnv(env.ID)
+	if err != nil {
+		return fmt.Errorf("list apps: %w", err)
+	}
+	for _, a := range apps {
+		if err := s.st.DeleteApp(a.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("delete app %s: %w", a.Name, err)
+		}
+	}
+
+	return s.st.DeleteEnvironment(env.ID)
+}
+
+// defaultPreviewTTLDays is how long a preview environment survives with no
+// deploy activity before reapPreviews tears it down, when the
+// preview_ttl_days install setting is unset.
+const defaultPreviewTTLDays = 7
+
+// previewTTLDays reads the preview_ttl_days setting, falling back to
+// defaultPreviewTTLDays when unset or invalid — mirrors pruneBackups'
+// backup_keep fallback.
+func (s *server) previewTTLDays() int {
+	v, err := s.st.GetSetting("preview_ttl_days")
+	if err != nil {
+		return defaultPreviewTTLDays
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return defaultPreviewTTLDays
+	}
+	return n
+}
+
+// previewLastActiveLayout matches the format SQLite's datetime('now') writes
+// (TouchEnvironment, CreateEnvironment's last_active_at default) — the same
+// layout runBackupSchedule already parses backups.CreatedAt with.
+const previewLastActiveLayout = "2006-01-02 15:04:05"
+
+// reapPreviews tears down every preview environment, across every project,
+// whose LastActiveAt is older than previewTTLDays. Every deploy into an
+// environment (deployEnvGitApps, applyImageDeploy, finishDeploy) touches
+// LastActiveAt, so only a truly idle preview is ever reaped. Standing
+// environments are never inspected — the kind=='preview' filter runs before
+// any teardown call, and teardownPreview itself refuses non-preview
+// environments as a second line of defense. A single project's or
+// environment's failure is logged and does not stop the sweep.
+func (s *server) reapPreviews(ctx context.Context) {
+	ttl := time.Duration(s.previewTTLDays()) * 24 * time.Hour
+	projects, err := s.st.ListProjects()
+	if err != nil {
+		log.Printf("reap previews: list projects: %v", err)
+		return
+	}
+	for _, p := range projects {
+		envs, err := s.st.ListEnvironments(p.ID)
+		if err != nil {
+			log.Printf("reap previews: list environments for %s: %v", p.Name, err)
+			continue
+		}
+		for _, env := range envs {
+			if env.Kind != "preview" {
+				continue
+			}
+			last, err := time.Parse(previewLastActiveLayout, env.LastActiveAt)
+			if err != nil {
+				log.Printf("reap previews: parse last_active_at for %s/%s: %v", p.Name, env.Name, err)
+				continue
+			}
+			if s.nowFn().UTC().Sub(last) < ttl {
+				continue
+			}
+			if err := s.teardownPreview(ctx, p, env); err != nil {
+				log.Printf("reap previews: teardown %s/%s: %v", p.Name, env.Name, err)
+			}
+		}
+	}
+}
+
+// StartPreviewReaper runs the idle-preview reap loop: every hour, delegate
+// to reapPreviews. Mirrors StartBackups' lifecycle.
+func (s *server) StartPreviewReaper(ctx context.Context) {
+	tick := time.NewTicker(time.Hour)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			s.reapPreviews(ctx)
+		}
+	}
 }
 
 // maxSanitizedBranch caps sanitizeBranch's output length: short enough that
