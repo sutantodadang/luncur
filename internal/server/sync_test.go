@@ -107,6 +107,7 @@ func TestRenderAppIngressHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 
 	ingressJSON := func(t *testing.T, name string) string {
 		t.Helper()
@@ -114,7 +115,7 @@ func TestRenderAppIngressHosts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rendered, err := s.renderApp(p, a, "nginx:1", true)
+		rendered, err := s.renderApp(p, env, a, "nginx:1", true)
 		if err != nil {
 			t.Fatal(err)
 		}

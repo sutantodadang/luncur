@@ -121,30 +121,31 @@ func (s *server) plainGitToken(a store.App) (string, error) {
 
 // renderApp assembles the manifest set for one app: unseals its env vars,
 // injects connection env for attached addons, loads its overrides, and
-// renders against imageRef.
-func (s *server) renderApp(p store.Project, a store.App, imageRef string, withOverrides bool) (render.Rendered, error) {
-	return s.renderAppWithRun(p, a, imageRef, withOverrides, "", a.Nodes, a.Framework, nil)
+// renders against imageRef. env is the app's resolved environment — its
+// Namespace is what the rendered manifests target.
+func (s *server) renderApp(p store.Project, env store.Environment, a store.App, imageRef string, withOverrides bool) (render.Rendered, error) {
+	return s.renderAppWithRun(p, env, a, imageRef, withOverrides, "", a.Nodes, a.Framework, nil)
 }
 
 // renderRunWith renders one triggered run of a kind=job app with per-run
 // overrides of nodes/framework/env — startRun's core, shared by the JSON
 // API and the UI run-now button.
-func (s *server) renderRunWith(p store.Project, a store.App, imageRef string, runID int64, nodes int, framework string, runEnv map[string]string) (render.Rendered, error) {
-	return s.renderAppWithRun(p, a, imageRef, true, jobRunName(a.Name, runID), nodes, framework, runEnv)
+func (s *server) renderRunWith(p store.Project, env store.Environment, a store.App, imageRef string, runID int64, nodes int, framework string, runEnv map[string]string) (render.Rendered, error) {
+	return s.renderAppWithRun(p, env, a, imageRef, true, jobRunName(a.Name, runID), nodes, framework, runEnv)
 }
 
-func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string, withOverrides bool, runName string, nodes int, framework string, runEnv map[string]string) (render.Rendered, error) {
-	env, err := s.plainEnv(a)
+func (s *server) renderAppWithRun(p store.Project, env store.Environment, a store.App, imageRef string, withOverrides bool, runName string, nodes int, framework string, runEnv map[string]string) (render.Rendered, error) {
+	envVars, err := s.plainEnv(a)
 	if err != nil {
 		return render.Rendered{}, err
 	}
 
-	addonOut, collisions, err := s.addonEnv(p, a, env)
+	addonOut, collisions, err := s.addonEnv(p, env, a, envVars)
 	if err != nil {
 		return render.Rendered{}, fmt.Errorf("addon env: %w", err)
 	}
 	for k, v := range addonOut {
-		env[k] = v
+		envVars[k] = v
 	}
 	if len(collisions) > 0 {
 		log.Printf("app %s: addon env collides with user env, user wins: %s", a.Name, strings.Join(collisions, ", "))
@@ -181,8 +182,8 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 				s3env["LUNCUR_S3_REGION"] = cfg.Region
 			}
 			for k, v := range s3env {
-				if _, taken := env[k]; !taken {
-					env[k] = v
+				if _, taken := envVars[k]; !taken {
+					envVars[k] = v
 				}
 			}
 		}
@@ -192,8 +193,8 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 	// Dockerfiles) bind to $PORT. Without it they fall back to their own
 	// default (8000, 3000, ...) while the Service targets a.Port and every
 	// request 502s. User-set PORT wins, like addon env.
-	if _, taken := env["PORT"]; !taken && a.Port > 0 {
-		env["PORT"] = strconv.Itoa(a.Port)
+	if _, taken := envVars["PORT"]; !taken && a.Port > 0 {
+		envVars["PORT"] = strconv.Itoa(a.Port)
 	}
 
 	overrides := map[string]string{}
@@ -282,7 +283,7 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 
 	in := render.Input{
 		AppName:            a.Name,
-		Namespace:          p.Namespace,
+		Namespace:          env.Namespace,
 		Image:              imageRef,
 		DeployStamp:        deployStamp,
 		Host:               host,
@@ -311,14 +312,14 @@ func (s *server) renderAppWithRun(p store.Project, a store.App, imageRef string,
 		AutoMax:            int32(a.AutoMax),
 		AutoCPU:            int32(a.AutoCPU),
 	}
-	return render.Render(in, env)
+	return render.Render(in, envVars)
 }
 
 // syncApp re-applies an app's current state to the cluster, using the image
 // from its latest deployment. If there is no deployment, or the latest one
 // isn't live, there is nothing running to sync — that's a no-op, not an
 // error.
-func (s *server) syncApp(ctx context.Context, p store.Project, a store.App) error {
+func (s *server) syncApp(ctx context.Context, p store.Project, env store.Environment, a store.App) error {
 	if a.Ejected {
 		return nil
 	}
@@ -333,21 +334,21 @@ func (s *server) syncApp(ctx context.Context, p store.Project, a store.App) erro
 		return nil
 	}
 
-	rendered, err := s.renderApp(p, a, d.ImageRef, true)
+	rendered, err := s.renderApp(p, env, a, d.ImageRef, true)
 	if err != nil {
 		return err
 	}
-	if err := s.ensureProjectNamespace(ctx, p.Namespace); err != nil {
+	if err := s.ensureEnvNamespace(ctx, env); err != nil {
 		return err
 	}
-	return s.kube.Apply(ctx, p.Namespace, rendered.Objects)
+	return s.kube.Apply(ctx, env.Namespace, rendered.Objects)
 }
 
 // syncIfLive re-applies an app's manifests if kube is configured and the
 // app's latest deployment is live. Used after env/override mutations so
 // running apps pick up the change without requiring an explicit deploy.
 // Any error is logged, never surfaced — these are opportunistic syncs.
-func (s *server) syncIfLive(ctx context.Context, p store.Project, a store.App) {
+func (s *server) syncIfLive(ctx context.Context, p store.Project, env store.Environment, a store.App) {
 	if a.Ejected {
 		return
 	}
@@ -364,7 +365,7 @@ func (s *server) syncIfLive(ctx context.Context, p store.Project, a store.App) {
 	if d.Status != "live" {
 		return
 	}
-	if err := s.syncApp(ctx, p, a); err != nil {
+	if err := s.syncApp(ctx, p, env, a); err != nil {
 		log.Printf("sync app: %v", err)
 	}
 }
