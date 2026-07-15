@@ -117,6 +117,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/volumes/remove", s.uiPage(s.handleUIVolumeRemove))
 	mux.HandleFunc("POST /ui/projects/{project}/addons", s.uiPage(s.handleUIAddonCreate))
 	mux.HandleFunc("POST /ui/projects/{project}/addons/delete", s.uiPage(s.handleUIAddonDelete))
+	mux.HandleFunc("POST /ui/projects/{project}/previews/delete", s.uiPage(s.handleUIPreviewDelete))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/addons/attach", s.uiPage(s.handleUIAddonAttach))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/addons/detach", s.uiPage(s.handleUIAddonDetach))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/deploy", s.uiPage(s.handleUIDeploy))
@@ -461,6 +462,56 @@ func (s *server) uiAddon(w http.ResponseWriter, p store.Project, name string) (s
 	return a, true
 }
 
+// uiPreviewApp is one preview environment's cloned app, as shown in the
+// Previews card's app-URL list.
+type uiPreviewApp struct {
+	Name string
+	URL  string
+}
+
+// uiPreviewRow is a preview environment's project-page view model — its
+// source branch, idle-activity timestamp (the clock reapPreviews' TTL
+// sweep reads), and its cloned apps' URLs. Mirrors previewJSON
+// (preview.go), the REST API's equivalent shape.
+type uiPreviewRow struct {
+	Name         string
+	SourceBranch string
+	LastActiveAt string
+	Apps         []uiPreviewApp
+}
+
+// uiPreviewRows lists every preview environment on p (kind=='preview' only
+// — its standing environments are the env selector's concern, uiEnvChips),
+// for the project page's Previews card.
+func (s *server) uiPreviewRows(p store.Project) ([]uiPreviewRow, error) {
+	envs, err := s.st.ListEnvironments(p.ID)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]uiPreviewRow, 0)
+	for _, e := range envs {
+		if e.Kind != "preview" {
+			continue
+		}
+		apps, err := s.st.ListAppsInEnv(e.ID)
+		if err != nil {
+			return nil, err
+		}
+		appRows := make([]uiPreviewApp, 0, len(apps))
+		for _, a := range apps {
+			u := s.appURLForEnv(a, e.Name, p.DefaultEnv)
+			if a.Internal {
+				u = internalURLFor(a.Name, e.Namespace)
+			}
+			appRows = append(appRows, uiPreviewApp{Name: a.Name, URL: u})
+		}
+		rows = append(rows, uiPreviewRow{
+			Name: e.Name, SourceBranch: e.SourceBranch, LastActiveAt: e.LastActiveAt, Apps: appRows,
+		})
+	}
+	return rows, nil
+}
+
 // uiProjectCard is projects.html's per-card view model: the project plus its
 // app-count summary (derived the same way handleUIApps derives per-app
 // status: LatestDeployment per app, bucketed into live/building/failed) and
@@ -793,6 +844,12 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	previews, err := s.uiPreviewRows(p)
+	if err != nil {
+		log.Printf("ui previews: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	var banner string
 	if e := r.URL.Query().Get("err"); e != "" {
 		banner = "error: " + e
@@ -812,7 +869,7 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	s.renderPage(w, "apps.html", map[string]any{
 		"User": u, "Project": p, "Apps": rows, "Addons": addons, "Members": members, "Banner": banner,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin", "PErrNote": perrNote,
-		"GPUQuota": p.GPUQuota, "Pipelines": pipelines,
+		"GPUQuota": p.GPUQuota, "Pipelines": pipelines, "Previews": previews,
 		"CPUQuotaMilli": p.CPUQuotaMilli, "MemQuotaMB": p.MemQuotaMB,
 		"Env": uiEnvChipFrom(env), "Envs": envs,
 	})
@@ -2208,6 +2265,39 @@ func (s *server) handleUIAddonDelete(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 	flash(w, "ok", "addon deleted")
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
+}
+
+// handleUIPreviewDelete is handleDeletePreview's UI twin: same
+// teardownPreview core, redirect instead of a 204. 404s (plain text) on an
+// unknown name or a standing environment named by mistake, mirroring
+// handleDeletePreview's own guard.
+func (s *server) handleUIPreviewDelete(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProjectWrite(w, r, u)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	name := r.PostFormValue("name")
+	env, err := s.st.GetEnvironment(p.ID, name)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && env.Kind != "preview") {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		log.Printf("ui delete preview: get environment: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.teardownPreview(r.Context(), p, env); err != nil {
+		log.Printf("ui delete preview: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	flash(w, "ok", "preview deleted")
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 

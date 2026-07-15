@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -728,4 +730,195 @@ func TestReapPreviewsHonorsTTLSetting(t *testing.T) {
 	if _, err := st.GetEnvironmentByID(env.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("2-day-old preview should be reaped under a 1-day TTL: %v", err)
 	}
+}
+
+// previewHTTPServer is previewTestServer's HTTP-wrapped twin: Task 16's
+// previews REST endpoints need a real *httptest.Server (bearer-token auth
+// via doAuthed) rather than direct *server method calls, but still need a
+// fake kube layer that never reports a build job as terminal and a typed
+// clientset for teardownPreview's DeleteNamespace — same fixture shape as
+// previewTestServer, just wrapped in newHTTPTest instead of newServer.
+func previewHTTPServer(t *testing.T) (*httptestServer, *store.Store) {
+	t.Helper()
+	st := newTestStore(t)
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
+	// Same blanket reactor as previewTestServer, above: reads fall through
+	// to the default tracker (needed for anything that polls object state);
+	// every other verb — notably EnsureNamespace/ApplyIsolation's
+	// server-side-apply Patch, which the fake dynamic client's default
+	// tracker doesn't support — is swallowed as a no-op success.
+	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		if a.GetVerb() == "get" || a.GetVerb() == "list" {
+			return false, nil, nil
+		}
+		return true, nil, nil
+	})
+	dyn.PrependReactor("get", "jobs", func(a ktesting.Action) (bool, runtime.Object, error) {
+		return true, &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "batch/v1", "kind": "Job",
+			"metadata": map[string]any{"name": a.(ktesting.GetAction).GetName(), "namespace": "luncur-system"},
+			"status":   map[string]any{},
+		}}, nil
+	})
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := k8sfake.NewSimpleClientset()
+	srv := newHTTPTest(t, Deps{
+		Store: st, Kube: kube.NewForTest(dyn, cs), Sealer: sealer, ExternalIP: "1.2.3.4",
+	})
+	return srv, st
+}
+
+// decodePreviews decodes a GET .../previews response body into its list of
+// row maps, mirroring environments_test.go's decodeEnvs.
+func decodePreviews(t *testing.T, resp *http.Response) []map[string]any {
+	t.Helper()
+	defer resp.Body.Close()
+	var list []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatalf("decode previews: %v", err)
+	}
+	return list
+}
+
+// TestPreviewsEndpoints covers Task 16's list/create/delete previews REST
+// endpoints end to end: an empty branch is rejected, list starts empty,
+// create clones the develop base's app into a fresh preview and the list
+// then shows it, deleting a standing environment through the previews route
+// 404s (the kind=='preview' guard), and deleting the real preview tears it
+// down.
+func TestPreviewsEndpoints(t *testing.T) {
+	srv, st := previewHTTPServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/p/envs/develop/apps", admin, `{"name":"api","port":8080}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create develop app: want 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Empty branch is rejected.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/p/previews", admin, `{"branch":""}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty branch: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// List: none yet.
+	if list := decodePreviews(t, doAuthed(t, "GET", srv.URL+"/v1/projects/p/previews", admin, "")); len(list) != 0 {
+		t.Fatalf("want 0 previews, got %+v", list)
+	}
+
+	// Create.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/p/previews", admin, `{"branch":"feature/x"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create preview: want 201, got %d: %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var created map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	wantName := sanitizeBranch("feature/x")
+	if created["name"] != wantName || created["source_branch"] != "feature/x" {
+		t.Fatalf("created preview = %+v", created)
+	}
+	apps, _ := created["apps"].([]any)
+	if len(apps) != 1 {
+		t.Fatalf("created preview apps = %+v, want 1 (cloned from develop)", created["apps"])
+	}
+
+	// List: now shows the created preview.
+	list := decodePreviews(t, doAuthed(t, "GET", srv.URL+"/v1/projects/p/previews", admin, ""))
+	if len(list) != 1 || list[0]["name"] != wantName {
+		t.Fatalf("previews after create = %+v", list)
+	}
+
+	// Deleting a standing environment through the previews route 404s —
+	// this route only ever operates on kind=='preview' rows.
+	resp = doAuthed(t, "DELETE", srv.URL+"/v1/projects/p/previews/develop", admin, "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("delete standing env via previews route: want 404, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if _, err := st.GetEnvironment(stProjectID(t, st, "p"), "develop"); err != nil {
+		t.Fatalf("standing environment must survive: %v", err)
+	}
+
+	// Delete the preview for real.
+	resp = doAuthed(t, "DELETE", srv.URL+"/v1/projects/p/previews/"+wantName, admin, "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete preview: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	if list := decodePreviews(t, doAuthed(t, "GET", srv.URL+"/v1/projects/p/previews", admin, "")); len(list) != 0 {
+		t.Fatalf("preview not torn down: %+v", list)
+	}
+}
+
+// stProjectID is TestPreviewsEndpoints' tiny helper to fetch a project's ID
+// by name for a follow-up store call.
+func stProjectID(t *testing.T, st *store.Store, name string) int64 {
+	t.Helper()
+	p, err := st.GetProject(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p.ID
+}
+
+// TestCreatePreviewFromOverride covers the manual `from` base override:
+// an unknown base 400s, a preview environment named as a base 400s (a
+// preview cloning a preview is not a supported shape), and a valid standing
+// override clones from that environment instead of the project's
+// configured preview base.
+func TestCreatePreviewFromOverride(t *testing.T) {
+	srv, st := previewHTTPServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
+
+	resp := doAuthed(t, "POST", srv.URL+"/v1/projects/p/envs/staging/apps", admin, `{"name":"worker","port":9090}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create staging app: want 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Unknown base -> 400.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/p/previews", admin, `{"branch":"feature/y","from":"nope"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown base: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Valid override: clones from staging instead of develop.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/p/previews", admin, `{"branch":"feature/y","from":"staging"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create preview with from: want 201, got %d: %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var created map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	apps, _ := created["apps"].([]any)
+	if len(apps) != 1 {
+		t.Fatalf("want 1 cloned app from staging, got %+v", created["apps"])
+	}
+	app0, _ := apps[0].(map[string]any)
+	if app0["name"] != "worker" {
+		t.Fatalf("cloned app = %+v, want worker (from staging)", app0)
+	}
+
+	// A preview environment named as a base is rejected: 400, not cloned.
+	resp = doAuthed(t, "POST", srv.URL+"/v1/projects/p/previews", admin,
+		`{"branch":"feature/z","from":"`+sanitizeBranch("feature/y")+`"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("preview-as-base: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
 }

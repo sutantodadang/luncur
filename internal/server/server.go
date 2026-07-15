@@ -264,6 +264,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/projects/{project}/envs/{env}", s.authed(s.handleDeleteEnv))
 	mux.HandleFunc("PUT /v1/projects/{project}/envs/{env}/default", s.authed(s.handleSetDefaultEnv))
 	mux.HandleFunc("PUT /v1/projects/{project}/preview-base", s.authed(s.handleSetPreviewBase))
+	mux.HandleFunc("GET /v1/projects/{project}/previews", s.authed(s.handleListPreviews))
+	mux.HandleFunc("POST /v1/projects/{project}/previews", s.authed(s.handleCreatePreview))
+	mux.HandleFunc("DELETE /v1/projects/{project}/previews/{name}", s.authed(s.handleDeletePreview))
 	mux.HandleFunc("POST /v1/projects/{project}/webhook/secret", s.authed(s.handleGenerateProjectWebhookSecret))
 	// Project build webhook: unauthenticated by design (HMAC/token
 	// verification IS the auth), same convention as the per-app deploy

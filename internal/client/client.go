@@ -1648,3 +1648,42 @@ func (c *Client) SetPreviewBase(project, env string) error {
 	return c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/preview-base",
 		map[string]string{"env": env}, nil)
 }
+
+// PreviewApp is one app cloned into a preview environment, as returned by
+// the previews API's "apps" field.
+type PreviewApp struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// PreviewInfo is one preview environment, as returned by the previews API.
+// It mirrors the server's previewJSON shape.
+type PreviewInfo struct {
+	Name         string       `json:"name"`
+	SourceBranch string       `json:"source_branch"`
+	LastActiveAt string       `json:"last_active_at"`
+	Apps         []PreviewApp `json:"apps"`
+}
+
+// ListPreviews lists a project's preview environments.
+func (c *Client) ListPreviews(project string) ([]PreviewInfo, error) {
+	var out []PreviewInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/previews", nil, &out)
+	return out, err
+}
+
+// CreatePreview manually creates (or re-resolves) a preview environment for
+// branch. from, when non-empty, overrides which standing environment the
+// preview clones from instead of the project's configured preview base.
+func (c *Client) CreatePreview(project, branch, from string) (PreviewInfo, error) {
+	var out PreviewInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/previews",
+		map[string]string{"branch": branch, "from": from}, &out)
+	return out, err
+}
+
+// DeletePreview tears down a named preview environment.
+func (c *Client) DeletePreview(project, name string) error {
+	return c.do("DELETE",
+		"/v1/projects/"+url.PathEscape(project)+"/previews/"+url.PathEscape(name), nil, nil)
+}

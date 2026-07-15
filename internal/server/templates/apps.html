@@ -209,6 +209,26 @@ function uiPresetChange(preset) {
 </div>
 
 <div class="card mb-6">
+<h2>Previews</h2>
+{{if not .Previews}}<p class="mb-1 text-sm text-mut">No preview environments yet. Push a branch, or create one below.</p>{{end}}
+<table class="tbl"><tr><th>Name</th><th>Branch</th><th>Apps</th><th>Last active</th><th></th></tr>
+{{range .Previews}}<tr>
+  <td><a class="text-inkhi hover:text-signal" href="/ui/projects/{{$.Project.Name}}/envs/{{.Name}}">{{.Name}}</a></td>
+  <td class="font-mono text-xs">{{.SourceBranch}}</td>
+  <td class="text-xs">{{range .Apps}}<a class="text-inkhi hover:text-signal" href="{{.URL}}">{{.Name}}</a> {{end}}</td>
+  <td class="font-mono text-xs text-mut">{{.LastActiveAt}}</td>
+  <td><form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/previews/delete">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="name" value="{{.Name}}">
+    <button type="submit" class="btn-danger" hx-confirm="Delete preview {{.Name}}? This cannot be undone.">remove</button>
+  </form></td>
+</tr>{{end}}
+</table>
+<div class="cli-echo">$ <b>luncur preview ls --project {{.Project.Name}}</b></div>
+<div class="cli-echo">$ <b>luncur preview create &lt;branch&gt; --project {{.Project.Name}}</b></div>
+</div>
+
+<div class="card mb-6">
 <h2>Members</h2>
 <table class="tbl"><tr><th>Email</th><th>Role</th><th></th></tr>
 {{range .Members}}<tr><td>{{.Email}}</td><td>{{.Role}}</td><td>{{if $.IsAdmin}}<form class="inline-flex" method="post" action="/ui/projects/{{$.Project.Name}}/members/remove">

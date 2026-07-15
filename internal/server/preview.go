@@ -434,7 +434,24 @@ func sanitizeBranch(b string) string {
 // the same repo with git_branch overridden to the pushed branch. Addon data
 // (postgres/redis via dump->restore, minio/mlflow created empty) is seeded
 // separately by clonePreviewAddons, below.
+//
+// ensurePreview always resolves its base the automatic way; a caller that
+// needs to override which environment a fresh preview clones from (the
+// manual `POST .../previews` endpoint's `from` field, Task 16) calls
+// ensurePreviewFromBase directly.
 func (s *server) ensurePreview(ctx context.Context, p store.Project, branch string) (store.Environment, error) {
+	return s.ensurePreviewFromBase(ctx, p, branch, "")
+}
+
+// ensurePreviewFromBase is ensurePreview's actual implementation, with an
+// optional explicit base-environment override: baseOverride=="" reproduces
+// ensurePreview's original behavior exactly (p.PreviewBaseEnv, falling back
+// to "develop"); a non-empty baseOverride clones from that environment
+// instead. The caller is responsible for validating baseOverride names a
+// real (and, for handleCreatePreview, standing) environment before calling
+// this — ensurePreviewFromBase itself just looks it up and 404s via the
+// ordinary GetEnvironment error path if it doesn't exist.
+func (s *server) ensurePreviewFromBase(ctx context.Context, p store.Project, branch, baseOverride string) (store.Environment, error) {
 	name := sanitizeBranch(branch)
 	if existing, err := s.st.GetEnvironment(p.ID, name); err == nil {
 		return existing, nil
@@ -442,7 +459,10 @@ func (s *server) ensurePreview(ctx context.Context, p store.Project, branch stri
 		return store.Environment{}, fmt.Errorf("get environment: %w", err)
 	}
 
-	baseName := p.PreviewBaseEnv
+	baseName := baseOverride
+	if baseName == "" {
+		baseName = p.PreviewBaseEnv
+	}
 	if baseName == "" {
 		baseName = "develop"
 	}
@@ -651,4 +671,141 @@ func (s *server) clonePreviewAddonAttachments(preview store.Environment, base, n
 		}
 	}
 	return warnings
+}
+
+// previewJSON is the shared list/create response shape for a preview
+// environment: its name, source branch, idle-activity timestamp (reapPreviews'
+// TTL clock), and each of its cloned apps' public/internal URL — the same
+// URL-resolution rule appJSON uses (appURLForEnv for a public app,
+// internalURLFor for an internal one). Shared by handleListPreviews,
+// handleCreatePreview, and the UI's Previews card (ui.go).
+func (s *server) previewJSON(p store.Project, env store.Environment) map[string]any {
+	apps, _ := s.st.ListAppsInEnv(env.ID)
+	appsOut := make([]map[string]any, 0, len(apps))
+	for _, a := range apps {
+		u := s.appURLForEnv(a, env.Name, p.DefaultEnv)
+		if a.Internal {
+			u = internalURLFor(a.Name, env.Namespace)
+		}
+		appsOut = append(appsOut, map[string]any{"name": a.Name, "url": u})
+	}
+	return map[string]any{
+		"name":           env.Name,
+		"source_branch":  env.SourceBranch,
+		"last_active_at": env.LastActiveAt,
+		"apps":           appsOut,
+	}
+}
+
+// handleListPreviews lists a project's preview environments (kind=='preview'
+// only — its standing environments have their own listing, handleListEnvs).
+// Read-only, so any project member may call it, mirroring handleListEnvs.
+func (s *server) handleListPreviews(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	envs, err := s.st.ListEnvironments(p.ID)
+	if err != nil {
+		log.Printf("list previews: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]map[string]any, 0, len(envs))
+	for _, e := range envs {
+		if e.Kind != "preview" {
+			continue
+		}
+		out = append(out, s.previewJSON(p, e))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleCreatePreview manually creates (or, for an already-pushed branch,
+// re-resolves — ensurePreview/ensurePreviewFromBase are both idempotent on
+// name) a preview environment for a branch, the same core the project
+// webhook's branch router uses. from, when non-empty, overrides which
+// standing environment the preview clones from instead of the project's
+// configured PreviewBaseEnv; it must name a real standing environment (400
+// on an unknown name or on naming a preview environment as a base — a
+// preview cloning a preview is not a supported shape).
+func (s *server) handleCreatePreview(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	if !s.requireKube(w) {
+		return
+	}
+
+	var req struct {
+		Branch string `json:"branch"`
+		From   string `json:"from"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	if req.Branch == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "branch is required")
+		return
+	}
+
+	if req.From != "" {
+		base, err := s.st.GetEnvironment(p.ID, req.From)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusBadRequest, "bad_request", "no such base environment")
+				return
+			}
+			log.Printf("create preview: get base environment: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		if base.Kind != "standing" {
+			writeError(w, http.StatusBadRequest, "bad_request", "base environment must be a standing environment")
+			return
+		}
+	}
+
+	env, err := s.ensurePreviewFromBase(r.Context(), p, req.Branch, req.From)
+	if err != nil {
+		log.Printf("create preview: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, s.previewJSON(p, env))
+}
+
+// handleDeletePreview manually tears down a named preview environment
+// (teardownPreview — the same core the idle-TTL reaper and PR-close webhook
+// path use). 404s on an unknown environment name and, distinctly, on a
+// standing environment: this route only ever operates on kind=='preview'
+// rows, so naming a standing environment here reports the same "no such
+// preview environment" 404 rather than tearing it down.
+func (s *server) handleDeletePreview(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	env, err := s.st.GetEnvironment(p.ID, r.PathValue("name"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "no such preview environment")
+			return
+		}
+		log.Printf("delete preview: get environment: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if env.Kind != "preview" {
+		writeError(w, http.StatusNotFound, "not_found", "no such preview environment")
+		return
+	}
+	if err := s.teardownPreview(r.Context(), p, env); err != nil {
+		log.Printf("delete preview: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -59,6 +59,59 @@ func TestClientLoginMeCreateUser(t *testing.T) {
 	}
 }
 
+// TestClientPreviews exercises the ListPreviews/CreatePreview/DeletePreview
+// wiring end to end against a real (in-process) server: list finds a
+// directly-seeded preview environment, delete removes it, and — since
+// testAPI has no kube configured — create surfaces the server's
+// kubernetes_unavailable error, proving the client method reaches the right
+// route (the same convention client_test.go's kube-gated siblings use).
+func TestClientPreviews(t *testing.T) {
+	srv, st := testAPI(t)
+	if _, err := st.CreateUser("root@b.co", "pw123456", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	c := New(srv.URL, "")
+	tok, err := c.Login("root@b.co", "pw123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c = New(srv.URL, tok)
+
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateEnvironment(p.ID, "feature-x", "preview", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	previews, err := c.ListPreviews("proj")
+	if err != nil {
+		t.Fatalf("list previews: %v", err)
+	}
+	if len(previews) != 1 || previews[0].Name != "feature-x" {
+		t.Fatalf("previews = %+v", previews)
+	}
+
+	if _, err := c.CreatePreview("proj", "feature/y", ""); err == nil || !strings.Contains(err.Error(), "kubernetes") {
+		t.Fatalf("want kubernetes error, got %v", err)
+	}
+
+	if err := c.DeletePreview("proj", "feature-x"); err != nil {
+		t.Fatalf("delete preview: %v", err)
+	}
+	previews, err = c.ListPreviews("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(previews) != 0 {
+		t.Fatalf("preview not deleted: %+v", previews)
+	}
+}
+
 func TestEnvPath(t *testing.T) {
 	c := New("http://x", "")
 	if got := c.EnvPath("web", ""); got != "/v1/projects/web" {
