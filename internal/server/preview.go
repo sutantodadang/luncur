@@ -636,9 +636,7 @@ func (s *server) clonePreviewAddons(ctx context.Context, base, preview store.Env
 		// were wired: any base app attached to ad gets its already-cloned
 		// preview counterpart (clonePreviewApp always runs before this, in
 		// ensurePreview) attached to newAddon instead.
-		for _, w := range s.clonePreviewAddonAttachments(preview, ad, newAddon) {
-			warnings = append(warnings, w)
-		}
+		warnings = append(warnings, s.clonePreviewAddonAttachments(preview, ad, newAddon)...)
 	}
 	return warnings
 }
