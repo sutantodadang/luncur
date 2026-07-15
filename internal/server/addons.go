@@ -389,10 +389,15 @@ func (s *server) addonRows(ctx context.Context, p store.Project) ([]addonRow, er
 	for _, a := range list {
 		ready := false
 		if s.kube != nil {
-			ready, err = s.kube.StatefulSetReady(ctx, p.Namespace, addon.ServiceName(a.Name))
-			if err != nil {
-				log.Printf("statefulset ready %s: %v", a.Name, err)
-				ready = false
+			ns, nsErr := s.addonNamespace(a)
+			if nsErr != nil {
+				log.Printf("addon namespace %s: %v", a.Name, nsErr)
+			} else {
+				ready, err = s.kube.StatefulSetReady(ctx, ns, addon.ServiceName(a.Name))
+				if err != nil {
+					log.Printf("statefulset ready %s: %v", a.Name, err)
+					ready = false
+				}
 			}
 		}
 		apps, err := s.st.AppsForAddon(a.ID)

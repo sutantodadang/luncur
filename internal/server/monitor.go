@@ -207,11 +207,15 @@ func (s *server) checkCrashLoops(ctx context.Context, now time.Time) {
 			continue
 		}
 		for _, a := range apps {
-			count, err := s.kube.RestartCount(ctx, p.Namespace, a.Name)
+			ns, err := s.appNamespace(a)
 			if err != nil {
 				continue
 			}
-			key := p.Namespace + "/" + a.Name
+			count, err := s.kube.RestartCount(ctx, ns, a.Name)
+			if err != nil {
+				continue
+			}
+			key := ns + "/" + a.Name
 			if delta, alert := s.mon.crashLoopCheck(now, key, count, crashCooldown); alert {
 				s.notify(notifyEvent{
 					Event:   "app_unhealthy",

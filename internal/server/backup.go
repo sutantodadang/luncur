@@ -189,6 +189,25 @@ func (s *server) addonNamespace(ad store.Addon) (string, error) {
 	return p.Namespace, nil
 }
 
+// appNamespace resolves the Kubernetes namespace an app's objects live in —
+// its environment's namespace (luncur-<project>-<env>). Falls back to the
+// project namespace only for pre-environments app rows (environment_id 0),
+// mirroring addonNamespace above.
+func (s *server) appNamespace(a store.App) (string, error) {
+	if a.EnvironmentID != 0 {
+		env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+		if err != nil {
+			return "", err
+		}
+		return env.Namespace, nil
+	}
+	p, err := s.st.GetProjectByID(a.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	return p.Namespace, nil
+}
+
 // dumpAddon streams one addon's logical dump via pods/exec. Credentials are
 // referenced from the pod's own environment — never placed on the command
 // line.

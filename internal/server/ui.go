@@ -754,7 +754,7 @@ func (s *server) handleUIProjectDelete(w http.ResponseWriter, r *http.Request, u
 		http.Redirect(w, r, "/ui/projects/"+p.Name+"?perr=nokube", http.StatusSeeOther)
 		return
 	}
-	if err := s.deleteProject(r.Context(), p, apps, addons); err != nil {
+	if err := s.deleteProject(r.Context(), p); err != nil {
 		log.Printf("ui delete project: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

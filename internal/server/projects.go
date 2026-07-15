@@ -192,36 +192,45 @@ func (s *server) handleRenameProject(w http.ResponseWriter, r *http.Request, u s
 }
 
 // deleteProject is handleDeleteProject's and handleUIProjectDelete's shared
-// core: tear down every addon then every app (kube objects + row each),
-// drop the project's namespace, then the project row itself. A mid-way
-// error is safe to retry — nothing here is destroyed twice.
-func (s *server) deleteProject(ctx context.Context, p store.Project, apps []store.App, addons []store.Addon) error {
-	// The whole project is being torn down at once (every environment along
-	// with it, once multi-environment teardown lands — see Task 15's
-	// teardownPreview); today that's just the default (production)
-	// environment, whose namespace is byte-identical to p.Namespace.
-	env, err := s.st.GetEnvironment(p.ID, p.DefaultEnv)
+// core: tear down every environment's addons then apps (kube objects + row
+// each), drop every environment's namespace, then the project row itself.
+// Every environment is walked — not just the default/production one — so
+// develop/staging/preview namespaces and their app/addon rows are never
+// leaked or orphaned. A mid-way error is safe to retry — nothing here is
+// destroyed twice.
+func (s *server) deleteProject(ctx context.Context, p store.Project) error {
+	envs, err := s.st.ListEnvironments(p.ID)
 	if err != nil {
-		return fmt.Errorf("get default environment: %w", err)
+		return fmt.Errorf("list environments: %w", err)
 	}
-	for _, ad := range addons {
-		// force=true: the project is being destroyed outright, so an
-		// addon still attached to one of its own apps isn't a reason to
-		// stop. keepData=false: volumes go with everything else.
-		if err := s.removeAddon(ctx, p, env, ad, true, false); err != nil {
-			return fmt.Errorf("remove addon %s: %w", ad.Name, err)
+	for _, env := range envs {
+		addons, err := s.st.AddonsForEnv(env.ID)
+		if err != nil {
+			return fmt.Errorf("list addons for env %s: %w", env.Name, err)
 		}
-	}
-	for _, a := range apps {
-		if err := s.destroyApp(ctx, p, env, a); err != nil {
-			return fmt.Errorf("destroy app %s: %w", a.Name, err)
+		for _, ad := range addons {
+			// force=true: the project is being destroyed outright, so an
+			// addon still attached to one of its own apps isn't a reason to
+			// stop. keepData=false: volumes go with everything else.
+			if err := s.removeAddon(ctx, p, env, ad, true, false); err != nil {
+				return fmt.Errorf("remove addon %s: %w", ad.Name, err)
+			}
 		}
-	}
-	if s.kube != nil {
-		// Namespace may already be gone (e.g. a prior partial run); log
-		// and continue rather than fail the whole delete on that alone.
-		if err := s.kube.DeleteNamespace(ctx, p.Namespace); err != nil {
-			log.Printf("delete project: delete namespace %s: %v", p.Namespace, err)
+		apps, err := s.st.ListAppsInEnv(env.ID)
+		if err != nil {
+			return fmt.Errorf("list apps for env %s: %w", env.Name, err)
+		}
+		for _, a := range apps {
+			if err := s.destroyApp(ctx, p, env, a); err != nil {
+				return fmt.Errorf("destroy app %s: %w", a.Name, err)
+			}
+		}
+		if s.kube != nil {
+			// Namespace may already be gone (e.g. a prior partial run); log
+			// and continue rather than fail the whole delete on that alone.
+			if err := s.kube.DeleteNamespace(ctx, env.Namespace); err != nil {
+				log.Printf("delete project: delete namespace %s: %v", env.Namespace, err)
+			}
 		}
 	}
 	return s.st.DeleteProject(p.ID)
@@ -270,7 +279,7 @@ func (s *server) handleDeleteProject(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 
-	if err := s.deleteProject(r.Context(), p, apps, addons); err != nil {
+	if err := s.deleteProject(r.Context(), p); err != nil {
 		log.Printf("delete project: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
