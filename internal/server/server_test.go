@@ -41,6 +41,28 @@ func testServer(t *testing.T) (*httptest.Server, *store.Store) {
 	return srv, st
 }
 
+// seedDefaultEnv seeds p's standard environments (mirroring what
+// handleCreateProject/handleUIProjectCreate do for every project created
+// through the HTTP layer) and returns the refreshed project (DefaultEnv now
+// populated) plus its resolved production environment — for tests that
+// create a project directly via the store (bypassing POST /v1/projects) and
+// then need a store.Environment to call an env-scoped server function with.
+func seedDefaultEnv(t *testing.T, st *store.Store, p store.Project) (store.Project, store.Environment) {
+	t.Helper()
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatalf("seed project environments: %v", err)
+	}
+	p, err := st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatalf("reload project: %v", err)
+	}
+	env, err := st.GetEnvironment(p.ID, p.DefaultEnv)
+	if err != nil {
+		t.Fatalf("get default environment: %v", err)
+	}
+	return p, env
+}
+
 func postJSON(t *testing.T, url, body string) *http.Response {
 	t.Helper()
 	resp, err := http.Post(url, "application/json", strings.NewReader(body))

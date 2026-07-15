@@ -84,3 +84,46 @@ func TestOpenMigratesOldDB(t *testing.T) {
 // idempotency is covered by re-running Open on dbPath above being safe by
 // construction (Open is called once per test here, but TestMigrateBackfillsDeploymentSeq
 // in store_test.go already re-opens a migrated legacy DB a second time).
+
+func TestBackfillEnvironments(t *testing.T) {
+	s := openTest(t)
+	p, _ := s.CreateProject("legacy")
+	// simulate a pre-environments app: insert directly with project_id, env 0.
+	if _, err := s.DB().Exec(
+		`INSERT INTO apps (project_id, name, source_type, port, kind, schedule, environment_id)
+		 VALUES (?, 'api', 'tarball', 8080, 'web', '', 0)`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := backfillEnvironments(s.DB()); err != nil {
+		t.Fatal(err)
+	}
+
+	prod, err := s.GetEnvironment(p.ID, "production")
+	if err != nil {
+		t.Fatalf("no production env: %v", err)
+	}
+	if !prod.IsDefault {
+		t.Fatal("production must be default")
+	}
+	if prod.Namespace != "luncur-legacy" {
+		t.Fatalf("prod ns = %q (must keep old ns)", prod.Namespace)
+	}
+	for _, n := range []string{"develop", "staging"} {
+		if _, err := s.GetEnvironment(p.ID, n); err != nil {
+			t.Fatalf("missing %s: %v", n, err)
+		}
+	}
+	// app re-parented to production
+	a, _ := s.GetAppInEnv(prod.ID, "api")
+	if a.Name != "api" {
+		t.Fatal("app not re-parented to production")
+	}
+	// idempotent
+	if err := backfillEnvironments(s.DB()); err != nil {
+		t.Fatal(err)
+	}
+	envs, _ := s.ListEnvironments(p.ID)
+	if len(envs) != 3 {
+		t.Fatalf("want 3 envs after re-run, got %d", len(envs))
+	}
+}

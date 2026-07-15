@@ -153,12 +153,12 @@ Full operator manual: **[sutantodadang.github.io/luncur](https://sutantodadang.g
 
 **Exploring next** (sponsor input shapes the order — open an issue!):
 
-- [ ] Cron run history (last-run status), pause/suspend, manual "run now"
-- [ ] More DNS providers (deSEC, Hetzner, DigitalOcean, …)
-- [ ] Automated addon-data restore (today: guided one-liners)
-- [ ] HTML invite/notification emails
-- [ ] Preview environments per branch
-- [ ] Multi-node K3s support
+- [x] Cron run history (last-run status), pause/suspend, manual "run now"
+- [x] More DNS providers (deSEC, Hetzner, DigitalOcean, …)
+- [x] Automated addon-data restore
+- [x] HTML invite/notification emails
+- [x] Preview environments per branch (+ per-project environments)
+- [x] Multi-node K3s support
 - [ ] ARM builds & Raspberry Pi story
 
 ## 💖 Sponsor luncur

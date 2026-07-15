@@ -107,6 +107,7 @@ func TestRenderAppIngressHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 
 	ingressJSON := func(t *testing.T, name string) string {
 		t.Helper()
@@ -114,7 +115,7 @@ func TestRenderAppIngressHosts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rendered, err := s.renderApp(p, a, "nginx:1", true)
+		rendered, err := s.renderApp(p, env, a, "nginx:1", true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,4 +175,18 @@ func TestRenderAppIngressHosts(t *testing.T) {
 			t.Fatalf("want wildcard rule:\n%s", ing)
 		}
 	})
+}
+
+// TestHostForEnv covers hostForEnv's default-vs-non-default branching: the
+// project's default environment gets the plain hostFor host, any other
+// environment gets an "-<env>" suffix on the app name so the same app name
+// can coexist across environments.
+func TestHostForEnv(t *testing.T) {
+	ip := "1.2.3.4"
+	if got := hostForEnv("api", "production", "production", ip); got != "api.1-2-3-4.sslip.io" {
+		t.Fatalf("default env host = %q", got)
+	}
+	if got := hostForEnv("api", "develop", "production", ip); got != "api-develop.1-2-3-4.sslip.io" {
+		t.Fatalf("non-default host = %q", got)
+	}
 }

@@ -118,7 +118,7 @@ func addonEnvVars(typ, name, namespace string, creds addon.Creds) map[string]str
 // dashes→underscores) for a second addon of the same type. A key already
 // present in userEnv is left out of the returned map (user wins) and
 // reported in the collisions slice instead.
-func (s *server) addonEnv(p store.Project, a store.App, userEnv map[string]string) (map[string]string, []string, error) {
+func (s *server) addonEnv(p store.Project, env store.Environment, a store.App, userEnv map[string]string) (map[string]string, []string, error) {
 	addons, err := s.st.AddonsForApp(a.ID)
 	if err != nil {
 		return nil, nil, err
@@ -131,7 +131,7 @@ func (s *server) addonEnv(p store.Project, a store.App, userEnv map[string]strin
 		if err != nil {
 			return nil, nil, fmt.Errorf("unseal addon %s creds: %w", ad.Name, err)
 		}
-		for key, url := range addonEnvVars(ad.Type, ad.Name, p.Namespace, creds) {
+		for key, url := range addonEnvVars(ad.Type, ad.Name, env.Namespace, creds) {
 			if seenType[ad.Type] {
 				key = key + "_" + strings.ToUpper(strings.ReplaceAll(ad.Name, "-", "_"))
 			}
@@ -167,8 +167,8 @@ func (s *server) requireAddon(w http.ResponseWriter, p store.Project, name strin
 // (artifacts stay on the addon's PVC) — plus the panel path prefix the
 // tracking server serves under. Keyed by namespace, not project name, so
 // the link survives project renames.
-func (s *server) mlflowRenderExtras(p store.Project, name string) (*addon.S3Ref, string) {
-	prefix := "/ui/mlflow/" + p.Namespace + "/" + name
+func (s *server) mlflowRenderExtras(p store.Project, env store.Environment, name string) (*addon.S3Ref, string) {
+	prefix := "/ui/mlflow/" + env.Namespace + "/" + name
 	addons, err := s.st.ListAddons(p.ID)
 	if err == nil {
 		for _, ad := range addons {
@@ -180,7 +180,7 @@ func (s *server) mlflowRenderExtras(p store.Project, name string) (*addon.S3Ref,
 				break
 			}
 			return &addon.S3Ref{
-				Endpoint: fmt.Sprintf("http://%s.%s:%d", addon.ServiceName(ad.Name), p.Namespace, addon.MinIOPort),
+				Endpoint: fmt.Sprintf("http://%s.%s:%d", addon.ServiceName(ad.Name), env.Namespace, addon.MinIOPort),
 				Key:      creds.User, Secret: creds.Password, Bucket: creds.DB,
 			}, prefix
 		}
@@ -200,7 +200,7 @@ func (s *server) mlflowRenderExtras(p store.Project, name string) (*addon.S3Ref,
 // optionally attach it to an app (the CLI's `addon add` sugar). name and
 // version default when empty: name to "<type><n>" (n = count of existing
 // addons of that type, plus one), version to postgres 16 / redis 7.
-func (s *server) createAddon(ctx context.Context, p store.Project, typ, name, version string, sizeGB int, appName string) (store.Addon, error) {
+func (s *server) createAddon(ctx context.Context, p store.Project, env store.Environment, typ, name, version string, sizeGB int, appName string) (store.Addon, error) {
 	if name == "" {
 		existing, err := s.st.ListAddons(p.ID)
 		if err != nil {
@@ -240,22 +240,30 @@ func (s *server) createAddon(ctx context.Context, p store.Project, typ, name, ve
 	if err != nil {
 		return store.Addon{}, err
 	}
+	// CreateAddon only takes a project_id; attribute the row to the
+	// environment it's actually being provisioned into (mirrors
+	// SetAppEnvironmentID's use right after CreateApp/CreateGitApp) so
+	// env-scoped lookups (AddonsForEnv) and preview teardown can find it.
+	if err := s.st.SetAddonEnvironmentID(a.ID, env.ID); err != nil {
+		return store.Addon{}, err
+	}
+	a.EnvironmentID = env.ID
 
 	params := addon.Params{
-		Namespace: p.Namespace, Type: a.Type, Name: a.Name, Version: a.Version,
+		Namespace: env.Namespace, Type: a.Type, Name: a.Name, Version: a.Version,
 		SizeGB: a.SizeGB, Creds: creds,
 	}
 	if a.Type == "mlflow" {
-		params.S3, params.URLPrefix = s.mlflowRenderExtras(p, a.Name)
+		params.S3, params.URLPrefix = s.mlflowRenderExtras(p, env, a.Name)
 	}
 	objs, err := addon.Render(params)
 	if err != nil {
 		return store.Addon{}, err
 	}
-	if err := s.ensureProjectNamespace(ctx, p.Namespace); err != nil {
+	if err := s.ensureEnvNamespace(ctx, env); err != nil {
 		return store.Addon{}, err
 	}
-	if err := s.kube.Apply(ctx, p.Namespace, objs); err != nil {
+	if err := s.kube.Apply(ctx, env.Namespace, objs); err != nil {
 		return store.Addon{}, err
 	}
 
@@ -267,14 +275,14 @@ func (s *server) createAddon(ctx context.Context, p store.Project, typ, name, ve
 		if err := s.st.AttachAddon(a.ID, app.ID); err != nil {
 			return store.Addon{}, err
 		}
-		s.syncIfLive(ctx, p, app)
+		s.syncIfLive(ctx, p, env, app)
 	}
 
 	if a.Type == "minio" {
 		// MinIO does not auto-create buckets; bootstrap the default one
 		// once the StatefulSet is up. Best-effort: apps can also create it
 		// themselves via the injected credentials.
-		go s.ensureMinioBucket(p, a, creds)
+		go s.ensureMinioBucket(env, a, creds)
 	}
 
 	return a, nil
@@ -286,11 +294,11 @@ var minioBucketWait = 5 * time.Minute
 
 // ensureMinioBucket waits for a minio addon's StatefulSet to report ready,
 // then creates its default bucket via the S3 API. Failures are logged only.
-func (s *server) ensureMinioBucket(p store.Project, a store.Addon, creds addon.Creds) {
+func (s *server) ensureMinioBucket(env store.Environment, a store.Addon, creds addon.Creds) {
 	ctx, cancel := context.WithTimeout(context.Background(), minioBucketWait)
 	defer cancel()
 	for {
-		ready, err := s.kube.StatefulSetReady(ctx, p.Namespace, addon.ServiceName(a.Name))
+		ready, err := s.kube.StatefulSetReady(ctx, env.Namespace, addon.ServiceName(a.Name))
 		if err == nil && ready {
 			break
 		}
@@ -302,7 +310,7 @@ func (s *server) ensureMinioBucket(p store.Project, a store.Addon, creds addon.C
 		}
 	}
 	client := &s3.Client{
-		Endpoint:  fmt.Sprintf("http://%s.%s:%d", addon.ServiceName(a.Name), p.Namespace, addon.MinIOPort),
+		Endpoint:  fmt.Sprintf("http://%s.%s:%d", addon.ServiceName(a.Name), env.Namespace, addon.MinIOPort),
 		Bucket:    creds.DB,
 		AccessKey: creds.User,
 		SecretKey: creds.Password,
@@ -316,7 +324,7 @@ func (s *server) ensureMinioBucket(p store.Project, a store.Addon, creds addon.C
 }
 
 func (s *server) handleCreateAddon(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
@@ -336,7 +344,7 @@ func (s *server) handleCreateAddon(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
-	a, err := s.createAddon(r.Context(), p, req.Type, req.Name, req.Version, req.SizeGB, req.App)
+	a, err := s.createAddon(r.Context(), p, env, req.Type, req.Name, req.Version, req.SizeGB, req.App)
 	if err != nil {
 		switch {
 		case errors.Is(err, errSealerUnavailable):
@@ -381,10 +389,15 @@ func (s *server) addonRows(ctx context.Context, p store.Project) ([]addonRow, er
 	for _, a := range list {
 		ready := false
 		if s.kube != nil {
-			ready, err = s.kube.StatefulSetReady(ctx, p.Namespace, addon.ServiceName(a.Name))
-			if err != nil {
-				log.Printf("statefulset ready %s: %v", a.Name, err)
-				ready = false
+			ns, nsErr := s.addonNamespace(a)
+			if nsErr != nil {
+				log.Printf("addon namespace %s: %v", a.Name, nsErr)
+			} else {
+				ready, err = s.kube.StatefulSetReady(ctx, ns, addon.ServiceName(a.Name))
+				if err != nil {
+					log.Printf("statefulset ready %s: %v", a.Name, err)
+					ready = false
+				}
 			}
 		}
 		apps, err := s.st.AppsForAddon(a.ID)
@@ -423,7 +436,7 @@ func (s *server) handleListAddons(w http.ResponseWriter, r *http.Request, u stor
 func (s *server) handleAddonURL(w http.ResponseWriter, r *http.Request, u store.User) {
 	// Connection URLs embed live credentials; a read-only viewer could use
 	// them to write to the addon directly, so gate like a mutation.
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
@@ -443,7 +456,7 @@ func (s *server) handleAddonURL(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	key, url := addonKeyURL(ad.Type, ad.Name, p.Namespace, creds)
+	key, url := addonKeyURL(ad.Type, ad.Name, env.Namespace, creds)
 	writeJSON(w, http.StatusOK, map[string]any{"env_key": key, "url": url})
 }
 
@@ -451,7 +464,7 @@ func (s *server) handleAddonURL(w http.ResponseWriter, r *http.Request, u store.
 // an app, then re-sync if the app is live. Returns a warning ("" when
 // none) when the addon's injected env key collides with a user-set var —
 // user wins, so attaching doesn't change the app's actual env.
-func (s *server) attachAddon(ctx context.Context, p store.Project, ad store.Addon, appName string) (string, error) {
+func (s *server) attachAddon(ctx context.Context, p store.Project, env store.Environment, ad store.Addon, appName string) (string, error) {
 	app, err := s.st.GetApp(p.ID, appName)
 	if err != nil {
 		return "", err
@@ -467,12 +480,12 @@ func (s *server) attachAddon(ctx context.Context, p store.Project, ad store.Addo
 	if err != nil {
 		return "", err
 	}
-	_, collisions, err := s.addonEnv(p, app, userEnv)
+	_, collisions, err := s.addonEnv(p, env, app, userEnv)
 	if err != nil {
 		return "", err
 	}
 
-	s.syncIfLive(ctx, p, app)
+	s.syncIfLive(ctx, p, env, app)
 
 	if len(collisions) > 0 {
 		return fmt.Sprintf("env var(s) already set on the app, addon value not applied: %s", strings.Join(collisions, ", ")), nil
@@ -481,7 +494,7 @@ func (s *server) attachAddon(ctx context.Context, p store.Project, ad store.Addo
 }
 
 func (s *server) handleAttachAddon(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
@@ -498,7 +511,7 @@ func (s *server) handleAttachAddon(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
-	warning, err := s.attachAddon(r.Context(), p, ad, req.App)
+	warning, err := s.attachAddon(r.Context(), p, env, ad, req.App)
 	if err != nil {
 		switch {
 		case errors.Is(err, errAppEjected):
@@ -519,7 +532,7 @@ func (s *server) handleAttachAddon(w http.ResponseWriter, r *http.Request, u sto
 }
 
 func (s *server) handleDetachAddon(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
@@ -535,7 +548,7 @@ func (s *server) handleDetachAddon(w http.ResponseWriter, r *http.Request, u sto
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	app, ok := s.requireApp(w, p, req.App)
+	app, ok := s.requireApp(w, p, env, req.App)
 	if !ok {
 		return
 	}
@@ -552,7 +565,7 @@ func (s *server) handleDetachAddon(w http.ResponseWriter, r *http.Request, u sto
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	s.syncIfLive(r.Context(), p, app)
+	s.syncIfLive(r.Context(), p, env, app)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -564,7 +577,7 @@ var errAddonAttached = errors.New("addon is attached to one or more apps")
 // guard against silently orphaning a live app's connection (unless force),
 // delete the cluster objects, then the store row. Caller must have already
 // confirmed s.kube is non-nil.
-func (s *server) removeAddon(ctx context.Context, p store.Project, ad store.Addon, force, keepData bool) error {
+func (s *server) removeAddon(ctx context.Context, p store.Project, env store.Environment, ad store.Addon, force, keepData bool) error {
 	apps, err := s.st.AppsForAddon(ad.ID)
 	if err != nil {
 		return err
@@ -572,14 +585,14 @@ func (s *server) removeAddon(ctx context.Context, p store.Project, ad store.Addo
 	if len(apps) > 0 && !force {
 		return errAddonAttached
 	}
-	if err := s.kube.DeleteAddonObjects(ctx, p.Namespace, ad.Name, keepData); err != nil {
+	if err := s.kube.DeleteAddonObjects(ctx, env.Namespace, ad.Name, keepData); err != nil {
 		return err
 	}
 	return s.st.DeleteAddon(ad.ID)
 }
 
 func (s *server) handleDeleteAddon(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
@@ -594,7 +607,7 @@ func (s *server) handleDeleteAddon(w http.ResponseWriter, r *http.Request, u sto
 	force := r.URL.Query().Get("force") == "1"
 	keepData := r.URL.Query().Get("keep_data") == "1"
 
-	if err := s.removeAddon(r.Context(), p, ad, force, keepData); err != nil {
+	if err := s.removeAddon(r.Context(), p, env, ad, force, keepData); err != nil {
 		if errors.Is(err, errAddonAttached) {
 			writeError(w, http.StatusConflict, "addon_attached", "addon is attached to one or more apps; pass ?force=1 to remove anyway")
 			return
@@ -614,7 +627,7 @@ const addonUpgradeWarning = "major version DB upgrades may require manual migrat
 // core: persist the new version, re-render the addon's manifests at that
 // version, and SSA-apply them (rolling restart). The PVC and credentials are
 // untouched. The caller must have already confirmed kube is configured.
-func (s *server) upgradeAddon(ctx context.Context, p store.Project, a store.Addon, version string) (store.Addon, error) {
+func (s *server) upgradeAddon(ctx context.Context, p store.Project, env store.Environment, a store.Addon, version string) (store.Addon, error) {
 	if err := s.st.SetAddonVersion(a.ID, version); err != nil {
 		return store.Addon{}, err
 	}
@@ -625,20 +638,20 @@ func (s *server) upgradeAddon(ctx context.Context, p store.Project, a store.Addo
 		return store.Addon{}, err
 	}
 	params := addon.Params{
-		Namespace: p.Namespace, Type: a.Type, Name: a.Name, Version: a.Version,
+		Namespace: env.Namespace, Type: a.Type, Name: a.Name, Version: a.Version,
 		SizeGB: a.SizeGB, Creds: creds,
 	}
 	if a.Type == "mlflow" {
-		params.S3, params.URLPrefix = s.mlflowRenderExtras(p, a.Name)
+		params.S3, params.URLPrefix = s.mlflowRenderExtras(p, env, a.Name)
 	}
 	objs, err := addon.Render(params)
 	if err != nil {
 		return store.Addon{}, fmt.Errorf("render: %w", err)
 	}
-	if err := s.ensureProjectNamespace(ctx, p.Namespace); err != nil {
+	if err := s.ensureEnvNamespace(ctx, env); err != nil {
 		return store.Addon{}, fmt.Errorf("namespace: %w", err)
 	}
-	if err := s.kube.Apply(ctx, p.Namespace, objs); err != nil {
+	if err := s.kube.Apply(ctx, env.Namespace, objs); err != nil {
 		return store.Addon{}, fmt.Errorf("apply: %w", err)
 	}
 	return a, nil
@@ -647,7 +660,7 @@ func (s *server) upgradeAddon(ctx context.Context, p store.Project, a store.Addo
 // handleUpgradeAddon re-renders an addon's manifests at a new version and
 // SSA-applies them (rolling restart). The PVC and credentials are untouched.
 func (s *server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
@@ -667,7 +680,7 @@ func (s *server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request, u st
 		return
 	}
 
-	updated, err := s.upgradeAddon(r.Context(), p, a, req.Version)
+	updated, err := s.upgradeAddon(r.Context(), p, env, a, req.Version)
 	if err != nil {
 		if errors.Is(err, errSealerUnavailable) {
 			writeError(w, http.StatusServiceUnavailable, "sealer_unavailable", "sealer is not configured")

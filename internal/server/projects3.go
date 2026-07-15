@@ -51,11 +51,18 @@ func (s *server) handleSetProjectS3(w http.ResponseWriter, r *http.Request, u st
 		return
 	}
 	// Live apps that opted in pick up the change on their next sync; do it
-	// opportunistically now.
+	// opportunistically now. A project's apps may span several environments,
+	// so each app's own environment (not necessarily the project's default)
+	// is resolved before syncing it.
 	if apps, err := s.st.ListApps(p.ID); err == nil {
 		for _, a := range apps {
-			if a.InjectS3 {
-				s.syncIfLive(r.Context(), p, a)
+			if !a.InjectS3 {
+				continue
+			}
+			if env, err := s.st.GetEnvironmentByID(a.EnvironmentID); err == nil {
+				s.syncIfLive(r.Context(), p, env, a)
+			} else {
+				log.Printf("set project s3: get environment for %s: %v", a.Name, err)
 			}
 		}
 	}
@@ -110,11 +117,11 @@ func (s *server) handleDeleteProjectS3(w http.ResponseWriter, r *http.Request, u
 // handleAppS3Env toggles an app's LUNCUR_S3_* injection from the project's
 // external S3 settings.
 func (s *server) handleAppS3Env(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -134,6 +141,6 @@ func (s *server) handleAppS3Env(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 	a.InjectS3 = req.Enabled
-	s.syncIfLive(r.Context(), p, a)
+	s.syncIfLive(r.Context(), p, env, a)
 	writeJSON(w, http.StatusOK, map[string]any{"s3_env": req.Enabled})
 }

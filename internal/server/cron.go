@@ -13,8 +13,8 @@ import (
 // requireCronApp loads the app and answers kind_mismatch unless it is a
 // kind=cron app. Shared by every cron-controls handler (pause/resume/
 // trigger/run-history).
-func (s *server) requireCronApp(w http.ResponseWriter, p store.Project, name string) (store.App, bool) {
-	a, ok := s.requireApp(w, p, name)
+func (s *server) requireCronApp(w http.ResponseWriter, p store.Project, env store.Environment, name string) (store.App, bool) {
+	a, ok := s.requireApp(w, p, env, name)
 	if !ok {
 		return store.App{}, false
 	}
@@ -30,28 +30,28 @@ func (s *server) requireCronApp(w http.ResponseWriter, p store.Project, name str
 // the app has no live deployment yet, syncApp is a no-op — the flag still
 // persists and takes effect on the next deploy. Shared by the JSON API and
 // the UI pause/resume buttons.
-func (s *server) pauseCron(ctx context.Context, p store.Project, a store.App, suspend bool) error {
+func (s *server) pauseCron(ctx context.Context, p store.Project, env store.Environment, a store.App, suspend bool) error {
 	if err := s.st.SetAppSuspended(a.ID, suspend); err != nil {
 		return err
 	}
 	a.Suspended = suspend
-	return s.syncApp(ctx, p, a)
+	return s.syncApp(ctx, p, env, a)
 }
 
 // handlePauseCron suspends a cron app's schedule.
 func (s *server) handlePauseCron(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireCronApp(w, p, r.PathValue("app"))
+	a, ok := s.requireCronApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
 	if s.refuseEjected(w, a) {
 		return
 	}
-	if err := s.pauseCron(r.Context(), p, a, true); err != nil {
+	if err := s.pauseCron(r.Context(), p, env, a, true); err != nil {
 		log.Printf("pause cron %s: %v", a.Name, err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
@@ -61,18 +61,18 @@ func (s *server) handlePauseCron(w http.ResponseWriter, r *http.Request, u store
 
 // handleResumeCron resumes a suspended cron app's schedule.
 func (s *server) handleResumeCron(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireCronApp(w, p, r.PathValue("app"))
+	a, ok := s.requireCronApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
 	if s.refuseEjected(w, a) {
 		return
 	}
-	if err := s.pauseCron(r.Context(), p, a, false); err != nil {
+	if err := s.pauseCron(r.Context(), p, env, a, false); err != nil {
 		log.Printf("resume cron %s: %v", a.Name, err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
@@ -83,11 +83,11 @@ func (s *server) handleResumeCron(w http.ResponseWriter, r *http.Request, u stor
 // handleTriggerCron manually fires a cron app's CronJob ("run now"),
 // building a one-off Job from its live JobTemplate.
 func (s *server) handleTriggerCron(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireCronApp(w, p, r.PathValue("app"))
+	a, ok := s.requireCronApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -109,7 +109,7 @@ func (s *server) handleTriggerCron(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
-	job, err := s.kube.TriggerCronJob(r.Context(), p.Namespace, a.Name, time.Now().Unix())
+	job, err := s.kube.TriggerCronJob(r.Context(), env.Namespace, a.Name, time.Now().Unix())
 	if err != nil {
 		log.Printf("trigger cron %s: %v", a.Name, err)
 		writeError(w, http.StatusBadGateway, "trigger_failed", "could not start run")
@@ -121,18 +121,18 @@ func (s *server) handleTriggerCron(w http.ResponseWriter, r *http.Request, u sto
 // handleCronRuns lists a cron app's recent Jobs (scheduled fires plus manual
 // "run now" triggers), newest first.
 func (s *server) handleCronRuns(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireCronApp(w, p, r.PathValue("app"))
+	a, ok := s.requireCronApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
 	if !s.requireKube(w) {
 		return
 	}
-	runs, err := s.kube.CronRuns(r.Context(), p.Namespace, a.Name)
+	runs, err := s.kube.CronRuns(r.Context(), env.Namespace, a.Name)
 	if err != nil {
 		log.Printf("cron runs %s: %v", a.Name, err)
 		writeError(w, http.StatusBadGateway, "kube_error", "could not list runs")
@@ -160,7 +160,13 @@ func (s *server) handleUIPauseCron(w http.ResponseWriter, r *http.Request, u sto
 		http.Error(w, errAppEjected.Error(), http.StatusConflict)
 		return
 	}
-	if err := s.pauseCron(r.Context(), p, a, true); err != nil {
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		log.Printf("ui pause cron %s: get environment: %v", a.Name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.pauseCron(r.Context(), p, env, a, true); err != nil {
 		log.Printf("ui pause cron %s: %v", a.Name, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -187,7 +193,13 @@ func (s *server) handleUIResumeCron(w http.ResponseWriter, r *http.Request, u st
 		http.Error(w, errAppEjected.Error(), http.StatusConflict)
 		return
 	}
-	if err := s.pauseCron(r.Context(), p, a, false); err != nil {
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		log.Printf("ui resume cron %s: get environment: %v", a.Name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.pauseCron(r.Context(), p, env, a, false); err != nil {
 		log.Printf("ui resume cron %s: %v", a.Name, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -231,7 +243,13 @@ func (s *server) handleUITriggerCron(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 
-	if _, err := s.kube.TriggerCronJob(r.Context(), p.Namespace, a.Name, time.Now().Unix()); err != nil {
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		log.Printf("ui trigger cron %s: get environment: %v", a.Name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if _, err := s.kube.TriggerCronJob(r.Context(), env.Namespace, a.Name, time.Now().Unix()); err != nil {
 		log.Printf("ui trigger cron %s: %v", a.Name, err)
 		flash(w, "err", "could not start run")
 		uiRedirect(w, r, p, a)

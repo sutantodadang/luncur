@@ -60,6 +60,49 @@ func (s *server) requireProjectWrite(w http.ResponseWriter, u store.User, name s
 	return p, true
 }
 
+// requireEnv resolves a project (membership-checked exactly like
+// requireProject) and then one of its environments: envName=="" resolves to
+// the project's DefaultEnv, so every legacy (env-less) caller keeps
+// resolving to the same environment it always implicitly used. A missing
+// project or environment writes the response and returns ok=false.
+func (s *server) requireEnv(w http.ResponseWriter, r *http.Request, u store.User, project, envName string) (store.Project, store.Environment, bool) {
+	p, ok := s.requireProject(w, u, project)
+	if !ok {
+		return store.Project{}, store.Environment{}, false
+	}
+	return s.resolveEnv(w, p, envName)
+}
+
+// requireEnvWrite is requireEnv plus write authorization: global admins and
+// role=member pass; role=viewer gets 403 read_only, mirroring
+// requireProjectWrite.
+func (s *server) requireEnvWrite(w http.ResponseWriter, r *http.Request, u store.User, project, envName string) (store.Project, store.Environment, bool) {
+	p, ok := s.requireProjectWrite(w, u, project)
+	if !ok {
+		return store.Project{}, store.Environment{}, false
+	}
+	return s.resolveEnv(w, p, envName)
+}
+
+// resolveEnv is requireEnv/requireEnvWrite's shared tail: look up the named
+// environment (project.DefaultEnv when envName is empty), 404 on missing.
+func (s *server) resolveEnv(w http.ResponseWriter, p store.Project, envName string) (store.Project, store.Environment, bool) {
+	if envName == "" {
+		envName = p.DefaultEnv
+	}
+	env, err := s.st.GetEnvironment(p.ID, envName)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "no such environment")
+		return store.Project{}, store.Environment{}, false
+	}
+	if err != nil {
+		log.Printf("get environment: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return store.Project{}, store.Environment{}, false
+	}
+	return p, env, true
+}
+
 func (s *server) handleCreateProject(w http.ResponseWriter, r *http.Request, _ store.User) {
 	var req struct {
 		Name string `json:"name"`
@@ -82,6 +125,16 @@ func (s *server) handleCreateProject(w http.ResponseWriter, r *http.Request, _ s
 			return
 		}
 		log.Printf("create project: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	// Every project needs a resolvable default environment for requireEnv to
+	// fall back to (env-less legacy routes/CLI calls resolve envName==""
+	// to p.DefaultEnv). Full env CRUD + CLI (Task 8) comes later; this seeds
+	// the same production/develop/staging trio backfillEnvironments gives
+	// legacy projects, so a freshly created project behaves identically.
+	if err := s.st.SeedProjectEnvironments(p.ID); err != nil {
+		log.Printf("seed project environments: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
@@ -139,28 +192,45 @@ func (s *server) handleRenameProject(w http.ResponseWriter, r *http.Request, u s
 }
 
 // deleteProject is handleDeleteProject's and handleUIProjectDelete's shared
-// core: tear down every addon then every app (kube objects + row each),
-// drop the project's namespace, then the project row itself. A mid-way
-// error is safe to retry — nothing here is destroyed twice.
-func (s *server) deleteProject(ctx context.Context, p store.Project, apps []store.App, addons []store.Addon) error {
-	for _, ad := range addons {
-		// force=true: the project is being destroyed outright, so an
-		// addon still attached to one of its own apps isn't a reason to
-		// stop. keepData=false: volumes go with everything else.
-		if err := s.removeAddon(ctx, p, ad, true, false); err != nil {
-			return fmt.Errorf("remove addon %s: %w", ad.Name, err)
-		}
+// core: tear down every environment's addons then apps (kube objects + row
+// each), drop every environment's namespace, then the project row itself.
+// Every environment is walked — not just the default/production one — so
+// develop/staging/preview namespaces and their app/addon rows are never
+// leaked or orphaned. A mid-way error is safe to retry — nothing here is
+// destroyed twice.
+func (s *server) deleteProject(ctx context.Context, p store.Project) error {
+	envs, err := s.st.ListEnvironments(p.ID)
+	if err != nil {
+		return fmt.Errorf("list environments: %w", err)
 	}
-	for _, a := range apps {
-		if err := s.destroyApp(ctx, p, a); err != nil {
-			return fmt.Errorf("destroy app %s: %w", a.Name, err)
+	for _, env := range envs {
+		addons, err := s.st.AddonsForEnv(env.ID)
+		if err != nil {
+			return fmt.Errorf("list addons for env %s: %w", env.Name, err)
 		}
-	}
-	if s.kube != nil {
-		// Namespace may already be gone (e.g. a prior partial run); log
-		// and continue rather than fail the whole delete on that alone.
-		if err := s.kube.DeleteNamespace(ctx, p.Namespace); err != nil {
-			log.Printf("delete project: delete namespace %s: %v", p.Namespace, err)
+		for _, ad := range addons {
+			// force=true: the project is being destroyed outright, so an
+			// addon still attached to one of its own apps isn't a reason to
+			// stop. keepData=false: volumes go with everything else.
+			if err := s.removeAddon(ctx, p, env, ad, true, false); err != nil {
+				return fmt.Errorf("remove addon %s: %w", ad.Name, err)
+			}
+		}
+		apps, err := s.st.ListAppsInEnv(env.ID)
+		if err != nil {
+			return fmt.Errorf("list apps for env %s: %w", env.Name, err)
+		}
+		for _, a := range apps {
+			if err := s.destroyApp(ctx, p, env, a); err != nil {
+				return fmt.Errorf("destroy app %s: %w", a.Name, err)
+			}
+		}
+		if s.kube != nil {
+			// Namespace may already be gone (e.g. a prior partial run); log
+			// and continue rather than fail the whole delete on that alone.
+			if err := s.kube.DeleteNamespace(ctx, env.Namespace); err != nil {
+				log.Printf("delete project: delete namespace %s: %v", env.Namespace, err)
+			}
 		}
 	}
 	return s.st.DeleteProject(p.ID)
@@ -209,7 +279,7 @@ func (s *server) handleDeleteProject(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 
-	if err := s.deleteProject(r.Context(), p, apps, addons); err != nil {
+	if err := s.deleteProject(r.Context(), p); err != nil {
 		log.Printf("delete project: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return

@@ -109,8 +109,12 @@ func TestRenderAppIncludesResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "web", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SetResources(a.ID, 250, 256); err != nil {
@@ -121,7 +125,7 @@ func TestRenderAppIncludesResources(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rendered, err := s.renderApp(p, a, "nginx:1", true)
+	rendered, err := s.renderApp(p, env, a, "nginx:1", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,8 +160,12 @@ func TestRenderProviderAnnotations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "web", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.AddDomain(a.ID, "www.example.com")
@@ -168,7 +176,7 @@ func TestRenderProviderAnnotations(t *testing.T) {
 
 	ingressJSON := func(t *testing.T) string {
 		t.Helper()
-		rendered, err := s.renderApp(p, a, "nginx:1", true)
+		rendered, err := s.renderApp(p, env, a, "nginx:1", true)
 		if err != nil {
 			t.Fatal(err)
 		}

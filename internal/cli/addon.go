@@ -80,7 +80,7 @@ func addonCmd() *cobra.Command {
 		Short: "Manage project addons (postgres|redis|minio|mlflow)",
 	}
 
-	var createProject, createName, createVersion string
+	var createProject, createEnv, createName, createVersion string
 	var createSize int
 	create := &cobra.Command{
 		Use:   "create <type>",
@@ -91,6 +91,7 @@ func addonCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(createEnv)
 			a, err := c.CreateAddon(createProject, client.AddonCreate{
 				Type: args[0], Name: createName, Version: createVersion, SizeGB: createSize,
 			})
@@ -103,11 +104,12 @@ func addonCmd() *cobra.Command {
 	}
 	create.Flags().StringVar(&createProject, "project", "", "project name")
 	create.MarkFlagRequired("project")
+	create.Flags().StringVar(&createEnv, "env", "", "environment (default: the project's default env)")
 	create.Flags().StringVar(&createName, "name", "", "addon name (default <type><n>)")
 	create.Flags().StringVar(&createVersion, "version", "", "addon version (default postgres:16, redis:7, pinned minio/mlflow)")
 	create.Flags().IntVar(&createSize, "size", 1, "volume size in GB")
 
-	var addProject, addApp, addName, addVersion string
+	var addProject, addEnv, addApp, addName, addVersion string
 	var addSize int
 	add := &cobra.Command{
 		Use:   "add <type>",
@@ -118,6 +120,7 @@ func addonCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(addEnv)
 			a, err := c.CreateAddon(addProject, client.AddonCreate{
 				Type: args[0], Name: addName, Version: addVersion, SizeGB: addSize, App: addApp,
 			})
@@ -130,13 +133,14 @@ func addonCmd() *cobra.Command {
 	}
 	add.Flags().StringVar(&addProject, "project", "", "project name")
 	add.MarkFlagRequired("project")
+	add.Flags().StringVar(&addEnv, "env", "", "environment (default: the project's default env)")
 	add.Flags().StringVar(&addApp, "app", "", "app to attach the addon to")
 	add.MarkFlagRequired("app")
 	add.Flags().StringVar(&addName, "name", "", "addon name (default <type><n>)")
 	add.Flags().StringVar(&addVersion, "version", "", "addon version (default postgres:16, redis:7, pinned minio/mlflow)")
 	add.Flags().IntVar(&addSize, "size", 1, "volume size in GB")
 
-	var attachProject string
+	var attachProject, attachEnv string
 	attach := &cobra.Command{
 		Use:   "attach <name> <app>",
 		Short: "Attach an existing addon to an app",
@@ -146,6 +150,7 @@ func addonCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(attachEnv)
 			warning, err := c.AttachAddon(attachProject, args[0], args[1])
 			if err != nil {
 				return err
@@ -158,8 +163,9 @@ func addonCmd() *cobra.Command {
 	}
 	attach.Flags().StringVar(&attachProject, "project", "", "project name")
 	attach.MarkFlagRequired("project")
+	attach.Flags().StringVar(&attachEnv, "env", "", "environment (default: the project's default env)")
 
-	var detachProject string
+	var detachProject, detachEnv string
 	detach := &cobra.Command{
 		Use:   "detach <name> <app>",
 		Short: "Detach an addon from an app",
@@ -169,13 +175,15 @@ func addonCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(detachEnv)
 			return c.DetachAddon(detachProject, args[0], args[1])
 		},
 	}
 	detach.Flags().StringVar(&detachProject, "project", "", "project name")
 	detach.MarkFlagRequired("project")
+	detach.Flags().StringVar(&detachEnv, "env", "", "environment (default: the project's default env)")
 
-	var listProject string
+	var listProject, listEnv string
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List a project's addons",
@@ -185,6 +193,7 @@ func addonCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(listEnv)
 			addons, err := c.ListAddons(listProject)
 			if err != nil {
 				return err
@@ -199,8 +208,9 @@ func addonCmd() *cobra.Command {
 	}
 	list.Flags().StringVar(&listProject, "project", "", "project name")
 	list.MarkFlagRequired("project")
+	list.Flags().StringVar(&listEnv, "env", "", "environment (default: the project's default env)")
 
-	var removeProject string
+	var removeProject, removeEnv string
 	var removeForce, removeKeepData bool
 	remove := &cobra.Command{
 		Use:   "remove <name>",
@@ -211,15 +221,17 @@ func addonCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(removeEnv)
 			return c.RemoveAddon(removeProject, args[0], removeForce, removeKeepData)
 		},
 	}
 	remove.Flags().StringVar(&removeProject, "project", "", "project name")
 	remove.MarkFlagRequired("project")
+	remove.Flags().StringVar(&removeEnv, "env", "", "environment (default: the project's default env)")
 	remove.Flags().BoolVar(&removeForce, "force", false, "remove even if attached to apps")
 	remove.Flags().BoolVar(&removeKeepData, "keep-data", false, "keep the underlying PVC data")
 
-	var upgradeProject, upgradeVersion string
+	var upgradeProject, upgradeEnv, upgradeVersion string
 	upgrade := &cobra.Command{
 		Use:   "upgrade <name>",
 		Short: "Upgrade an addon in place to a new version",
@@ -229,6 +241,7 @@ func addonCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(upgradeEnv)
 			a, err := c.UpgradeAddon(upgradeProject, args[0], upgradeVersion)
 			if err != nil {
 				return err
@@ -242,10 +255,11 @@ func addonCmd() *cobra.Command {
 	}
 	upgrade.Flags().StringVar(&upgradeProject, "project", "", "project name")
 	upgrade.MarkFlagRequired("project")
+	upgrade.Flags().StringVar(&upgradeEnv, "env", "", "environment (default: the project's default env)")
 	upgrade.Flags().StringVar(&upgradeVersion, "version", "", "target version (image tag)")
 	upgrade.MarkFlagRequired("version")
 
-	var urlProject string
+	var urlProject, urlEnv string
 	urlCmd := &cobra.Command{
 		Use:   "url <name>",
 		Short: "Show an addon's connection URL and the env key it's injected as",
@@ -255,6 +269,7 @@ func addonCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(urlEnv)
 			envKey, connURL, err := c.AddonURL(urlProject, args[0])
 			if err != nil {
 				return err
@@ -265,8 +280,9 @@ func addonCmd() *cobra.Command {
 	}
 	urlCmd.Flags().StringVar(&urlProject, "project", "", "project name")
 	urlCmd.MarkFlagRequired("project")
+	urlCmd.Flags().StringVar(&urlEnv, "env", "", "environment (default: the project's default env)")
 
-	var restoreProject, restoreFile string
+	var restoreProject, restoreEnv, restoreFile string
 	restore := &cobra.Command{
 		Use:   "restore <name>",
 		Short: "Restore a postgres/redis addon's data from a dump or backup archive",
@@ -276,6 +292,7 @@ func addonCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(restoreEnv)
 			dump, err := dumpFromPath(restoreFile, args[0])
 			if err != nil {
 				return err
@@ -290,6 +307,7 @@ func addonCmd() *cobra.Command {
 	}
 	restore.Flags().StringVar(&restoreProject, "project", "", "project name")
 	restore.MarkFlagRequired("project")
+	restore.Flags().StringVar(&restoreEnv, "env", "", "environment (default: the project's default env)")
 	restore.Flags().StringVar(&restoreFile, "file", "", "path to a raw dump (.pgdump/.rdb) or a luncur backup archive (.tar.gz)")
 	restore.MarkFlagRequired("file")
 

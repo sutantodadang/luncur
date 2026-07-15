@@ -38,7 +38,11 @@ func (s *server) handlePrometheus(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		for _, a := range apps {
-			m, err := s.appMetricsData(r.Context(), p, a)
+			env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+			if err != nil {
+				continue
+			}
+			m, err := s.appMetricsData(r.Context(), p, env, a)
 			if err != nil {
 				continue
 			}

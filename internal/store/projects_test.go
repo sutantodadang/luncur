@@ -111,6 +111,53 @@ func TestDeleteProject(t *testing.T) {
 	}
 }
 
+func TestProjectDefaultAndPreviewBaseEnv(t *testing.T) {
+	s := openTest(t)
+	p, err := s.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DefaultEnv != "production" {
+		t.Fatalf("default_env = %q, want production", got.DefaultEnv)
+	}
+	if got.PreviewBaseEnv != "develop" {
+		t.Fatalf("preview_base_env = %q, want develop", got.PreviewBaseEnv)
+	}
+
+	if err := s.SetDefaultEnv(p.ID, "staging"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPreviewBaseEnv(p.ID, "staging"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DefaultEnv != "staging" || got.PreviewBaseEnv != "staging" {
+		t.Fatalf("after set: %+v", got)
+	}
+
+	if err := s.SetDefaultEnv(p.ID, "-bad"); err == nil {
+		t.Fatal("want validation error for bad default env name")
+	}
+	if err := s.SetPreviewBaseEnv(p.ID, "-bad"); err == nil {
+		t.Fatal("want validation error for bad preview base env name")
+	}
+
+	if err := s.SetDefaultEnv(999999, "production"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown project: want ErrNotFound, got %v", err)
+	}
+	if err := s.SetPreviewBaseEnv(999999, "develop"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown project: want ErrNotFound, got %v", err)
+	}
+}
+
 func TestCreateProjectValidatesName(t *testing.T) {
 	s := openTest(t)
 	for _, bad := range []string{"", "-x", "x-", "UPPER", "has_underscore", "waaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaytoolong"} {

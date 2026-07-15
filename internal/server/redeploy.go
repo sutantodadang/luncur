@@ -18,12 +18,12 @@ var errNoDeployYet = errors.New("app has not been deployed yet")
 // new deployment id changes the pod-template config hash (see podConfigHash),
 // so the pods roll even when the image and env are unchanged — this is the
 // "restart it" primitive. Shared by the JSON API and UI handlers.
-func (s *server) redeploy(ctx context.Context, p store.Project, a store.App, u store.User) (store.Deployment, error) {
+func (s *server) redeploy(ctx context.Context, p store.Project, env store.Environment, a store.App, u store.User) (store.Deployment, error) {
 	if a.Ejected {
 		return store.Deployment{}, errAppEjected
 	}
 	if a.SourceType == "git" {
-		return s.deployGitApp(p, a, u.ID)
+		return s.deployGitApp(p, env, a, u.ID)
 	}
 	latest, err := s.st.LatestDeployment(a.ID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -41,7 +41,7 @@ func (s *server) redeploy(ctx context.Context, p store.Project, a store.App, u s
 	if err != nil {
 		return store.Deployment{}, err
 	}
-	if err := s.applyImageDeploy(ctx, p, a, d, latest.ImageRef); err != nil {
+	if err := s.applyImageDeploy(ctx, p, env, a, d, latest.ImageRef); err != nil {
 		return store.Deployment{}, err
 	}
 	return d, nil
@@ -51,11 +51,11 @@ func (s *server) redeploy(ctx context.Context, p store.Project, a store.App, u s
 // (async build); image apps answer 200 (synchronous apply), matching
 // handleDeployApp's shapes.
 func (s *server) handleRedeploy(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -63,7 +63,7 @@ func (s *server) handleRedeploy(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	d, err := s.redeploy(r.Context(), p, a, u)
+	d, err := s.redeploy(r.Context(), p, env, a, u)
 	if err != nil {
 		s.writeRedeployError(w, err)
 		return
@@ -76,7 +76,7 @@ func (s *server) handleRedeploy(w http.ResponseWriter, r *http.Request, u store.
 		"deployment_id": d.ID,
 		"seq":           d.Seq,
 		"status":        "live",
-		"url":           s.appURL(a),
+		"url":           s.appURLForEnv(a, env.Name, p.DefaultEnv),
 	})
 }
 
@@ -111,7 +111,13 @@ func (s *server) handleUIRedeploy(w http.ResponseWriter, r *http.Request, u stor
 		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	if _, err := s.redeploy(r.Context(), p, a, u); err != nil {
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		log.Printf("ui redeploy: get environment: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if _, err := s.redeploy(r.Context(), p, env, a, u); err != nil {
 		switch {
 		case errors.Is(err, errAppEjected):
 			http.Error(w, err.Error(), http.StatusConflict)

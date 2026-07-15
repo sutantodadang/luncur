@@ -93,21 +93,25 @@ func certTestServer(t *testing.T) (*server, *store.Store, *patchRecorder, *k8sfa
 	return s, st, rec, cs
 }
 
-func seedDomain(t *testing.T, st *store.Store, hostname string) (store.Project, store.App, store.Domain) {
+func seedDomain(t *testing.T, st *store.Store, hostname string) (store.Project, store.Environment, store.App, store.Domain) {
 	t.Helper()
 	p, err := st.CreateProject("proj")
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateApp(p.ID, "web", 8080, "web", "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.AddDomain(a.ID, hostname)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return p, a, d
+	return p, env, a, d
 }
 
 func hasPatch(patches []recordedPatch, resource, namespace, name string, contains ...string) bool {
@@ -157,7 +161,7 @@ func pollDomain(t *testing.T, st *store.Store, appID int64, deadline time.Durati
 
 func TestCertManagerIssuesAndRenews(t *testing.T) {
 	srv, st, patches, _ := certTestServer(t)
-	p, a, d := seedDomain(t, st, "www.example.com")
+	p, env, a, d := seedDomain(t, st, "www.example.com")
 
 	// Mount srv's own mux (it routes the challenge path through
 	// srv.certs.Challenges()) behind an httptest server, and point the fake
@@ -171,7 +175,7 @@ func TestCertManagerIssuesAndRenews(t *testing.T) {
 	defer cancel()
 	go srv.certs.Run(ctx)
 
-	srv.certs.Kick(p, a, d)
+	srv.certs.Kick(p, env, a, d)
 
 	got := pollDomain(t, st, a.ID, 15*time.Second, "issued", "failed")
 	if got.CertStatus != "issued" {
@@ -195,7 +199,7 @@ func TestCertManagerIssuesAndRenews(t *testing.T) {
 
 func TestCertManagerFailureMarksDomain(t *testing.T) {
 	srv, st, _, _ := certTestServer(t)
-	p, a, d := seedDomain(t, st, "www.example.com")
+	p, env, a, d := seedDomain(t, st, "www.example.com")
 
 	// Point the fake ACME's challenge validation at an unreachable host so
 	// HTTP-01 validation never succeeds — the authorization stays pending
@@ -207,7 +211,7 @@ func TestCertManagerFailureMarksDomain(t *testing.T) {
 	defer cancel()
 	go srv.certs.Run(ctx)
 
-	srv.certs.Kick(p, a, d)
+	srv.certs.Kick(p, env, a, d)
 
 	got := pollDomain(t, st, a.ID, 15*time.Second, "issued", "failed")
 	if got.CertStatus != "failed" {
@@ -248,7 +252,7 @@ func selfSignedCertPEM(t *testing.T, hostname string, notAfter time.Time) []byte
 // cert-manager already put in the TLS Secret and records its expiry.
 func TestCertSweepReadsBackCertManagerExpiry(t *testing.T) {
 	srv, st, _, cs := certTestServer(t)
-	p, a, d := seedDomain(t, st, "www.example.com")
+	p, _, a, d := seedDomain(t, st, "www.example.com")
 	if err := st.SetSetting("cert_provider", "cert-manager"); err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +331,7 @@ func TestIssueDNS01PickedForWildcard(t *testing.T) {
 	if err := st.SetSetting("dns_provider", "cloudflare"); err != nil {
 		t.Fatal(err)
 	}
-	p, a, d := seedDomain(t, st, "*.example.com")
+	p, env, a, d := seedDomain(t, st, "*.example.com")
 
 	prov := &recordingServerProvider{}
 	srv.dnsProvider = func() (dns.Provider, error) { return prov, nil }
@@ -341,7 +345,7 @@ func TestIssueDNS01PickedForWildcard(t *testing.T) {
 	fakeDir.SetTXTLookup(prov.txt)
 	srv.certs.directoryURL = fakeDir.DirectoryURL()
 
-	srv.certs.issue(context.Background(), certJob{p: p, a: a, d: d})
+	srv.certs.issue(context.Background(), certJob{p: p, env: env, a: a, d: d})
 
 	list, err := st.ListDomains(a.ID)
 	if err != nil || len(list) != 1 {
@@ -387,7 +391,7 @@ func notifyCaptureServer(t *testing.T) (*httptest.Server, chan []byte) {
 // notification carrying the domain's hostname.
 func TestCertIssueNotifiesOnSuccess(t *testing.T) {
 	srv, st, _, _ := certTestServer(t)
-	p, a, d := seedDomain(t, st, "www.example.com")
+	p, env, a, d := seedDomain(t, st, "www.example.com")
 
 	mux := httptest.NewServer(srv.handler())
 	t.Cleanup(mux.Close)
@@ -402,7 +406,7 @@ func TestCertIssueNotifiesOnSuccess(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	srv.certs.issue(ctx, certJob{p: p, a: a, d: d})
+	srv.certs.issue(ctx, certJob{p: p, env: env, a: a, d: d})
 
 	got, err := st.ListDomains(a.ID)
 	if err != nil || len(got) != 1 || got[0].CertStatus != "issued" {
@@ -431,7 +435,7 @@ func TestCertIssueNotifiesOnSuccess(t *testing.T) {
 // notification carrying the hostname and a non-empty error.
 func TestCertIssueNotifiesOnFailure(t *testing.T) {
 	srv, st, _, _ := certTestServer(t)
-	p, a, d := seedDomain(t, st, "www.example.com")
+	p, env, a, d := seedDomain(t, st, "www.example.com")
 
 	fakeDir := acmetest.New(t, "127.0.0.1:1")
 	srv.certs.directoryURL = fakeDir.DirectoryURL()
@@ -444,7 +448,7 @@ func TestCertIssueNotifiesOnFailure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	srv.certs.issue(ctx, certJob{p: p, a: a, d: d})
+	srv.certs.issue(ctx, certJob{p: p, env: env, a: a, d: d})
 
 	got, err := st.ListDomains(a.ID)
 	if err != nil || len(got) != 1 || got[0].CertStatus != "failed" {

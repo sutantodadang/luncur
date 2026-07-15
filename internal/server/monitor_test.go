@@ -126,7 +126,12 @@ func TestAppMetricsHistoryEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateApp(p.ID, "web", 8080, "web", ""); err != nil {
+	p, env := seedDefaultEnv(t, st, p)
+	a, err := st.CreateApp(p.ID, "web", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	s := newServer(Deps{Store: st})
@@ -176,7 +181,12 @@ func TestUIAppChartFragment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateApp(p.ID, "web", 8080, "web", ""); err != nil {
+	p, env := seedDefaultEnv(t, st, p)
+	a, err := st.CreateApp(p.ID, "web", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	s := newServer(Deps{Store: st})
@@ -321,5 +331,79 @@ func TestMonitorNotifiesCrashLoop(t *testing.T) {
 	case b := <-ch:
 		t.Fatalf("unexpected second notification: %s", b)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// TestMonitorNotifiesCrashLoopNonDefaultEnv locks the fix that resolves an
+// app's namespace via ITS OWN environment (s.appNamespace), not the
+// project's namespace: a crash-looping pod living in a non-default
+// (develop) environment's namespace must still be detected. Before the fix,
+// checkCrashLoops always polled p.Namespace (production's), so this pod was
+// never found and no alert ever fired — RestartCount silently returns 0 for
+// a namespace with no matching pods rather than erroring.
+func TestMonitorNotifiesCrashLoopNonDefaultEnv(t *testing.T) {
+	ch := make(chan []byte, 4)
+	ts := httptest.NewServer(captureHandler(ch))
+	t.Cleanup(ts.Close)
+
+	st := newTestStore(t)
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := st.GetEnvironment(p.ID, "develop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev.Namespace == p.Namespace {
+		t.Fatalf("test fixture invalid: develop namespace %q equals project namespace", dev.Namespace)
+	}
+
+	a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, dev.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The crash-looping pod lives in develop's namespace, not the project's
+	// default (production) namespace.
+	pod := crashPod(dev.Namespace, "api", 0)
+	cs := k8sfake.NewSimpleClientset(pod)
+
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newServer(Deps{Store: st, Sealer: sealer, Kube: kube.NewForTest(nil, cs)})
+	setSealedNotifyURL(t, s, ts.URL)
+
+	ctx := context.Background()
+
+	// Tick 1: baseline (0 restarts) — nothing to compare against yet.
+	s.sampleMetrics(ctx)
+	select {
+	case b := <-ch:
+		t.Fatalf("unexpected notification on baseline tick: %s", b)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Bump restarts to 3 (delta >= 3) and tick again — one delivery.
+	pod.Status.ContainerStatuses[0].RestartCount = 3
+	if _, err := cs.CoreV1().Pods(dev.Namespace).Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	s.sampleMetrics(ctx)
+	b := recvNotify(t, ch, 2*time.Second)
+	if !strings.Contains(string(b), `"event":"app_unhealthy"`) {
+		t.Fatalf("body = %s, want app_unhealthy", b)
 	}
 }

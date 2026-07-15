@@ -94,6 +94,41 @@ func TestSettingsTrainGangTimeout(t *testing.T) {
 	resp.Body.Close()
 }
 
+// TestSettingsPreviewTTLDays covers preview_ttl_days' entry in
+// settableKeys: settable via the generic settings API, integer >= 1 only —
+// reapPreviews (preview.go) reads it back via previewTTLDays.
+func TestSettingsPreviewTTLDays(t *testing.T) {
+	srv, st := testServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+
+	resp := doAuthed(t, "PUT", srv.URL+"/v1/settings/preview_ttl_days", admin, `{"value":"3"}`)
+	if resp.StatusCode != 204 {
+		t.Fatalf("put: want 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = doAuthed(t, "GET", srv.URL+"/v1/settings/preview_ttl_days", admin, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("get: want 200, got %d", resp.StatusCode)
+	}
+	var out struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if out.Value != "3" {
+		t.Fatalf("value = %q, want 3", out.Value)
+	}
+
+	resp = doAuthed(t, "PUT", srv.URL+"/v1/settings/preview_ttl_days", admin, `{"value":"0"}`)
+	if resp.StatusCode != 400 {
+		t.Fatalf("put zero: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
 func TestSettingsUnknownKey(t *testing.T) {
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")

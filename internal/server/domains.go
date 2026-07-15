@@ -74,7 +74,7 @@ func domainJSON(d store.Domain, warning string) map[string]any {
 // over DNS-01, which needs a configured provider.
 var errWildcardNeedsDNS = errors.New("wildcard domains require a configured dns_provider (settings: dns_provider)")
 
-func (s *server) addDomain(ctx context.Context, p store.Project, a store.App, hostname string) (store.Domain, string, error) {
+func (s *server) addDomain(ctx context.Context, p store.Project, env store.Environment, a store.App, hostname string) (store.Domain, string, error) {
 	if a.Ejected {
 		return store.Domain{}, "", errAppEjected
 	}
@@ -104,17 +104,17 @@ func (s *server) addDomain(ctx context.Context, p store.Project, a store.App, ho
 		// A wildcard can't be resolved directly; skip the A-record check.
 		warning = dnsWarning(ctx, d.Hostname, s.externalIP, s.dnsProviderName() != "none")
 	}
-	s.syncIfLive(ctx, p, a)
-	s.kickCerts(p, a, d)
+	s.syncIfLive(ctx, p, env, a)
+	s.kickCerts(p, env, a, d)
 	return d, warning, nil
 }
 
 func (s *server) handleAddDomain(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -125,7 +125,7 @@ func (s *server) handleAddDomain(w http.ResponseWriter, r *http.Request, u store
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	d, warning, err := s.addDomain(r.Context(), p, a, req.Hostname)
+	d, warning, err := s.addDomain(r.Context(), p, env, a, req.Hostname)
 	if err != nil {
 		var ke *kindMismatchError
 		switch {
@@ -142,11 +142,11 @@ func (s *server) handleAddDomain(w http.ResponseWriter, r *http.Request, u store
 }
 
 func (s *server) handleListDomains(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -164,11 +164,11 @@ func (s *server) handleListDomains(w http.ResponseWriter, r *http.Request, u sto
 }
 
 func (s *server) handleDeleteDomain(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -183,7 +183,7 @@ func (s *server) handleDeleteDomain(w http.ResponseWriter, r *http.Request, u st
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	s.syncIfLive(r.Context(), p, a)
+	s.syncIfLive(r.Context(), p, env, a)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -192,7 +192,7 @@ func (s *server) handleDeleteDomain(w http.ResponseWriter, r *http.Request, u st
 // store.ErrNotFound if hostname isn't one of the app's domains. The caller
 // must have already checked the app isn't ejected and the provider is
 // "builtin".
-func (s *server) retryDomain(p store.Project, a store.App, hostname string) error {
+func (s *server) retryDomain(p store.Project, env store.Environment, a store.App, hostname string) error {
 	list, err := s.st.ListDomains(a.ID)
 	if err != nil {
 		return err
@@ -203,7 +203,7 @@ func (s *server) retryDomain(p store.Project, a store.App, hostname string) erro
 				return err
 			}
 			d.CertStatus, d.CertError = "none", ""
-			s.kickCerts(p, a, d)
+			s.kickCerts(p, env, a, d)
 			return nil
 		}
 	}
@@ -211,11 +211,11 @@ func (s *server) retryDomain(p store.Project, a store.App, hostname string) erro
 }
 
 func (s *server) handleRetryDomain(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -226,7 +226,7 @@ func (s *server) handleRetryDomain(w http.ResponseWriter, r *http.Request, u sto
 		writeError(w, http.StatusConflict, "wrong_provider", "cert retry only applies to the builtin provider")
 		return
 	}
-	if err := s.retryDomain(p, a, r.PathValue("hostname")); err != nil {
+	if err := s.retryDomain(p, env, a, r.PathValue("hostname")); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "no such domain")
 			return
@@ -240,8 +240,8 @@ func (s *server) handleRetryDomain(w http.ResponseWriter, r *http.Request, u sto
 // kickCerts nudges the cert manager about a domain. Wired by the builtin
 // provider's manager; a nil manager (tests, non-builtin providers) is a
 // no-op.
-func (s *server) kickCerts(p store.Project, a store.App, d store.Domain) {
+func (s *server) kickCerts(p store.Project, env store.Environment, a store.App, d store.Domain) {
 	if s.certs != nil {
-		s.certs.Kick(p, a, d)
+		s.certs.Kick(p, env, a, d)
 	}
 }

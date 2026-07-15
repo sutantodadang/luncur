@@ -24,9 +24,10 @@ const acmeAccountSecret = "luncur-acme-account"
 const challengeIngress = "luncur-acme"
 
 type certJob struct {
-	p store.Project
-	a store.App
-	d store.Domain
+	p   store.Project
+	env store.Environment
+	a   store.App
+	d   store.Domain
 
 	// panelHost, when non-empty, diverts issue() to issuePanel: this job is
 	// luncur's own panel custom domain, not an app's, so p/a/d are unset.
@@ -75,9 +76,9 @@ func (m *certManager) Challenges() http.Handler { return m.challenges }
 
 // Kick enqueues issuance for a domain; drops silently when the queue is
 // full (the renewal sweep will pick it up again).
-func (m *certManager) Kick(p store.Project, a store.App, d store.Domain) {
+func (m *certManager) Kick(p store.Project, env store.Environment, a store.App, d store.Domain) {
 	select {
-	case m.jobs <- certJob{p: p, a: a, d: d}:
+	case m.jobs <- certJob{p: p, env: env, a: a, d: d}:
 	default:
 	}
 }
@@ -135,12 +136,12 @@ func (m *certManager) sweep(ctx context.Context) {
 		if !renew {
 			continue
 		}
-		p, a, err := m.s.projectAppForDomain(d)
+		p, env, a, err := m.s.projectAppForDomain(d)
 		if err != nil {
 			log.Printf("cert sweep domain %s: %v", d.Hostname, err)
 			continue
 		}
-		m.Kick(p, a, d)
+		m.Kick(p, env, a, d)
 	}
 
 	// Panel custom domain: same builtin-only lifecycle as an app domain
@@ -236,7 +237,7 @@ func (m *certManager) issue(ctx context.Context, j certJob) {
 	secJSON, err := json.Marshal(map[string]any{
 		"apiVersion": "v1", "kind": "Secret",
 		"metadata": map[string]any{
-			"name": certSecretName(j.a.Name, j.d.Hostname), "namespace": j.p.Namespace,
+			"name": certSecretName(j.a.Name, j.d.Hostname), "namespace": j.env.Namespace,
 			"labels": map[string]string{"app.kubernetes.io/managed-by": "luncur"},
 		},
 		"type": "kubernetes.io/tls",
@@ -248,7 +249,7 @@ func (m *certManager) issue(ctx context.Context, j certJob) {
 		fail(err)
 		return
 	}
-	if err := m.s.kube.Apply(ctx, j.p.Namespace, []render.Object{{Kind: "Secret", JSON: secJSON}}); err != nil {
+	if err := m.s.kube.Apply(ctx, j.env.Namespace, []render.Object{{Kind: "Secret", JSON: secJSON}}); err != nil {
 		fail(fmt.Errorf("apply tls secret: %w", err))
 		return
 	}
@@ -256,7 +257,7 @@ func (m *certManager) issue(ctx context.Context, j certJob) {
 		fail(err)
 		return
 	}
-	if err := m.s.syncApp(ctx, j.p, j.a); err != nil {
+	if err := m.s.syncApp(ctx, j.p, j.env, j.a); err != nil {
 		log.Printf("sync after cert %s: %v", j.d.Hostname, err)
 	}
 	log.Printf("cert issued for %s (expires %s)", j.d.Hostname, notAfter.Format(time.RFC3339))
@@ -369,11 +370,11 @@ func (m *certManager) readbackExpiry(ctx context.Context, d store.Domain) {
 	if m.s.kube == nil {
 		return
 	}
-	p, a, err := m.s.projectAppForDomain(d)
+	_, env, a, err := m.s.projectAppForDomain(d)
 	if err != nil {
 		return
 	}
-	data, err := m.s.kube.GetSecretData(ctx, p.Namespace, certSecretName(a.Name, d.Hostname))
+	data, err := m.s.kube.GetSecretData(ctx, env.Namespace, certSecretName(a.Name, d.Hostname))
 	if err != nil || data == nil {
 		return // not issued yet
 	}
@@ -476,15 +477,20 @@ func (m *certManager) setChallengeHost(ctx context.Context, host string, present
 	return m.s.kube.Apply(ctx, m.s.systemNamespace, []render.Object{{Kind: "Ingress", JSON: b}})
 }
 
-// projectAppForDomain resolves the app + project a domain row belongs to.
-func (s *server) projectAppForDomain(d store.Domain) (store.Project, store.App, error) {
+// projectAppForDomain resolves the project + environment + app a domain row
+// belongs to.
+func (s *server) projectAppForDomain(d store.Domain) (store.Project, store.Environment, store.App, error) {
 	a, err := s.st.GetAppByID(d.AppID)
 	if err != nil {
-		return store.Project{}, store.App{}, err
+		return store.Project{}, store.Environment{}, store.App{}, err
 	}
 	p, err := s.st.GetProjectByID(a.ProjectID)
 	if err != nil {
-		return store.Project{}, store.App{}, err
+		return store.Project{}, store.Environment{}, store.App{}, err
 	}
-	return p, a, nil
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		return store.Project{}, store.Environment{}, store.App{}, err
+	}
+	return p, env, a, nil
 }

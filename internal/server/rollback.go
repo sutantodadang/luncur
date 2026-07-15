@@ -101,7 +101,7 @@ func (s *server) imageInRegistry(ctx context.Context, ref string) (bool, error) 
 // (store.ErrNotFound, errNoRollbackTarget, *errImageMissing,
 // *errRegistryCheck) that each caller maps to its own response shape; any
 // other error is an unexpected internal failure.
-func (s *server) rollback(ctx context.Context, p store.Project, a store.App, u store.User, deployID string) (store.Deployment, error) {
+func (s *server) rollback(ctx context.Context, p store.Project, env store.Environment, a store.App, u store.User, deployID string) (store.Deployment, error) {
 	if a.Ejected {
 		return store.Deployment{}, errAppEjected
 	}
@@ -122,18 +122,18 @@ func (s *server) rollback(ctx context.Context, p store.Project, a store.App, u s
 	if err != nil {
 		return store.Deployment{}, err
 	}
-	if err := s.applyImageDeploy(ctx, p, a, d, target.ImageRef); err != nil {
+	if err := s.applyImageDeploy(ctx, p, env, a, d, target.ImageRef); err != nil {
 		return store.Deployment{}, err
 	}
 	return d, nil
 }
 
 func (s *server) handleRollback(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -154,7 +154,7 @@ func (s *server) handleRollback(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	d, err := s.rollback(r.Context(), p, a, u, req.DeployID)
+	d, err := s.rollback(r.Context(), p, env, a, u, req.DeployID)
 	if err != nil {
 		var missing *errImageMissing
 		var regErr *errRegistryCheck

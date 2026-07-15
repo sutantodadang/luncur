@@ -113,12 +113,20 @@ func migrate(db *sql.DB) error {
 		{"apps", "autoscale_max", `ALTER TABLE apps ADD COLUMN autoscale_max INTEGER NOT NULL DEFAULT 0`},
 		{"apps", "autoscale_cpu", `ALTER TABLE apps ADD COLUMN autoscale_cpu INTEGER NOT NULL DEFAULT 0`},
 		{"apps", "suspended", `ALTER TABLE apps ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0`},
+		{"apps", "environment_id", `ALTER TABLE apps ADD COLUMN environment_id INTEGER NOT NULL DEFAULT 0`},
+		{"addons", "environment_id", `ALTER TABLE addons ADD COLUMN environment_id INTEGER NOT NULL DEFAULT 0`},
 		{"job_runs", "nodes", `ALTER TABLE job_runs ADD COLUMN nodes INTEGER NOT NULL DEFAULT 1`},
 		{"job_runs", "framework", `ALTER TABLE job_runs ADD COLUMN framework TEXT NOT NULL DEFAULT ''`},
 		{"gpu_instances", "external_ref", `ALTER TABLE gpu_instances ADD COLUMN external_ref TEXT NOT NULL DEFAULT ''`},
 		{"projects", "gpu_quota", `ALTER TABLE projects ADD COLUMN gpu_quota INTEGER NOT NULL DEFAULT 0`},
 		{"projects", "cpu_quota_milli", `ALTER TABLE projects ADD COLUMN cpu_quota_milli INTEGER NOT NULL DEFAULT 0`},
 		{"projects", "mem_quota_mb", `ALTER TABLE projects ADD COLUMN mem_quota_mb INTEGER NOT NULL DEFAULT 0`},
+		// default_env/preview_base_env must land here, before
+		// backfillEnvironments below runs (it writes both columns) — see the
+		// ALTER-loop-before-backfill ordering note on that call.
+		{"projects", "default_env", `ALTER TABLE projects ADD COLUMN default_env TEXT NOT NULL DEFAULT 'production'`},
+		{"projects", "preview_base_env", `ALTER TABLE projects ADD COLUMN preview_base_env TEXT NOT NULL DEFAULT 'develop'`},
+		{"projects", "webhook_secret", `ALTER TABLE projects ADD COLUMN webhook_secret BLOB`},
 	} {
 		var n int
 		if err := db.QueryRow(
@@ -131,6 +139,38 @@ func migrate(db *sql.DB) error {
 				return err
 			}
 		}
+	}
+
+	// Rebuilds apps' uniqueness constraint from project-wide to
+	// environment-scoped; must run after the ALTER loop above (it depends
+	// on the environment_id column already existing).
+	if err := migrateAppsUniqueScope(db); err != nil {
+		return fmt.Errorf("migrate apps unique scope: %w", err)
+	}
+
+	// schema.sql's CREATE TABLE IF NOT EXISTS already creates this table on
+	// every Open (it runs unconditionally before migrate), but an explicit
+	// exec here mirrors the deployments-index precedent below and makes the
+	// legacy-DB path self-evident without relying on Open's call order.
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS environments (
+  id              INTEGER PRIMARY KEY,
+  project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  k8s_namespace   TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'standing' CHECK (kind IN ('standing','preview')),
+  is_default      INTEGER NOT NULL DEFAULT 0,
+  base_branch     TEXT NOT NULL DEFAULT '',
+  source_branch   TEXT NOT NULL DEFAULT '',
+  last_active_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (project_id, name)
+)`); err != nil {
+		return fmt.Errorf("create environments table: %w", err)
+	}
+
+	if err := backfillEnvironments(db); err != nil {
+		return fmt.Errorf("backfill environments: %w", err)
 	}
 
 	if err := backfillGPUExternalRef(db); err != nil {
@@ -179,10 +219,108 @@ func migrate(db *sql.DB) error {
 }
 
 // backfillGPUExternalRef copies pre-A2 integer contract ids into the string
-// external_ref column. Idempotent: only touches rows where external_ref = ''.
+// external_ref column. Idempotent: only touches rows where external_ref = ”.
 func backfillGPUExternalRef(db *sql.DB) error {
 	_, err := db.Exec(`UPDATE gpu_instances SET external_ref = CAST(external_id AS TEXT) WHERE external_ref = '' AND external_id != 0`)
 	return err
+}
+
+// backfillEnvironments seeds a production/develop/staging environment set
+// for every project that predates the environments table (i.e. has no
+// environments row yet), re-parents that project's apps and addons into
+// "production" (keeping its existing k8s_namespace so cluster objects don't
+// move), and points the project's default_env/preview_base_env at the new
+// rows. Idempotent: guarded per-project on an environments-row-count == 0
+// check, so re-running only touches projects that are still bare.
+func backfillEnvironments(db *sql.DB) error {
+	rows, err := db.Query(`SELECT id, name, k8s_namespace FROM projects`)
+	if err != nil {
+		return err
+	}
+	type legacyProject struct {
+		id        int64
+		name      string
+		namespace string
+	}
+	var projects []legacyProject
+	for rows.Next() {
+		var p legacyProject
+		if err := rows.Scan(&p.id, &p.name, &p.namespace); err != nil {
+			rows.Close()
+			return err
+		}
+		projects = append(projects, p)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	for _, p := range projects {
+		var n int
+		if err := db.QueryRow(`SELECT count(*) FROM environments WHERE project_id = ?`, p.id).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if err := backfillProjectEnvironments(db, p.id, p.name, p.namespace); err != nil {
+			return fmt.Errorf("project %d: %w", p.id, err)
+		}
+	}
+	return nil
+}
+
+// backfillProjectEnvironments does the per-project work for
+// backfillEnvironments: create production (keeping the project's existing
+// namespace), re-parent its apps/addons, create develop/staging, and point
+// the project's default_env/preview_base_env at production/develop.
+func backfillProjectEnvironments(db *sql.DB, projectID int64, name, namespace string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+
+	res, err := tx.Exec(
+		`INSERT INTO environments (project_id, name, k8s_namespace, kind, is_default, base_branch)
+		 VALUES (?, 'production', ?, 'standing', 1, 'main')`,
+		projectID, namespace,
+	)
+	if err != nil {
+		return fmt.Errorf("insert production env: %w", err)
+	}
+	prodID, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`UPDATE apps SET environment_id = ? WHERE project_id = ? AND environment_id = 0`, prodID, projectID); err != nil {
+		return fmt.Errorf("reparent apps: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE addons SET environment_id = ? WHERE project_id = ? AND environment_id = 0`, prodID, projectID); err != nil {
+		return fmt.Errorf("reparent addons: %w", err)
+	}
+
+	for _, e := range [2]struct{ name, base string }{
+		{"develop", "develop"},
+		{"staging", "staging"},
+	} {
+		if _, err := tx.Exec(
+			`INSERT INTO environments (project_id, name, k8s_namespace, kind, is_default, base_branch)
+			 VALUES (?, ?, ?, 'standing', 0, ?)`,
+			projectID, e.name, envNamespace(name, e.name), e.base,
+		); err != nil {
+			return fmt.Errorf("insert %s env: %w", e.name, err)
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE projects SET default_env = 'production', preview_base_env = 'develop' WHERE id = ?`, projectID); err != nil {
+		return fmt.Errorf("set project default/preview-base env: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 // deploymentsTextSchema is the current deployments table shape (kept in sync
@@ -328,6 +466,109 @@ func migrateDeploymentIDsToText(db *sql.DB) error {
 	return tx.Commit()
 }
 
+// migrateAppsUniqueScope rebuilds the apps table when its uniqueness
+// constraint still predates environments (UNIQUE(project_id, name)):
+// environments let two apps share a name across environments within the
+// same project (e.g. "api" standing in both production and develop), so the
+// constraint must be scoped to (project_id, environment_id, name) instead.
+// SQLite can't ALTER a table's UNIQUE constraint, so this is a copy-rename
+// rebuild, same idiom as migrateAddonTypes; every dependent table (
+// deployments, domains, env_vars, ...) keeps referencing the same app ids,
+// which this rebuild preserves verbatim.
+func migrateAppsUniqueScope(db *sql.DB) error {
+	var tableSQL string
+	err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'apps'`,
+	).Scan(&tableSQL)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(tableSQL, "UNIQUE (project_id, name)") {
+		// Already migrated, or a fresh DB created straight from the
+		// updated schema.sql.
+		return nil
+	}
+
+	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	defer db.Exec(`PRAGMA foreign_keys=ON`) //nolint:errcheck
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
+
+	if _, err := tx.Exec(`
+CREATE TABLE apps_new (
+  id            INTEGER PRIMARY KEY,
+  project_id    INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  environment_id INTEGER NOT NULL DEFAULT 0,
+  name          TEXT NOT NULL,
+  source_type   TEXT NOT NULL CHECK (source_type IN ('tarball','git')),
+  git_url       TEXT,
+  git_branch    TEXT,
+  git_token_enc BLOB,
+  port          INTEGER NOT NULL DEFAULT 8080,
+  replicas      INTEGER NOT NULL DEFAULT 1,
+  cpu_milli     INTEGER NOT NULL DEFAULT 0,
+  memory_mb     INTEGER NOT NULL DEFAULT 0,
+  health_path   TEXT NOT NULL DEFAULT '',
+  kind          TEXT NOT NULL DEFAULT 'web',
+  schedule      TEXT NOT NULL DEFAULT '',
+  webhook_secret BLOB,
+  build_path    TEXT NOT NULL DEFAULT '',
+  internal      INTEGER NOT NULL DEFAULT 0,
+  gpu_count     INTEGER NOT NULL DEFAULT 0,
+  inject_s3     INTEGER NOT NULL DEFAULT 0,
+  model_source  TEXT NOT NULL DEFAULT '',
+  runtime       TEXT NOT NULL DEFAULT '',
+  nodes         INTEGER NOT NULL DEFAULT 1,
+  framework     TEXT NOT NULL DEFAULT '',
+  autoscale_min INTEGER NOT NULL DEFAULT 0,
+  autoscale_max INTEGER NOT NULL DEFAULT 0,
+  autoscale_cpu INTEGER NOT NULL DEFAULT 0,
+  suspended     INTEGER NOT NULL DEFAULT 0,
+  ejected       INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (project_id, environment_id, name)
+)`); err != nil {
+		return fmt.Errorf("create apps_new: %w", err)
+	}
+	// Every column is selected from the legacy table, not defaulted: the
+	// ALTER loop above already added environment_id/ejected/... (with their
+	// own defaults) before this rebuild runs, so any value already written
+	// to them must survive.
+	if _, err := tx.Exec(`
+INSERT INTO apps_new (
+  id, project_id, environment_id, name, source_type, git_url, git_branch,
+  git_token_enc, port, replicas, cpu_milli, memory_mb, health_path, kind,
+  schedule, webhook_secret, build_path, internal, gpu_count, inject_s3,
+  model_source, runtime, nodes, framework, autoscale_min, autoscale_max,
+  autoscale_cpu, suspended, ejected, created_at
+)
+SELECT
+  id, project_id, environment_id, name, source_type, git_url, git_branch,
+  git_token_enc, port, replicas, cpu_milli, memory_mb, health_path, kind,
+  schedule, webhook_secret, build_path, internal, gpu_count, inject_s3,
+  model_source, runtime, nodes, framework, autoscale_min, autoscale_max,
+  autoscale_cpu, suspended, ejected, created_at
+FROM apps`); err != nil {
+		return fmt.Errorf("copy apps: %w", err)
+	}
+	if _, err := tx.Exec(`DROP TABLE apps`); err != nil {
+		return fmt.Errorf("drop legacy apps: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE apps_new RENAME TO apps`); err != nil {
+		return fmt.Errorf("rename apps_new: %w", err)
+	}
+	return tx.Commit()
+}
+
 // migrateAddonTypes rebuilds the addons table when its CHECK constraint
 // predates the minio/mlflow types. SQLite can't ALTER a CHECK, so this is a
 // copy-rename rebuild; addon_attachments survives because ids are preserved
@@ -362,6 +603,7 @@ func migrateAddonTypes(db *sql.DB) error {
 CREATE TABLE addons_new (
   id         INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  environment_id INTEGER NOT NULL DEFAULT 0,
   type       TEXT NOT NULL CHECK (type IN ('postgres','redis','minio','mlflow')),
   name       TEXT NOT NULL,
   version    TEXT NOT NULL,
@@ -372,9 +614,12 @@ CREATE TABLE addons_new (
 )`); err != nil {
 		return fmt.Errorf("create addons_new: %w", err)
 	}
+	// environment_id is selected from the legacy table, not defaulted: the
+	// ALTER loop above already added it (with its own DEFAULT 0) before this
+	// rebuild runs, so any value already backfilled onto it must survive.
 	if _, err := tx.Exec(`
-INSERT INTO addons_new (id, project_id, type, name, version, size_gb, creds_enc, created_at)
-SELECT id, project_id, type, name, version, size_gb, creds_enc, created_at FROM addons`); err != nil {
+INSERT INTO addons_new (id, project_id, environment_id, type, name, version, size_gb, creds_enc, created_at)
+SELECT id, project_id, environment_id, type, name, version, size_gb, creds_enc, created_at FROM addons`); err != nil {
 		return fmt.Errorf("copy addons: %w", err)
 	}
 	if _, err := tx.Exec(`DROP TABLE addons`); err != nil {

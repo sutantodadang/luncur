@@ -22,7 +22,7 @@ var errRestoreUnsupported = errors.New("addon-data restore is only supported for
 // own environment, never placed on the command line or logged. postgres
 // runs pg_restore --clean; redis overwrites dump.rdb and forces a reload.
 func (s *server) restoreAddon(ctx context.Context, ad store.Addon, dump []byte) error {
-	p, err := s.st.GetProjectByID(ad.ProjectID)
+	ns, err := s.addonNamespace(ad)
 	if err != nil {
 		return err
 	}
@@ -42,7 +42,7 @@ func (s *server) restoreAddon(ctx context.Context, ad store.Addon, dump []byte) 
 	dctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	var errBuf bytes.Buffer
-	if err := s.execer.ExecPod(dctx, p.Namespace, pod, ad.Type, cmd, bytes.NewReader(dump), io.Discard, &errBuf); err != nil {
+	if err := s.execer.ExecPod(dctx, ns, pod, ad.Type, cmd, bytes.NewReader(dump), io.Discard, &errBuf); err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(errBuf.String()))
 	}
 	return nil

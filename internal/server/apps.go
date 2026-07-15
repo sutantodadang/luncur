@@ -58,7 +58,7 @@ func (e *kindMismatchError) Unwrap() error { return e.err }
 // ignore it beyond that. An internal app gets "internal_url" instead of
 // "url" — its public sslip.io hostname resolves nowhere useful, since no
 // Ingress was ever rendered for it.
-func (s *server) appJSON(p store.Project, a store.App) map[string]any {
+func (s *server) appJSON(p store.Project, env store.Environment, a store.App) map[string]any {
 	out := map[string]any{
 		"id":              a.ID,
 		"name":            a.Name,
@@ -77,9 +77,9 @@ func (s *server) appJSON(p store.Project, a store.App) map[string]any {
 		out["runtime"] = a.Runtime
 	}
 	if a.Internal {
-		out["internal_url"] = internalURLFor(a.Name, p.Namespace)
+		out["internal_url"] = internalURLFor(a.Name, env.Namespace)
 	} else {
-		out["url"] = s.appURL(a)
+		out["url"] = s.appURLForEnv(a, env.Name, p.DefaultEnv)
 	}
 	if a.AutoMin > 0 {
 		out["autoscale"] = map[string]any{"min": a.AutoMin, "max": a.AutoMax, "cpu": a.AutoCPU}
@@ -100,10 +100,10 @@ func validateInternalKind(internal bool, kind string) error {
 	return nil
 }
 
-// requireApp loads an app within a project by name. Writes the error
-// response and returns ok=false on failure.
-func (s *server) requireApp(w http.ResponseWriter, p store.Project, name string) (store.App, bool) {
-	a, err := s.st.GetApp(p.ID, name)
+// requireApp loads an app within a project's environment by name. Writes
+// the error response and returns ok=false on failure.
+func (s *server) requireApp(w http.ResponseWriter, p store.Project, env store.Environment, name string) (store.App, bool) {
+	a, err := s.st.GetAppInEnv(env.ID, name)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "no such app")
 		return store.App{}, false
@@ -117,7 +117,7 @@ func (s *server) requireApp(w http.ResponseWriter, p store.Project, name string)
 }
 
 func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
@@ -193,6 +193,15 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	// CreateApp/CreateGitApp/CreateModelApp only take a project_id; re-parent
+	// to the resolved environment so requireApp's GetAppInEnv lookup (and
+	// every other env-scoped read) finds this app.
+	if err := s.st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
+		log.Printf("set app environment: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	a.EnvironmentID = env.ID
 	if buildPath != "" {
 		if err := s.st.SetBuildPath(a.ID, buildPath); err != nil {
 			log.Printf("set build path: %v", err)
@@ -222,7 +231,7 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 			return
 		}
 	}
-	out := s.appJSON(p, a)
+	out := s.appJSON(p, env, a)
 	// Built-in runtime model apps deploy themselves at create: the runtime
 	// image is known, so within one apply the endpoint is on its way up.
 	if a.Kind == "model" && modelRT.Name != "custom" && s.kube != nil {
@@ -235,7 +244,7 @@ func (s *server) handleCreateApp(w http.ResponseWriter, r *http.Request, u store
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
-			if err := s.applyImageDeploy(ctx, p, a, d, modelRT.Image); err != nil {
+			if err := s.applyImageDeploy(ctx, p, env, a, d, modelRT.Image); err != nil {
 				log.Printf("deploy model %s: %v", a.Name, err)
 			}
 		}()
@@ -258,22 +267,32 @@ func (s *server) handleListApps(w http.ResponseWriter, r *http.Request, u store.
 	}
 	out := make([]map[string]any, 0, len(list))
 	for _, a := range list {
-		out = append(out, s.appJSON(p, a))
+		// A project-wide listing spans every environment's apps; each app
+		// carries its own environment_id (set at create — see
+		// handleCreateApp), so its own URL/namespace come from there rather
+		// than assuming the project's default.
+		env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+		if err != nil {
+			log.Printf("list apps: get environment for %s: %v", a.Name, err)
+			writeError(w, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		out = append(out, s.appJSON(p, env, a))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *server) handleGetApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
 
-	out := s.appJSON(p, a)
+	out := s.appJSON(p, env, a)
 	d, err := s.st.LatestDeployment(a.ID)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
@@ -295,9 +314,9 @@ func (s *server) handleGetApp(w http.ResponseWriter, r *http.Request, u store.Us
 // ejected app's kube objects are no longer luncur's to touch — only the DB
 // row comes out. A non-ejected app deletes its kube objects first; the
 // caller must have already confirmed kube is configured.
-func (s *server) destroyApp(ctx context.Context, p store.Project, a store.App) error {
+func (s *server) destroyApp(ctx context.Context, p store.Project, env store.Environment, a store.App) error {
 	if !a.Ejected {
-		if err := s.kube.DeleteAppObjects(ctx, p.Namespace, a.Name); err != nil {
+		if err := s.kube.DeleteAppObjects(ctx, env.Namespace, a.Name); err != nil {
 			return err
 		}
 		// The forward Ingress (fwdproxy.go's one-click open) is luncur's
@@ -305,7 +324,7 @@ func (s *server) destroyApp(ctx context.Context, p store.Project, a store.App) e
 		// kube at all — same rule as DeleteAppObjects above. NotFound is
 		// already swallowed by DeleteObject; the extra IsNotFound check
 		// just keeps this a non-fatal best-effort.
-		if err := s.kube.DeleteObject(ctx, s.systemNamespace, "Ingress", up.ForwardIngressName(a.Name, p.Namespace)); err != nil && !kube.IsNotFound(err) {
+		if err := s.kube.DeleteObject(ctx, s.systemNamespace, "Ingress", up.ForwardIngressName(a.Name, env.Namespace)); err != nil && !kube.IsNotFound(err) {
 			log.Printf("delete forward ingress: %v", err)
 		}
 	}
@@ -313,11 +332,11 @@ func (s *server) destroyApp(ctx context.Context, p store.Project, a store.App) e
 }
 
 func (s *server) handleDeleteApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -327,7 +346,7 @@ func (s *server) handleDeleteApp(w http.ResponseWriter, r *http.Request, u store
 	if !a.Ejected && !s.requireKube(w) {
 		return
 	}
-	if err := s.destroyApp(r.Context(), p, a); err != nil {
+	if err := s.destroyApp(r.Context(), p, env, a); err != nil {
 		log.Printf("delete app: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 		return
@@ -342,11 +361,11 @@ func (s *server) handleDeleteApp(w http.ResponseWriter, r *http.Request, u store
 // app (App.SourceType == "git") with neither triggers an async build cloning
 // from its configured repo; anything else is a bad request.
 func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -392,7 +411,7 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 			return
 		}
 
-		s.startBuild(p, a, d)
+		s.startBuild(p, env, a, d)
 
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"deployment_id": d.ID,
@@ -427,17 +446,17 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 		case image == "":
 			image = rt.Image
 		}
-		s.deployImage(w, r, p, a, image)
+		s.deployImage(w, r, p, env, a, image)
 		return
 	}
 
 	if req.Image != "" {
-		s.deployImage(w, r, p, a, req.Image)
+		s.deployImage(w, r, p, env, a, req.Image)
 		return
 	}
 
 	if a.SourceType == "git" {
-		d, err := s.deployGitApp(p, a, u.ID)
+		d, err := s.deployGitApp(p, env, a, u.ID)
 		if err != nil {
 			switch {
 			case errors.Is(err, errKubeUnavailable):
@@ -465,7 +484,7 @@ func (s *server) handleDeployApp(w http.ResponseWriter, r *http.Request, u store
 // respective dependency is missing — checked BEFORE creating the deployment
 // row, so a row is never left stuck in "building" for a build that can't
 // start (and startBuild's goroutine never sees a nil kube/src).
-func (s *server) deployGitApp(p store.Project, a store.App, userID int64) (store.Deployment, error) {
+func (s *server) deployGitApp(p store.Project, env store.Environment, a store.App, userID int64) (store.Deployment, error) {
 	if s.kube == nil {
 		return store.Deployment{}, errKubeUnavailable
 	}
@@ -476,18 +495,18 @@ func (s *server) deployGitApp(p store.Project, a store.App, userID int64) (store
 	if err != nil {
 		return store.Deployment{}, err
 	}
-	s.startBuild(p, a, d)
+	s.startBuild(p, env, a, d)
 	return d, nil
 }
 
 // applyImageDeploy is the synchronous render+apply core shared by prebuilt
 // image deploys and rollbacks: apply the app at `image`, then mark the
 // deployment live — or failed, returning the error.
-func (s *server) applyImageDeploy(ctx context.Context, p store.Project, a store.App, d store.Deployment, image string) error {
-	rendered, err := s.renderApp(p, a, image, true)
+func (s *server) applyImageDeploy(ctx context.Context, p store.Project, env store.Environment, a store.App, d store.Deployment, image string) error {
+	rendered, err := s.renderApp(p, env, a, image, true)
 	if err == nil {
-		if err = s.ensureProjectNamespace(ctx, p.Namespace); err == nil {
-			err = s.kube.Apply(ctx, p.Namespace, rendered.Objects)
+		if err = s.ensureEnvNamespace(ctx, env); err == nil {
+			err = s.kube.Apply(ctx, env.Namespace, rendered.Objects)
 		}
 	}
 	if err != nil {
@@ -500,13 +519,19 @@ func (s *server) applyImageDeploy(ctx context.Context, p store.Project, a store.
 	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
 		log.Printf("mark deploy %s live (apply already succeeded): %v", d.ID, err)
 	}
-	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: s.appURL(a)})
+	// Every successful deploy touches its environment's LastActiveAt so an
+	// actively-deployed preview survives reapPreviews' idle-TTL sweep
+	// (harmless on a standing environment — nothing reads its LastActiveAt).
+	if err := s.st.TouchEnvironment(env.ID); err != nil {
+		log.Printf("touch environment %s after deploy: %v", env.Name, err)
+	}
+	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: s.appURLForEnv(a, env.Name, p.DefaultEnv)})
 	return nil
 }
 
 // deployImage is the synchronous prebuilt-image deploy path: render, apply,
 // mark live. Unchanged from the pre-build-pipeline behavior.
-func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Project, a store.App, image string) {
+func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Project, env store.Environment, a store.App, image string) {
 	d, err := s.st.CreateDeployment(a.ID, "deploying", image, 0)
 	if err != nil {
 		log.Printf("create deployment: %v", err)
@@ -514,7 +539,7 @@ func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Pro
 		return
 	}
 
-	if err := s.applyImageDeploy(r.Context(), p, a, d, image); err != nil {
+	if err := s.applyImageDeploy(r.Context(), p, env, a, d, image); err != nil {
 		log.Printf("deploy image %s: %v", image, err)
 		writeError(w, http.StatusBadGateway, "deploy_failed", "deploy failed")
 		return
@@ -524,7 +549,7 @@ func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Pro
 		"deployment_id": d.ID,
 		"seq":           d.Seq,
 		"status":        "live",
-		"url":           s.appURL(a),
+		"url":           s.appURLForEnv(a, env.Name, p.DefaultEnv),
 	})
 }
 
@@ -556,11 +581,11 @@ func (s *server) requireDeploy(w http.ResponseWriter, a store.App, idStr string)
 // id from its human-facing seq before calling the rollback API (which still
 // takes the internal id).
 func (s *server) handleListDeploys(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -585,11 +610,11 @@ func (s *server) handleListDeploys(w http.ResponseWriter, r *http.Request, u sto
 }
 
 func (s *server) handleGetDeploy(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -602,16 +627,16 @@ func (s *server) handleGetDeploy(w http.ResponseWriter, r *http.Request, u store
 		"seq":           d.Seq,
 		"status":        d.Status,
 		"image":         d.ImageRef,
-		"url":           s.appURL(a),
+		"url":           s.appURLForEnv(a, env.Name, p.DefaultEnv),
 	})
 }
 
 func (s *server) handleDeployLogs(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -705,7 +730,7 @@ type scaleChange struct {
 // Returns errKubeUnavailable when a live app's scale can't be applied, or a
 // *scaleReplicasError when the requested replica count is invalid; any other
 // error is an internal failure.
-func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req scaleChange) (store.App, error) {
+func (s *server) scaleApp(ctx context.Context, p store.Project, env store.Environment, a store.App, req scaleChange) (store.App, error) {
 	if a.Ejected {
 		return store.App{}, errAppEjected
 	}
@@ -783,7 +808,7 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 	}
 
 	if live {
-		if err := s.syncApp(ctx, p, a); err != nil {
+		if err := s.syncApp(ctx, p, env, a); err != nil {
 			return store.App{}, err
 		}
 		// Sync only upserts; when the replica floor drops below 2 the stale
@@ -793,8 +818,8 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 			floor = a.AutoMin
 		}
 		if floor < 2 {
-			if err := s.kube.DeleteObject(ctx, p.Namespace, "PodDisruptionBudget", a.Name); err != nil {
-				log.Printf("delete pdb %s/%s: %v", p.Namespace, a.Name, err)
+			if err := s.kube.DeleteObject(ctx, env.Namespace, "PodDisruptionBudget", a.Name); err != nil {
+				log.Printf("delete pdb %s/%s: %v", env.Namespace, a.Name, err)
 			}
 		}
 	}
@@ -803,11 +828,11 @@ func (s *server) scaleApp(ctx context.Context, p store.Project, a store.App, req
 }
 
 func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -843,7 +868,7 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 		req.MemoryMB = &mem
 	}
 
-	updated, err := s.scaleApp(r.Context(), p, a, req)
+	updated, err := s.scaleApp(r.Context(), p, env, a, req)
 	if err != nil {
 		var re *scaleReplicasError
 		var ke *kindMismatchError
@@ -880,7 +905,7 @@ func (s *server) handleScaleApp(w http.ResponseWriter, r *http.Request, u store.
 // pattern; enabling additionally requires a CPU request, no volumes (RWO
 // storage can't be autoscaled the same way it can't run >1 replica), and no
 // GPUs (scale those manually).
-func (s *server) autoscaleApp(ctx context.Context, p store.Project, a store.App, min, max, cpu int) (store.App, error) {
+func (s *server) autoscaleApp(ctx context.Context, p store.Project, env store.Environment, a store.App, min, max, cpu int) (store.App, error) {
 	if a.Ejected {
 		return store.App{}, errAppEjected
 	}
@@ -920,11 +945,11 @@ func (s *server) autoscaleApp(ctx context.Context, p store.Project, a store.App,
 
 	if live {
 		if !enabling {
-			if err := s.kube.DeleteObject(ctx, p.Namespace, "HorizontalPodAutoscaler", a.Name); err != nil {
+			if err := s.kube.DeleteObject(ctx, env.Namespace, "HorizontalPodAutoscaler", a.Name); err != nil {
 				return store.App{}, err
 			}
 		}
-		if err := s.syncApp(ctx, p, a); err != nil {
+		if err := s.syncApp(ctx, p, env, a); err != nil {
 			return store.App{}, err
 		}
 		// Sync only upserts; when the replica floor drops below 2 the stale
@@ -934,8 +959,8 @@ func (s *server) autoscaleApp(ctx context.Context, p store.Project, a store.App,
 			floor = a.AutoMin
 		}
 		if floor < 2 {
-			if err := s.kube.DeleteObject(ctx, p.Namespace, "PodDisruptionBudget", a.Name); err != nil {
-				log.Printf("delete pdb %s/%s: %v", p.Namespace, a.Name, err)
+			if err := s.kube.DeleteObject(ctx, env.Namespace, "PodDisruptionBudget", a.Name); err != nil {
+				log.Printf("delete pdb %s/%s: %v", env.Namespace, a.Name, err)
 			}
 		}
 	}
@@ -944,11 +969,11 @@ func (s *server) autoscaleApp(ctx context.Context, p store.Project, a store.App,
 }
 
 func (s *server) handleAutoscaleApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -973,7 +998,7 @@ func (s *server) handleAutoscaleApp(w http.ResponseWriter, r *http.Request, u st
 		cpu = *body.CPU
 	}
 
-	updated, err := s.autoscaleApp(r.Context(), p, a, min, max, cpu)
+	updated, err := s.autoscaleApp(r.Context(), p, env, a, min, max, cpu)
 	if err != nil {
 		var re *scaleReplicasError
 		var ke *kindMismatchError
@@ -996,7 +1021,7 @@ func (s *server) handleAutoscaleApp(w http.ResponseWriter, r *http.Request, u st
 		return
 	}
 
-	writeJSON(w, http.StatusOK, s.appJSON(p, updated))
+	writeJSON(w, http.StatusOK, s.appJSON(p, env, updated))
 }
 
 // errTrainingOverBudget wraps a validateGPUBudget failure from setAppTraining
@@ -1021,11 +1046,11 @@ func (s *server) setAppTraining(p store.Project, a store.App, nodes int, framewo
 // (nodes/framework) — the values startRun falls back to when a run request
 // doesn't override them.
 func (s *server) handleSetTraining(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	a, ok := s.requireJobApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}

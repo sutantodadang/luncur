@@ -68,8 +68,8 @@ func runJSON(app store.App, r store.JobRun) map[string]any {
 
 // requireJobApp loads the app and answers kind_mismatch unless it is a
 // kind=job app. Shared by every runs handler.
-func (s *server) requireJobApp(w http.ResponseWriter, p store.Project, name string) (store.App, bool) {
-	a, ok := s.requireApp(w, p, name)
+func (s *server) requireJobApp(w http.ResponseWriter, p store.Project, env store.Environment, name string) (store.App, bool) {
+	a, ok := s.requireApp(w, p, env, name)
 	if !ok {
 		return store.App{}, false
 	}
@@ -109,7 +109,7 @@ type runOpts struct {
 // <app>-run-<n> rendered against the latest live deployment's image, using
 // opts to override the app's stored nodes/framework/env for this run only.
 // Shared by the JSON API (handleCreateRun) and the UI run-now button.
-func (s *server) startRun(ctx context.Context, p store.Project, a store.App, opts runOpts) (store.JobRun, error) {
+func (s *server) startRun(ctx context.Context, p store.Project, env store.Environment, a store.App, opts runOpts) (store.JobRun, error) {
 	nodes := a.Nodes
 	if opts.Nodes > 0 {
 		nodes = opts.Nodes
@@ -143,10 +143,10 @@ func (s *server) startRun(ctx context.Context, p store.Project, a store.App, opt
 		return store.JobRun{}, fmt.Errorf("create job run: %w", err)
 	}
 
-	rendered, err := s.renderRunWith(p, a, d.ImageRef, run.ID, nodes, framework, opts.Env)
+	rendered, err := s.renderRunWith(p, env, a, d.ImageRef, run.ID, nodes, framework, opts.Env)
 	if err == nil {
-		if err = s.ensureProjectNamespace(ctx, p.Namespace); err == nil {
-			err = s.kube.Apply(ctx, p.Namespace, rendered.Objects)
+		if err = s.ensureEnvNamespace(ctx, env); err == nil {
+			err = s.kube.Apply(ctx, env.Namespace, rendered.Objects)
 		}
 	}
 	if err != nil {
@@ -157,18 +157,18 @@ func (s *server) startRun(ctx context.Context, p store.Project, a store.App, opt
 		return store.JobRun{}, fmt.Errorf("%w: %v", errRunStartFailed, err)
 	}
 
-	go s.watchRun(p, a, run)
+	go s.watchRun(p, env, a, run)
 
 	return run, nil
 }
 
 // handleCreateRun triggers one run of a kind=job app via the JSON API.
 func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	a, ok := s.requireJobApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -196,7 +196,7 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	run, err := s.startRun(r.Context(), p, a, runOpts{Nodes: req.Nodes, Framework: req.Framework})
+	run, err := s.startRun(r.Context(), p, env, a, runOpts{Nodes: req.Nodes, Framework: req.Framework})
 	switch {
 	case errors.Is(err, errNotDeployed):
 		writeError(w, http.StatusConflict, "not_deployed", err.Error())
@@ -220,24 +220,24 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request, u store
 // pod's exit code. Multi-node runs pass through gangGuard first: a run
 // whose pods can't all reach Running within the gang timeout window is
 // failed and torn down instead of squatting GPUs half-scheduled.
-func (s *server) watchRun(p store.Project, a store.App, run store.JobRun) {
+func (s *server) watchRun(p store.Project, env store.Environment, a store.App, run store.JobRun) {
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 	name := jobRunName(a.Name, run.ID)
 
 	if run.Nodes > 1 {
-		if !s.gangGuard(ctx, p, name, run) {
+		if !s.gangGuard(ctx, env, name, run) {
 			return // run already marked failed (and the Job torn down) by gangGuard
 		}
 	}
 
-	ok, err := s.kube.WaitJob(ctx, p.Namespace, name, runWatchPoll)
+	ok, err := s.kube.WaitJob(ctx, env.Namespace, name, runWatchPoll)
 	status := "succeeded"
 	if err != nil || !ok {
 		status = "failed"
 	}
 	var exitCode *int64
-	if code, found, err := s.kube.JobExitCode(ctx, p.Namespace, name); err == nil && found {
+	if code, found, err := s.kube.JobExitCode(ctx, env.Namespace, name); err == nil && found {
 		exitCode = &code
 	}
 	if err := s.st.FinishJobRun(run.ID, status, exitCode); err != nil {
@@ -251,7 +251,7 @@ func (s *server) watchRun(p store.Project, a store.App, run store.JobRun) {
 // so it doesn't sit half-scheduled, burning GPU budget on nodes that will
 // never rendezvous. Returns false when the run was killed by the guard —
 // callers must not fall through to the normal WaitJob completion path.
-func (s *server) gangGuard(ctx context.Context, p store.Project, name string, run store.JobRun) bool {
+func (s *server) gangGuard(ctx context.Context, env store.Environment, name string, run store.JobRun) bool {
 	mins := 10
 	if v, err := s.st.GetSetting(settingTrainGangTimeout); err == nil {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -263,7 +263,7 @@ func (s *server) gangGuard(ctx context.Context, p store.Project, name string, ru
 	}
 	deadline := time.Now().Add(time.Duration(mins) * gangTimeoutUnit)
 	for time.Now().Before(deadline) {
-		running, _, err := s.kube.RunningJobPods(ctx, p.Namespace, name)
+		running, _, err := s.kube.RunningJobPods(ctx, env.Namespace, name)
 		if err == nil && running >= run.Nodes {
 			return true
 		}
@@ -273,10 +273,10 @@ func (s *server) gangGuard(ctx context.Context, p store.Project, name string, ru
 		case <-time.After(runWatchPoll):
 		}
 	}
-	running, total, _ := s.kube.RunningJobPods(ctx, p.Namespace, name)
+	running, total, _ := s.kube.RunningJobPods(ctx, env.Namespace, name)
 	log.Printf("run %d gang timeout: %d/%d pods running (of %d wanted) — destroying job %s",
 		run.ID, running, total, run.Nodes, name)
-	if err := s.kube.DeleteJob(ctx, p.Namespace, name); err != nil {
+	if err := s.kube.DeleteJob(ctx, env.Namespace, name); err != nil {
 		log.Printf("gang teardown %s: %v", name, err)
 	}
 	if err := s.st.FinishJobRun(run.ID, "failed", nil); err != nil {
@@ -286,11 +286,11 @@ func (s *server) gangGuard(ctx context.Context, p store.Project, name string, ru
 }
 
 func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	a, ok := s.requireJobApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -328,11 +328,11 @@ func (s *server) requireRun(w http.ResponseWriter, a store.App, idStr string) (s
 }
 
 func (s *server) handleGetRun(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	a, ok := s.requireJobApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -347,11 +347,11 @@ func (s *server) handleGetRun(w http.ResponseWriter, r *http.Request, u store.Us
 // open while the run is still producing output). Same shape as
 // handleRuntimeLogs, but scoped to the run's Job pods.
 func (s *server) handleRunLogs(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireJobApp(w, p, r.PathValue("app"))
+	a, ok := s.requireJobApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -369,7 +369,7 @@ func (s *server) handleRunLogs(w http.ResponseWriter, r *http.Request, u store.U
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	pods, err := s.kube.JobPods(r.Context(), p.Namespace, jobRunName(a.Name, run.ID))
+	pods, err := s.kube.JobPods(r.Context(), env.Namespace, jobRunName(a.Name, run.ID))
 	if err != nil {
 		log.Printf("list run pods: %v", err)
 		writeError(w, http.StatusBadGateway, "kube_error", "could not list pods")
@@ -398,7 +398,7 @@ func (s *server) handleRunLogs(w http.ResponseWriter, r *http.Request, u store.U
 		wg.Add(1)
 		go func(pod string) {
 			defer wg.Done()
-			rc, err := s.kube.PodLogStream(r.Context(), p.Namespace, pod, follow, tail, since)
+			rc, err := s.kube.PodLogStream(r.Context(), env.Namespace, pod, follow, tail, since)
 			if err != nil {
 				send("[" + pod + "] error: " + err.Error())
 				return

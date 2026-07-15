@@ -38,12 +38,17 @@ func (s *server) reconcileUnfinished(ctx context.Context) {
 			log.Printf("reconcile deploy %s: get project %d: %v", d.ID, a.ProjectID, err)
 			continue
 		}
+		env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+		if err != nil {
+			log.Printf("reconcile deploy %s: get environment %d: %v", d.ID, a.EnvironmentID, err)
+			continue
+		}
 
 		switch d.Status {
 		case "building":
-			s.reconcileBuilding(ctx, p, a, d)
+			s.reconcileBuilding(ctx, p, env, a, d)
 		case "deploying":
-			s.reconcileDeploying(p, a, d)
+			s.reconcileDeploying(p, env, a, d)
 		}
 	}
 }
@@ -64,7 +69,7 @@ func (s *server) reconcileFail(p store.Project, a store.App, d store.Deployment,
 // or never got applied), there's nothing to resume, so it's marked failed
 // immediately. If the Job is still there, a goroutine re-attaches to it
 // with a fresh buildTimeout budget, exactly like a fresh startBuild would.
-func (s *server) reconcileBuilding(ctx context.Context, p store.Project, a store.App, d store.Deployment) {
+func (s *server) reconcileBuilding(ctx context.Context, p store.Project, env store.Environment, a store.App, d store.Deployment) {
 	jobName := buildJobName(d.ID)
 	exists, err := s.kube.JobExists(ctx, s.systemNamespace, jobName)
 	if err != nil {
@@ -100,7 +105,7 @@ func (s *server) reconcileBuilding(ctx context.Context, p store.Project, a store
 		}
 
 		imageRef := build.ImageRef(s.registryHost, projectSlug(p), a.Name, d.Seq)
-		if err := s.finishDeploy(bctx, p, a, d, imageRef); err != nil {
+		if err := s.finishDeploy(bctx, p, env, a, d, imageRef); err != nil {
 			s.buildLogf(d, "build failed: %v", err)
 			s.reconcileFail(p, a, d, err)
 		}
@@ -111,13 +116,13 @@ func (s *server) reconcileBuilding(ctx context.Context, p store.Project, a store
 // build already succeeded and image_ref is set, so all that's left is
 // finishDeploy's apply-and-mark-live tail, run again from scratch (it's
 // idempotent).
-func (s *server) reconcileDeploying(p store.Project, a store.App, d store.Deployment) {
+func (s *server) reconcileDeploying(p store.Project, env store.Environment, a store.App, d store.Deployment) {
 	go func() {
 		bctx, cancel := context.WithTimeout(context.Background(), s.buildTimeout())
 		defer cancel()
 
 		s.buildLogf(d, "server restarted — resuming deploy")
-		if err := s.finishDeploy(bctx, p, a, d, d.ImageRef); err != nil {
+		if err := s.finishDeploy(bctx, p, env, a, d, d.ImageRef); err != nil {
 			s.buildLogf(d, "build failed: %v", err)
 			s.reconcileFail(p, a, d, err)
 		}
