@@ -922,3 +922,38 @@ func TestCreatePreviewFromOverride(t *testing.T) {
 	}
 	resp.Body.Close()
 }
+
+// TestEnsurePreviewRefusesStandingEnvName verifies a branch whose sanitized
+// name collides with a standing environment does NOT resolve to (and thereby
+// redeploy) that standing environment: ensurePreview refuses instead, so a
+// webhook push can never trigger an unintended standing-env rollout.
+func TestEnsurePreviewRefusesStandingEnvName(t *testing.T) {
+	srv, _ := previewTestServer(t)
+	st := srv.st
+
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "production" is a standing env whose base_branch is "main", so a branch
+	// literally named "production" falls past routeBranch's base-branch match
+	// into ensurePreview; it must be refused, not returned.
+	if _, err := srv.ensurePreview(context.Background(), p, "production"); err == nil {
+		t.Fatal("expected ensurePreview to refuse a standing-env name collision")
+	}
+	prod, err := st.GetEnvironment(p.ID, "production")
+	if err != nil {
+		t.Fatalf("production env should still exist: %v", err)
+	}
+	if prod.Kind != "standing" {
+		t.Fatalf("production env kind changed to %q", prod.Kind)
+	}
+}

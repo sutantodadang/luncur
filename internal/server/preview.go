@@ -454,6 +454,14 @@ func (s *server) ensurePreview(ctx context.Context, p store.Project, branch stri
 func (s *server) ensurePreviewFromBase(ctx context.Context, p store.Project, branch, baseOverride string) (store.Environment, error) {
 	name := sanitizeBranch(branch)
 	if existing, err := s.st.GetEnvironment(p.ID, name); err == nil {
+		// Only ever reuse an actual preview environment. A branch whose
+		// sanitized name collides with a standing environment (e.g. a branch
+		// literally named "production") must NOT resolve to — and then
+		// redeploy — that standing environment; refuse instead so a push can
+		// never trigger an unintended standing-env rollout.
+		if existing.Kind != "preview" {
+			return store.Environment{}, fmt.Errorf("branch %q maps to environment name %q, which is a standing environment; rename the branch for a preview", branch, name)
+		}
 		return existing, nil
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return store.Environment{}, fmt.Errorf("get environment: %w", err)
