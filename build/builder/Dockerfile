@@ -28,11 +28,22 @@ RUN apk add --no-cache git ca-certificates bash
 
 # Install nixpacks: download the release binary directly from GitHub.
 # This avoids needing curl+bash+curl script; we just fetch the binary.
-# Using the static binary from the release assets.
+# Using the static musl binary from the release assets.
+#
+# TARGETARCH is supplied automatically by `docker buildx` per target platform;
+# map it to nixpacks' Rust target triple so the arm64 (Raspberry Pi) image
+# gets the aarch64 binary instead of x86_64. Defaults to amd64 for a plain
+# `docker build` with no buildx (BuildKit sets TARGETARCH from the host).
 ARG NIXPACKS_VERSION=1.41.0
+ARG TARGETARCH=amd64
 RUN apk add --no-cache curl && \
+    case "$TARGETARCH" in \
+      amd64) NIXARCH=x86_64 ;; \
+      arm64) NIXARCH=aarch64 ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH (want amd64 or arm64)" >&2; exit 1 ;; \
+    esac && \
     curl -fsSL -o /tmp/nixpacks.tar.gz \
-      "https://github.com/railwayapp/nixpacks/releases/download/v${NIXPACKS_VERSION}/nixpacks-v${NIXPACKS_VERSION}-x86_64-unknown-linux-musl.tar.gz" && \
+      "https://github.com/railwayapp/nixpacks/releases/download/v${NIXPACKS_VERSION}/nixpacks-v${NIXPACKS_VERSION}-${NIXARCH}-unknown-linux-musl.tar.gz" && \
     tar -xzf /tmp/nixpacks.tar.gz -C /usr/local/bin && \
     rm /tmp/nixpacks.tar.gz && \
     apk del curl && \

@@ -49,6 +49,7 @@ nav:
       - Doctor: operations/doctor.md
       - Disaster recovery: operations/disaster-recovery.md
       - Registry GC: operations/registry-gc.md
+      - Raspberry Pi & ARM: operations/raspberry-pi.md
       - Eject & adopt: operations/eject-adopt.md
       - Uninstall: operations/uninstall.md
   - Reference:

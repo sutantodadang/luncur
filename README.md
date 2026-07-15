@@ -72,6 +72,10 @@ chmod +x luncur
 sudo ./luncur up        # installs K3s + luncur, prints admin credentials (once — save them!)
 ```
 
+On a **Raspberry Pi** or other 64-bit ARM board, swap the binary for
+`luncur-linux-arm64` — the container images are multi-arch, so everything else
+is identical. See [Raspberry Pi & ARM](docs/operations/raspberry-pi.md).
+
 Deploy your first app from your laptop:
 
 ```sh
@@ -159,7 +163,7 @@ Full operator manual: **[sutantodadang.github.io/luncur](https://sutantodadang.g
 - [ ] HTML invite/notification emails
 - [ ] Preview environments per branch
 - [ ] Multi-node K3s support
-- [ ] ARM builds & Raspberry Pi story
+- [x] ARM builds & Raspberry Pi story
 
 ## 💖 Sponsor luncur
 
