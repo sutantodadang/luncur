@@ -110,7 +110,21 @@ func (s *server) handleForwardHost(w http.ResponseWriter, r *http.Request, p sto
 		http.Error(w, "session expired — reopen from the luncur panel", http.StatusUnauthorized)
 		return
 	}
-	httputil.NewSingleHostReverseProxy(s.fwdProxyTargetFn(p, a)).ServeHTTP(w, r)
+	// fwdProxyTarget is a pinned pure function (p.Namespace, a.Name) — its
+	// signature is asserted directly by TestFwdProxyTargetUsesServicePort80.
+	// Rather than change that signature, resolve the app's real environment
+	// namespace here (the caller that actually has a) and pass it through
+	// via a Project copy, so develop/staging/preview apps proxy to their own
+	// namespace instead of always the project's default/production one.
+	ns, err := s.appNamespace(a)
+	if err != nil {
+		log.Printf("forward proxy: resolve app namespace: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	targetProject := p
+	targetProject.Namespace = ns
+	httputil.NewSingleHostReverseProxy(s.fwdProxyTargetFn(targetProject, a)).ServeHTTP(w, r)
 }
 
 // handleUIAppOpen is the panel-side half of the handoff: membership-checked
@@ -136,7 +150,13 @@ func (s *server) handleUIAppOpen(w http.ResponseWriter, r *http.Request, u store
 	}
 	host := s.forwardHost(p, a)
 	if s.kube != nil {
-		obj, err := up.ForwardIngress(host, a.Name, p.Namespace)
+		ns, err := s.appNamespace(a)
+		if err != nil {
+			log.Printf("forward ingress: resolve app namespace: %v", err)
+			http.Error(w, "could not publish forward route", http.StatusBadGateway)
+			return
+		}
+		obj, err := up.ForwardIngress(host, a.Name, ns)
 		if err == nil {
 			err = s.kube.Apply(r.Context(), s.systemNamespace, []render.Object{obj})
 		}

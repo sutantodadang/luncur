@@ -32,7 +32,7 @@ func volumeJSON(v store.Volume) map[string]any {
 
 // addVolume is the shared core of handleAddVolume and its UI twin: gate
 // (ejected, cron kind, replica conflict), persist, opportunistically sync.
-func (s *server) addVolume(ctx context.Context, p store.Project, a store.App, name, path string, sizeGB int) (store.Volume, error) {
+func (s *server) addVolume(ctx context.Context, p store.Project, env store.Environment, a store.App, name, path string, sizeGB int) (store.Volume, error) {
 	if a.Ejected {
 		return store.Volume{}, errAppEjected
 	}
@@ -46,16 +46,16 @@ func (s *server) addVolume(ctx context.Context, p store.Project, a store.App, na
 	if err != nil {
 		return store.Volume{}, err
 	}
-	s.syncIfLive(ctx, p, a)
+	s.syncIfLive(ctx, p, env, a)
 	return v, nil
 }
 
 func (s *server) handleAddVolume(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -70,7 +70,7 @@ func (s *server) handleAddVolume(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	v, err := s.addVolume(r.Context(), p, a, req.Name, req.Path, req.SizeGB)
+	v, err := s.addVolume(r.Context(), p, env, a, req.Name, req.Path, req.SizeGB)
 	if err != nil {
 		var ke *kindMismatchError
 		var rc *volumeReplicaConflictError
@@ -97,11 +97,11 @@ func (s *server) handleAddVolume(w http.ResponseWriter, r *http.Request, u store
 }
 
 func (s *server) handleListVolumes(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -122,7 +122,7 @@ func (s *server) handleListVolumes(w http.ResponseWriter, r *http.Request, u sto
 // delete the DB row and, only with purge, the cluster PVC. A purge with no
 // kube client fails with errKubeUnavailable BEFORE the row is touched so the
 // volume never silently detaches while its data lingers unaddressed.
-func (s *server) removeVolume(ctx context.Context, p store.Project, a store.App, name string, purge bool) error {
+func (s *server) removeVolume(ctx context.Context, p store.Project, env store.Environment, a store.App, name string, purge bool) error {
 	if a.Ejected {
 		return errAppEjected
 	}
@@ -133,20 +133,20 @@ func (s *server) removeVolume(ctx context.Context, p store.Project, a store.App,
 		return err
 	}
 	if purge {
-		if err := s.kube.DeletePVC(ctx, p.Namespace, render.VolumeClaimName(a.Name, name)); err != nil {
+		if err := s.kube.DeletePVC(ctx, env.Namespace, render.VolumeClaimName(a.Name, name)); err != nil {
 			return err
 		}
 	}
-	s.syncIfLive(ctx, p, a)
+	s.syncIfLive(ctx, p, env, a)
 	return nil
 }
 
 func (s *server) handleDeleteVolume(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -155,7 +155,7 @@ func (s *server) handleDeleteVolume(w http.ResponseWriter, r *http.Request, u st
 	q := r.URL.Query().Get("purge")
 	purge := q == "true" || q == "1"
 
-	if err := s.removeVolume(r.Context(), p, a, name, purge); err != nil {
+	if err := s.removeVolume(r.Context(), p, env, a, name, purge); err != nil {
 		switch {
 		case errors.Is(err, errAppEjected):
 			writeError(w, http.StatusConflict, "app_ejected", errAppEjected.Error())

@@ -17,6 +17,7 @@ func appCmd() *cobra.Command {
 	}
 
 	var project string
+	var env string
 	var port int
 	var gitURL, branch string
 	var kind, schedule string
@@ -36,6 +37,7 @@ func appCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(env)
 			var a client.AppInfo
 			switch {
 			case kind == "model":
@@ -78,6 +80,7 @@ func appCmd() *cobra.Command {
 	}
 	create.Flags().StringVar(&project, "project", "", "project name")
 	create.MarkFlagRequired("project")
+	create.Flags().StringVar(&env, "env", "", "environment (default: the project's default env)")
 	// port is validated server-side: required for web, must be 0 for
 	// worker/cron. Not marked required here so worker/cron creation doesn't
 	// need a throwaway --port.
@@ -95,7 +98,7 @@ func appCmd() *cobra.Command {
 	create.Flags().StringVar(&memory, "memory", "", "memory request+limit applied after create (e.g. 8192, 8Gi)")
 	create.Flags().StringVar(&gitToken, "git-token", "", "access token to clone a private git repo (git-source apps; e.g. a GitHub PAT)")
 
-	var listProject string
+	var listProject, listEnv string
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List apps",
@@ -105,6 +108,7 @@ func appCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(listEnv)
 			apps, err := c.ListApps(listProject)
 			if err != nil {
 				return err
@@ -124,8 +128,9 @@ func appCmd() *cobra.Command {
 	}
 	list.Flags().StringVar(&listProject, "project", "", "project name")
 	list.MarkFlagRequired("project")
+	list.Flags().StringVar(&listEnv, "env", "", "environment (default: the project's default env)")
 
-	var infoProject string
+	var infoProject, infoEnv string
 	info := &cobra.Command{
 		Use:   "info <name>",
 		Short: "Show app details",
@@ -135,6 +140,7 @@ func appCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(infoEnv)
 			a, err := c.GetApp(infoProject, args[0])
 			if err != nil {
 				return err
@@ -153,6 +159,7 @@ func appCmd() *cobra.Command {
 	}
 	info.Flags().StringVar(&infoProject, "project", "", "project name")
 	info.MarkFlagRequired("project")
+	info.Flags().StringVar(&infoEnv, "env", "", "environment (default: the project's default env)")
 
 	var rawProject string
 	raw := &cobra.Command{

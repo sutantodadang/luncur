@@ -474,7 +474,14 @@ func (s *server) pipelineLaunchApp(ctx context.Context, run store.PipelineRun, p
 		return
 	}
 
-	jr, err := s.startRun(ctx, project, a, runOpts{Env: pipelineStepEnv(pl, run.ID, v.Spec)})
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		if e := s.st.FinishStep(v.Row.ID, "failed", err.Error()); e != nil {
+			log.Printf("pipeline run %s: step %s: finish failed: %v", run.ID, v.Row.Name, e)
+		}
+		return
+	}
+	jr, err := s.startRun(ctx, project, env, a, runOpts{Env: pipelineStepEnv(pl, run.ID, v.Spec)})
 	switch {
 	case errors.Is(err, errRunOverBudget):
 		log.Printf("pipeline run %s: step %s over gpu budget this tick, left pending: %v", run.ID, v.Row.Name, err)
@@ -594,7 +601,12 @@ func (s *server) pipelineRunDeploy(ctx context.Context, run store.PipelineRun, p
 		s.finishPipelineStep(run, v, "failed", err.Error())
 		return
 	}
-	if err := s.applyImageDeploy(ctx, project, a, d, live.ImageRef); err != nil {
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		s.finishPipelineStep(run, v, "failed", err.Error())
+		return
+	}
+	if err := s.applyImageDeploy(ctx, project, env, a, d, live.ImageRef); err != nil {
 		s.finishPipelineStep(run, v, "failed", err.Error())
 		return
 	}
@@ -613,7 +625,12 @@ func (s *server) pipelineRunScale(ctx context.Context, run store.PipelineRun, pl
 		return
 	}
 	replicas := v.Spec.Scale.Replicas
-	if _, err := s.scaleApp(ctx, project, a, scaleChange{Replicas: &replicas}); err != nil {
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		s.finishPipelineStep(run, v, "failed", err.Error())
+		return
+	}
+	if _, err := s.scaleApp(ctx, project, env, a, scaleChange{Replicas: &replicas}); err != nil {
 		s.finishPipelineStep(run, v, "failed", err.Error())
 		return
 	}

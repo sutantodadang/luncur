@@ -14,7 +14,7 @@ import (
 // health check path, then opportunistically sync if the app is live. Mirrors
 // setAppEnv's gate/persist/sync pattern. A validation failure from
 // SetHealthPath is surfaced as-is (mapped to bad_request by the caller).
-func (s *server) setAppHealth(ctx context.Context, p store.Project, a store.App, path string) error {
+func (s *server) setAppHealth(ctx context.Context, p store.Project, env store.Environment, a store.App, path string) error {
 	if a.Ejected {
 		return errAppEjected
 	}
@@ -25,18 +25,18 @@ func (s *server) setAppHealth(ctx context.Context, p store.Project, a store.App,
 		return err
 	}
 	a.HealthPath = path
-	s.syncIfLive(ctx, p, a)
+	s.syncIfLive(ctx, p, env, a)
 	return nil
 }
 
 // handleSetHealth sets (or, with an empty path, clears) the app's HTTP
 // health check path, then opportunistically syncs.
 func (s *server) handleSetHealth(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -49,7 +49,7 @@ func (s *server) handleSetHealth(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	if err := s.setAppHealth(r.Context(), p, a, req.Path); err != nil {
+	if err := s.setAppHealth(r.Context(), p, env, a, req.Path); err != nil {
 		var ke *kindMismatchError
 		switch {
 		case errors.Is(err, errAppEjected):

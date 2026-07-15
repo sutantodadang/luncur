@@ -65,6 +65,9 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/rename", s.uiPage(s.handleUIProjectRename))
 	mux.HandleFunc("POST /ui/projects/{project}/delete", s.uiPage(s.handleUIProjectDelete))
 	mux.HandleFunc("GET /ui/projects/{project}", s.uiPage(s.handleUIApps))
+	// Env-scoped twin of the project page: same handler, resolves env from
+	// the path instead of defaulting (Task 11's environment selector).
+	mux.HandleFunc("GET /ui/projects/{project}/envs/{env}", s.uiPage(s.handleUIApps))
 	mux.HandleFunc("POST /ui/projects/{project}/apps", s.uiPage(s.handleUICreateApp))
 	mux.HandleFunc("POST /ui/projects/{project}/gpu-quota", s.uiPage(s.handleUIGPUQuota))
 	mux.HandleFunc("POST /ui/projects/{project}/quota", s.uiPage(s.handleUIQuota))
@@ -78,6 +81,10 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/pipelines/{name}/runs/{id}/stop", s.uiPage(s.handleUIPipelineRunStop))
 	mux.HandleFunc("GET /ui/projects/{project}/pipelines/{name}/runs/{id}/steps", s.uiPage(s.handleUIPipelineRunSteps))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}", s.uiPage(s.handleUIApp))
+	// Env-scoped twin: disambiguates an app name that exists in more than
+	// one of the project's environments (uiApp resolves via this path
+	// value, defaulting to the project's default env when absent).
+	mux.HandleFunc("GET /ui/projects/{project}/envs/{env}/apps/{app}", s.uiPage(s.handleUIApp))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/open", s.uiPage(s.handleUIAppOpen))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/chip", s.uiPage(s.handleUIChip))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/chart", s.uiPage(s.handleUIAppChart))
@@ -110,6 +117,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/volumes/remove", s.uiPage(s.handleUIVolumeRemove))
 	mux.HandleFunc("POST /ui/projects/{project}/addons", s.uiPage(s.handleUIAddonCreate))
 	mux.HandleFunc("POST /ui/projects/{project}/addons/delete", s.uiPage(s.handleUIAddonDelete))
+	mux.HandleFunc("POST /ui/projects/{project}/previews/delete", s.uiPage(s.handleUIPreviewDelete))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/addons/attach", s.uiPage(s.handleUIAddonAttach))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/addons/detach", s.uiPage(s.handleUIAddonDetach))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/deploy", s.uiPage(s.handleUIDeploy))
@@ -322,9 +330,17 @@ func (s *server) uiAdmin(w http.ResponseWriter, u store.User) bool {
 }
 
 // uiApp is requireApp's UI twin: 404s with plain text instead of a JSON
-// envelope.
+// envelope. Resolves the app within r.PathValue("env") (the project's
+// default environment when absent, e.g. every legacy /apps/{app} route),
+// mirroring requireApp's own env-scoped lookup — necessary since two apps
+// may now share a name across environments in the same project (Task 11),
+// so a plain project+name lookup would be ambiguous.
 func (s *server) uiApp(w http.ResponseWriter, r *http.Request, p store.Project) (store.App, bool) {
-	a, err := s.st.GetApp(p.ID, r.PathValue("app"))
+	env, ok := s.uiEnv(w, r, p)
+	if !ok {
+		return store.App{}, false
+	}
+	a, err := s.st.GetAppInEnv(env.ID, r.PathValue("app"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return store.App{}, false
@@ -335,6 +351,99 @@ func (s *server) uiApp(w http.ResponseWriter, r *http.Request, p store.Project) 
 		return store.App{}, false
 	}
 	return a, true
+}
+
+// uiAppEnv resolves a's own environment (set at create — see
+// handleCreateApp/handleUICreateApp) for UI handlers that call an
+// env-scoped core (syncIfLive, scaleApp, addDomain, ...). 500s with plain
+// text on failure, matching uiApp's error style.
+func (s *server) uiAppEnv(w http.ResponseWriter, a store.App) (store.Environment, bool) {
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		log.Printf("ui get environment for app %s: %v", a.Name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return store.Environment{}, false
+	}
+	return env, true
+}
+
+// uiDefaultEnv resolves p's default environment, for UI handlers that act on
+// an addon (no app in scope to hang uiAppEnv off of) — today that's always
+// the production environment.
+func (s *server) uiDefaultEnv(w http.ResponseWriter, p store.Project) (store.Environment, bool) {
+	env, err := s.st.GetEnvironment(p.ID, p.DefaultEnv)
+	if err != nil {
+		log.Printf("ui get default environment for project %s: %v", p.Name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return store.Environment{}, false
+	}
+	return env, true
+}
+
+// uiEnv resolves r.PathValue("env") to one of p's environments, falling
+// back to p.DefaultEnv when the path carries none (every legacy route, plus
+// the plain project page) — the UI's twin of requireEnv's own "" ->
+// default-env fallback. 404s with plain text on an unknown, explicitly
+// requested env name.
+//
+// A project with no environments row at all (created directly via
+// store.CreateProject, bypassing handleCreateProject's seeding — legacy
+// fixtures, or any project older than the environments migration that
+// backfillEnvironments hasn't reached) still resolves the *legacy*
+// (env-less) request: apps created the same way default to
+// environment_id=0, so a synthetic Environment{ID:0, Namespace:p.Namespace}
+// reproduces exactly the pre-environments behavior every UI handler already
+// assumed. An explicit /envs/{env} request on such a project still 404s —
+// there is genuinely no such environment to view.
+func (s *server) uiEnv(w http.ResponseWriter, r *http.Request, p store.Project) (store.Environment, bool) {
+	name := r.PathValue("env")
+	fellBackToDefault := name == ""
+	if fellBackToDefault {
+		name = p.DefaultEnv
+	}
+	env, err := s.st.GetEnvironment(p.ID, name)
+	if errors.Is(err, store.ErrNotFound) {
+		if fellBackToDefault {
+			return store.Environment{Name: p.DefaultEnv, Namespace: p.Namespace, IsDefault: true}, true
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+		return store.Environment{}, false
+	}
+	if err != nil {
+		log.Printf("ui get environment %s/%s: %v", p.Name, name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return store.Environment{}, false
+	}
+	return env, true
+}
+
+// uiEnvChip is the environment selector's per-option view model — reused
+// both for the current env (a single value, "Env" in the app/project page
+// data) and the full list to switch between ("Envs"). Default envs get no
+// special badge; Preview marks the chip a non-default env needs to look
+// visually distinct (chip-warn vs chip-muted — see app.html/apps.html).
+type uiEnvChip struct {
+	Name    string
+	Default bool
+	Preview bool
+}
+
+// uiEnvChipFrom builds one uiEnvChip from a store.Environment.
+func uiEnvChipFrom(e store.Environment) uiEnvChip {
+	return uiEnvChip{Name: e.Name, Default: e.IsDefault, Preview: e.Kind == "preview"}
+}
+
+// uiEnvChips lists every environment on p, for the selector's option list.
+func (s *server) uiEnvChips(p store.Project) ([]uiEnvChip, error) {
+	envs, err := s.st.ListEnvironments(p.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]uiEnvChip, 0, len(envs))
+	for _, e := range envs {
+		out = append(out, uiEnvChipFrom(e))
+	}
+	return out, nil
 }
 
 // uiAddon is requireAddon's UI twin: 404s with plain text instead of a JSON
@@ -351,6 +460,56 @@ func (s *server) uiAddon(w http.ResponseWriter, p store.Project, name string) (s
 		return store.Addon{}, false
 	}
 	return a, true
+}
+
+// uiPreviewApp is one preview environment's cloned app, as shown in the
+// Previews card's app-URL list.
+type uiPreviewApp struct {
+	Name string
+	URL  string
+}
+
+// uiPreviewRow is a preview environment's project-page view model — its
+// source branch, idle-activity timestamp (the clock reapPreviews' TTL
+// sweep reads), and its cloned apps' URLs. Mirrors previewJSON
+// (preview.go), the REST API's equivalent shape.
+type uiPreviewRow struct {
+	Name         string
+	SourceBranch string
+	LastActiveAt string
+	Apps         []uiPreviewApp
+}
+
+// uiPreviewRows lists every preview environment on p (kind=='preview' only
+// — its standing environments are the env selector's concern, uiEnvChips),
+// for the project page's Previews card.
+func (s *server) uiPreviewRows(p store.Project) ([]uiPreviewRow, error) {
+	envs, err := s.st.ListEnvironments(p.ID)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]uiPreviewRow, 0)
+	for _, e := range envs {
+		if e.Kind != "preview" {
+			continue
+		}
+		apps, err := s.st.ListAppsInEnv(e.ID)
+		if err != nil {
+			return nil, err
+		}
+		appRows := make([]uiPreviewApp, 0, len(apps))
+		for _, a := range apps {
+			u := s.appURLForEnv(a, e.Name, p.DefaultEnv)
+			if a.Internal {
+				u = internalURLFor(a.Name, e.Namespace)
+			}
+			appRows = append(appRows, uiPreviewApp{Name: a.Name, URL: u})
+		}
+		rows = append(rows, uiPreviewRow{
+			Name: e.Name, SourceBranch: e.SourceBranch, LastActiveAt: e.LastActiveAt, Apps: appRows,
+		})
+	}
+	return rows, nil
 }
 
 // uiProjectCard is projects.html's per-card view model: the project plus its
@@ -433,7 +592,8 @@ func (s *server) handleUIProjectCreate(w http.ResponseWriter, r *http.Request, u
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.st.CreateProject(r.PostFormValue("name")); err != nil {
+	p, err := s.st.CreateProject(r.PostFormValue("name"))
+	if err != nil {
 		msg := "internal error"
 		var ve *store.ValidationError
 		switch {
@@ -445,6 +605,13 @@ func (s *server) handleUIProjectCreate(w http.ResponseWriter, r *http.Request, u
 			log.Printf("ui create project: %v", err)
 		}
 		http.Redirect(w, r, "/ui/?err="+url.QueryEscape(msg), http.StatusSeeOther)
+		return
+	}
+	// See handleCreateProject: seeds the resolvable default environment
+	// every project needs for requireEnv/uiEnv-style env-less resolution.
+	if err := s.st.SeedProjectEnvironments(p.ID); err != nil {
+		log.Printf("ui create project: seed environments: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	flash(w, "ok", "project created")
@@ -587,7 +754,7 @@ func (s *server) handleUIProjectDelete(w http.ResponseWriter, r *http.Request, u
 		http.Redirect(w, r, "/ui/projects/"+p.Name+"?perr=nokube", http.StatusSeeOther)
 		return
 	}
-	if err := s.deleteProject(r.Context(), p, apps, addons); err != nil {
+	if err := s.deleteProject(r.Context(), p); err != nil {
 		log.Printf("ui delete project: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -616,21 +783,34 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	if !ok {
 		return
 	}
-	list, err := s.st.ListApps(p.ID)
+	env, ok := s.uiEnv(w, r, p)
+	if !ok {
+		return
+	}
+	list, err := s.st.ListAppsInEnv(env.ID)
 	if err != nil {
 		log.Printf("ui apps: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	envs, err := s.uiEnvChips(p)
+	if err != nil {
+		log.Printf("ui apps: list environments: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	rows := make([]uiAppRow, 0, len(list))
 	for _, a := range list {
-		url := s.appURL(a)
+		// Every row here is already scoped to env (ListAppsInEnv), so its
+		// public/internal URL is built directly off env rather than a
+		// per-app re-lookup by EnvironmentID.
+		url := s.appURLForEnv(a, env.Name, p.DefaultEnv)
 		internalURL := ""
 		if a.Kind != "web" {
 			url = ""
 		} else if a.Internal {
 			url = ""
-			internalURL = internalURLFor(a.Name, p.Namespace)
+			internalURL = internalURLFor(a.Name, env.Namespace)
 		}
 		status := ""
 		if d, err := s.st.LatestDeployment(a.ID); err == nil {
@@ -664,6 +844,12 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	previews, err := s.uiPreviewRows(p)
+	if err != nil {
+		log.Printf("ui previews: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	var banner string
 	if e := r.URL.Query().Get("err"); e != "" {
 		banner = "error: " + e
@@ -683,8 +869,9 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	s.renderPage(w, "apps.html", map[string]any{
 		"User": u, "Project": p, "Apps": rows, "Addons": addons, "Members": members, "Banner": banner,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin", "PErrNote": perrNote,
-		"GPUQuota": p.GPUQuota, "Pipelines": pipelines,
+		"GPUQuota": p.GPUQuota, "Pipelines": pipelines, "Previews": previews,
 		"CPUQuotaMilli": p.CPUQuotaMilli, "MemQuotaMB": p.MemQuotaMB,
+		"Env": uiEnvChipFrom(env), "Envs": envs,
 	})
 }
 
@@ -833,6 +1020,22 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// CreateApp/CreateGitApp/CreateModelApp only take a project_id; re-parent
+	// to the project's default environment (see handleCreateApp) so every
+	// env-scoped read (uiApp's GetApp lookup still works either way, but
+	// syncIfLive/scaleApp/etc. below need a real environment) finds this app.
+	env, err := s.st.GetEnvironment(p.ID, p.DefaultEnv)
+	if err != nil {
+		log.Printf("ui create app: get default environment: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
+		log.Printf("ui create app: set app environment: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	a.EnvironmentID = env.ID
 	if buildPath != "" {
 		if err := s.st.SetBuildPath(a.ID, buildPath); err != nil {
 			log.Printf("ui create app: set build path: %v", err)
@@ -876,7 +1079,7 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("env: "+err.Error()), http.StatusSeeOther)
 			return
 		}
-		if err := s.setAppEnvBulk(r.Context(), p, a, vars); err != nil {
+		if err := s.setAppEnvBulk(r.Context(), p, env, a, vars); err != nil {
 			var ve *store.ValidationError
 			msg := "env: internal error"
 			switch {
@@ -918,7 +1121,7 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: internal error"), http.StatusSeeOther)
 		return
 	}
-	if err := s.applyImageDeploy(r.Context(), p, a, d, image); err != nil {
+	if err := s.applyImageDeploy(r.Context(), p, env, a, d, image); err != nil {
 		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: "+err.Error()), http.StatusSeeOther)
 		return
 	}
@@ -1009,7 +1212,13 @@ func (s *server) handleUIAddonURL(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 
-	key, url := addonKeyURL(ad.Type, ad.Name, p.Namespace, creds)
+	env, err := s.st.GetEnvironment(p.ID, p.DefaultEnv)
+	if err != nil {
+		log.Printf("ui addon url %s: get environment: %v", ad.Name, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	key, url := addonKeyURL(ad.Type, ad.Name, env.Namespace, creds)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<input class="input w-full font-mono text-xs" readonly value="%s">`,
 		template.HTMLEscapeString(key+"="+url))
@@ -1102,6 +1311,13 @@ func uiDeployRows(history []store.Deployment, limit int) []uiDeployRow {
 // secret along on the same response, instead of a redirect (a redirect
 // would have to carry the secret in the URL, which must never happen).
 func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store.User, p store.Project, a store.App, extra map[string]any) {
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		log.Printf("ui app detail: get environment: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	status := "never_deployed"
 	latestID := ""
 	if d, err := s.st.LatestDeployment(a.ID); err == nil {
@@ -1160,7 +1376,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	metrics, err := s.appMetricsData(r.Context(), p, a)
+	metrics, err := s.appMetricsData(r.Context(), p, env, a)
 	if err != nil {
 		log.Printf("ui app metrics: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1169,7 +1385,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 
 	var pods []kube.PodInfo
 	if s.kube != nil {
-		if list, err := s.kube.AppPodInfos(r.Context(), p.Namespace, a.Name); err == nil {
+		if list, err := s.kube.AppPodInfos(r.Context(), env.Namespace, a.Name); err == nil {
 			pods = list
 		}
 	}
@@ -1192,7 +1408,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 	// tolerance as the pods block above.
 	var cronRuns []uiCronRunRow
 	if a.Kind == "cron" && s.kube != nil {
-		if list, err := s.kube.CronRuns(r.Context(), p.Namespace, a.Name); err == nil {
+		if list, err := s.kube.CronRuns(r.Context(), env.Namespace, a.Name); err == nil {
 			cronRuns = list
 		}
 	}
@@ -1226,16 +1442,22 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		}
 	}
 
-	url := s.appURL(a)
+	url := s.appURLForEnv(a, env.Name, p.DefaultEnv)
 	internalURL := ""
 	if a.Internal {
-		internalURL = internalURLFor(a.Name, p.Namespace)
+		internalURL = internalURLFor(a.Name, env.Namespace)
 	}
 
 	chip := chipData(p.Name, a.Name, status)
 	csrf := s.csrf(w, r)
 	if sweep != nil {
 		sweep.ProjectName, sweep.AppName, sweep.CSRF = p.Name, a.Name, csrf
+	}
+	envs, err := s.uiEnvChips(p)
+	if err != nil {
+		log.Printf("ui app detail: list environments: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 	data := map[string]any{
 		"User": u, "Project": p, "App": a,
@@ -1245,12 +1467,13 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"IsGit":          a.SourceType == "git",
 		"WebhookEnabled": a.WebhookSecret != nil,
 		"WebhookURL":     "http://" + r.Host + webhookPath(p.Name, a.Name),
-		"Domains": domains, "Volumes": volumes, "Warning": firstNonEmpty(r.URL.Query().Get("warn"), r.URL.Query().Get("err")),
+		"Domains":        domains, "Volumes": volumes, "Warning": firstNonEmpty(r.URL.Query().Get("warn"), r.URL.Query().Get("err")),
 		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics, "Pods": pods,
 		"Runs": runRows, "TrainFrameworks": render.TrainFrameworks,
 		"CronRuns": cronRuns,
-		"Sweeps": sweepRows, "Sweep": sweep,
+		"Sweeps":   sweepRows, "Sweep": sweep,
 		"CSRF": csrf, "IsAdmin": u.Role == "admin",
+		"Env": uiEnvChipFrom(env), "Envs": envs,
 	}
 	for k, v := range extra {
 		data[k] = v
@@ -1381,7 +1604,11 @@ func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.U
 		return
 	}
 
-	if _, err := s.scaleApp(r.Context(), p, a, scaleChange{Replicas: replicasPtr, CPUMilli: &cpu, MemoryMB: &mem}); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if _, err := s.scaleApp(r.Context(), p, env, a, scaleChange{Replicas: replicasPtr, CPUMilli: &cpu, MemoryMB: &mem}); err != nil {
 		var re *scaleReplicasError
 		var ke *kindMismatchError
 		switch {
@@ -1440,7 +1667,11 @@ func (s *server) handleUIAutoscale(w http.ResponseWriter, r *http.Request, u sto
 		}
 	}
 
-	if _, err := s.autoscaleApp(r.Context(), p, a, min, max, cpu); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if _, err := s.autoscaleApp(r.Context(), p, env, a, min, max, cpu); err != nil {
 		var re *scaleReplicasError
 		var ke *kindMismatchError
 		var rc *volumeReplicaConflictError
@@ -1505,7 +1736,11 @@ func (s *server) handleUIRunCreate(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
-	if _, err := s.startRun(r.Context(), p, a, opts); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if _, err := s.startRun(r.Context(), p, env, a, opts); err != nil {
 		if errors.Is(err, errNotDeployed) || errors.Is(err, errRunOverBudget) {
 			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 			return
@@ -1588,7 +1823,11 @@ func (s *server) handleUIHealth(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	if err := s.setAppHealth(r.Context(), p, a, r.PostFormValue("health_path")); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if err := s.setAppHealth(r.Context(), p, env, a, r.PostFormValue("health_path")); err != nil {
 		switch {
 		case errors.Is(err, errAppEjected):
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -1615,7 +1854,11 @@ func (s *server) handleUIEnvSet(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	if err := s.setAppEnv(r.Context(), p, a, r.PostFormValue("key"), r.PostFormValue("value")); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if err := s.setAppEnv(r.Context(), p, env, a, r.PostFormValue("key"), r.PostFormValue("value")); err != nil {
 		var ve *store.ValidationError
 		switch {
 		case errors.Is(err, errAppEjected):
@@ -1720,7 +1963,11 @@ func (s *server) handleUIEnvBulk(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	if err := s.setAppEnvBulk(r.Context(), p, a, vars); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if err := s.setAppEnvBulk(r.Context(), p, env, a, vars); err != nil {
 		var ve *store.ValidationError
 		switch {
 		case errors.Is(err, errAppEjected):
@@ -1753,7 +2000,11 @@ func (s *server) handleUIEnvUnset(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 
-	if err := s.unsetAppEnv(r.Context(), p, a, r.PostFormValue("key")); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if err := s.unsetAppEnv(r.Context(), p, env, a, r.PostFormValue("key")); err != nil {
 		switch {
 		case errors.Is(err, errAppEjected):
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -1787,7 +2038,11 @@ func (s *server) handleUIDomainAdd(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
-	_, warning, err := s.addDomain(r.Context(), p, a, r.PostFormValue("hostname"))
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	_, warning, err := s.addDomain(r.Context(), p, env, a, r.PostFormValue("hostname"))
 	if err != nil {
 		if errors.Is(err, errAppEjected) {
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -1834,7 +2089,11 @@ func (s *server) handleUIDomainDelete(w http.ResponseWriter, r *http.Request, u 
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.syncIfLive(r.Context(), p, a)
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	s.syncIfLive(r.Context(), p, env, a)
 	flash(w, "ok", "domain removed")
 	uiRedirect(w, r, p, a)
 }
@@ -1860,7 +2119,11 @@ func (s *server) handleUIVolumeAdd(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 
-	if _, err := s.addVolume(r.Context(), p, a, r.PostFormValue("name"), r.PostFormValue("path"), size); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if _, err := s.addVolume(r.Context(), p, env, a, r.PostFormValue("name"), r.PostFormValue("path"), size); err != nil {
 		var rc *volumeReplicaConflictError
 		var ke *kindMismatchError
 		var ve *store.ValidationError
@@ -1900,7 +2163,11 @@ func (s *server) handleUIVolumeRemove(w http.ResponseWriter, r *http.Request, u 
 	}
 
 	purge := r.PostFormValue("purge") != ""
-	if err := s.removeVolume(r.Context(), p, a, r.PostFormValue("name"), purge); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if err := s.removeVolume(r.Context(), p, env, a, r.PostFormValue("name"), purge); err != nil {
 		switch {
 		case errors.Is(err, errAppEjected):
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -1944,7 +2211,11 @@ func (s *server) handleUIAddonCreate(w http.ResponseWriter, r *http.Request, u s
 		sizeGB = n
 	}
 
-	if _, err := s.createAddon(r.Context(), p, r.PostFormValue("type"), r.PostFormValue("name"), r.PostFormValue("version"), sizeGB, ""); err != nil {
+	env, ok := s.uiDefaultEnv(w, p)
+	if !ok {
+		return
+	}
+	if _, err := s.createAddon(r.Context(), p, env, r.PostFormValue("type"), r.PostFormValue("name"), r.PostFormValue("version"), sizeGB, ""); err != nil {
 		switch {
 		case errors.Is(err, errSealerUnavailable):
 			http.Error(w, "sealer is not configured", http.StatusServiceUnavailable)
@@ -1980,7 +2251,11 @@ func (s *server) handleUIAddonDelete(w http.ResponseWriter, r *http.Request, u s
 	force := r.PostFormValue("force") == "1"
 	keepData := r.PostFormValue("keep_data") == "1"
 
-	if err := s.removeAddon(r.Context(), p, ad, force, keepData); err != nil {
+	env, ok := s.uiDefaultEnv(w, p)
+	if !ok {
+		return
+	}
+	if err := s.removeAddon(r.Context(), p, env, ad, force, keepData); err != nil {
 		if errors.Is(err, errAddonAttached) {
 			http.Error(w, "addon is attached to one or more apps; check force to remove anyway", http.StatusConflict)
 			return
@@ -1990,6 +2265,39 @@ func (s *server) handleUIAddonDelete(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 	flash(w, "ok", "addon deleted")
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
+}
+
+// handleUIPreviewDelete is handleDeletePreview's UI twin: same
+// teardownPreview core, redirect instead of a 204. 404s (plain text) on an
+// unknown name or a standing environment named by mistake, mirroring
+// handleDeletePreview's own guard.
+func (s *server) handleUIPreviewDelete(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProjectWrite(w, r, u)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	name := r.PostFormValue("name")
+	env, err := s.st.GetEnvironment(p.ID, name)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && env.Kind != "preview") {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		log.Printf("ui delete preview: get environment: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.teardownPreview(r.Context(), p, env); err != nil {
+		log.Printf("ui delete preview: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	flash(w, "ok", "preview deleted")
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
 
@@ -2014,7 +2322,11 @@ func (s *server) handleUIAddonAttach(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 
-	warning, err := s.attachAddon(r.Context(), p, ad, a.Name)
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	warning, err := s.attachAddon(r.Context(), p, env, ad, a.Name)
 	if err != nil {
 		if errors.Is(err, errAppEjected) {
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -2061,7 +2373,11 @@ func (s *server) handleUIAddonDetach(w http.ResponseWriter, r *http.Request, u s
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.syncIfLive(r.Context(), p, a)
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	s.syncIfLive(r.Context(), p, env, a)
 	flash(w, "ok", "addon detached")
 	uiRedirect(w, r, p, a)
 }
@@ -2086,7 +2402,11 @@ func (s *server) handleUIDeploy(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	if _, err := s.deployGitApp(p, a, u.ID); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if _, err := s.deployGitApp(p, env, a, u.ID); err != nil {
 		switch {
 		case errors.Is(err, errKubeUnavailable):
 			http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
@@ -2134,7 +2454,11 @@ func (s *server) handleUIRollback(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 
-	if _, err := s.rollback(r.Context(), p, a, u, deployID); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if _, err := s.rollback(r.Context(), p, env, a, u, deployID); err != nil {
 		var missing *errImageMissing
 		var regErr *errRegistryCheck
 		switch {
@@ -2173,7 +2497,11 @@ func (s *server) handleUIAppDestroy(w http.ResponseWriter, r *http.Request, u st
 		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	if err := s.destroyApp(r.Context(), p, a); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if err := s.destroyApp(r.Context(), p, env, a); err != nil {
 		log.Printf("ui destroy app: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -2197,7 +2525,11 @@ func (s *server) handleUIEject(w http.ResponseWriter, r *http.Request, u store.U
 	if s.refuseEjected(w, a) {
 		return
 	}
-	if _, _, err := s.ejectApp(p, a); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if _, _, err := s.ejectApp(p, env, a); err != nil {
 		log.Printf("ui eject %s: %v", a.Name, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -2228,7 +2560,11 @@ func (s *server) handleUIDomainRetry(w http.ResponseWriter, r *http.Request, u s
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
-	if err := s.retryDomain(p, a, r.PostFormValue("hostname")); err != nil {
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	if err := s.retryDomain(p, env, a, r.PostFormValue("hostname")); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "no such domain", http.StatusNotFound)
 			return
@@ -2260,12 +2596,16 @@ func (s *server) handleUIAddonUpgrade(w http.ResponseWriter, r *http.Request, u 
 	if !ok {
 		return
 	}
+	env, ok := s.uiDefaultEnv(w, p)
+	if !ok {
+		return
+	}
 	version := r.PostFormValue("version")
 	if version == "" {
 		http.Error(w, "version is required", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.upgradeAddon(r.Context(), p, ad, version); err != nil {
+	if _, err := s.upgradeAddon(r.Context(), p, env, ad, version); err != nil {
 		if errors.Is(err, errSealerUnavailable) {
 			http.Error(w, "sealer is not configured", http.StatusServiceUnavailable)
 			return
@@ -2617,7 +2957,11 @@ func (s *server) handleUIAdopt(w http.ResponseWriter, r *http.Request, u store.U
 		return
 	}
 	a.Ejected = false
-	s.syncIfLive(r.Context(), p, a)
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	s.syncIfLive(r.Context(), p, env, a)
 	flash(w, "ok", "app adopted")
 	uiRedirect(w, r, p, a)
 }
@@ -2682,12 +3026,12 @@ func (s *server) renderEditPage(w http.ResponseWriter, r *http.Request, u store.
 // editDoc renders the app (base or with overrides, per withOverrides) and
 // extracts the single document for kind — the shared render-then-split step
 // both the editor GET and POST need.
-func (s *server) editDoc(p store.Project, a store.App, kind string, withOverrides bool) ([]byte, error) {
+func (s *server) editDoc(p store.Project, env store.Environment, a store.App, kind string, withOverrides bool) ([]byte, error) {
 	image, err := s.appImage(a)
 	if err != nil {
 		return nil, err
 	}
-	rendered, err := s.renderApp(p, a, image, withOverrides)
+	rendered, err := s.renderApp(p, env, a, image, withOverrides)
 	if err != nil {
 		return nil, err
 	}
@@ -2715,7 +3059,11 @@ func (s *server) handleUIEditGet(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	doc, err := s.editDoc(p, a, kind, true)
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	doc, err := s.editDoc(p, env, a, kind, true)
 	if err != nil {
 		log.Printf("ui edit render: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -2750,7 +3098,11 @@ func (s *server) handleUIEditPost(w http.ResponseWriter, r *http.Request, u stor
 	}
 	submitted := r.PostFormValue("yaml")
 
-	baseDoc, err := s.editDoc(p, a, kind, false)
+	env, ok := s.uiAppEnv(w, a)
+	if !ok {
+		return
+	}
+	baseDoc, err := s.editDoc(p, env, a, kind, false)
 	if err != nil {
 		log.Printf("ui edit base render: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -2767,7 +3119,7 @@ func (s *server) handleUIEditPost(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 
-	if err := s.setOverride(r.Context(), p, a, kind, patch); err != nil {
+	if err := s.setOverride(r.Context(), p, env, a, kind, patch); err != nil {
 		if errors.Is(err, errAppEjected) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return

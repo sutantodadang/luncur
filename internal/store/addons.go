@@ -13,12 +13,16 @@ import (
 type Addon struct {
 	ID        int64
 	ProjectID int64
-	Type      string
-	Name      string
-	Version   string
-	SizeGB    int
-	CredsEnc  []byte
-	CreatedAt string
+	// EnvironmentID is the owning environment's id. 0 on rows written before
+	// environments existed (backfillEnvironments re-parents those to the
+	// project's production environment).
+	EnvironmentID int64
+	Type          string
+	Name          string
+	Version       string
+	SizeGB        int
+	CredsEnc      []byte
+	CreatedAt     string
 }
 
 func (s *Store) CreateAddon(projectID int64, typ, name, version string, sizeGB int, credsEnc []byte) (Addon, error) {
@@ -46,11 +50,11 @@ func (s *Store) CreateAddon(projectID int64, typ, name, version string, sizeGB i
 	return s.getAddonByID(id)
 }
 
-const addonCols = `id, project_id, type, name, version, size_gb, creds_enc, created_at`
+const addonCols = `id, project_id, type, name, version, size_gb, creds_enc, created_at, environment_id`
 
 func (s *Store) scanAddon(row *sql.Row) (Addon, error) {
 	var a Addon
-	err := row.Scan(&a.ID, &a.ProjectID, &a.Type, &a.Name, &a.Version, &a.SizeGB, &a.CredsEnc, &a.CreatedAt)
+	err := row.Scan(&a.ID, &a.ProjectID, &a.Type, &a.Name, &a.Version, &a.SizeGB, &a.CredsEnc, &a.CreatedAt, &a.EnvironmentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Addon{}, ErrNotFound
 	}
@@ -75,7 +79,7 @@ func (s *Store) listAddons(query string, args ...any) ([]Addon, error) {
 	var out []Addon
 	for rows.Next() {
 		var a Addon
-		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Type, &a.Name, &a.Version, &a.SizeGB, &a.CredsEnc, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.ProjectID, &a.Type, &a.Name, &a.Version, &a.SizeGB, &a.CredsEnc, &a.CreatedAt, &a.EnvironmentID); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -94,9 +98,35 @@ func (s *Store) AllAddons() ([]Addon, error) {
 
 func (s *Store) AddonsForApp(appID int64) ([]Addon, error) {
 	return s.listAddons(
-		`SELECT a.id, a.project_id, a.type, a.name, a.version, a.size_gb, a.creds_enc, a.created_at
+		`SELECT a.id, a.project_id, a.type, a.name, a.version, a.size_gb, a.creds_enc, a.created_at, a.environment_id
 		 FROM addons a JOIN addon_attachments t ON t.addon_id = a.id
 		 WHERE t.app_id = ? ORDER BY a.id`, appID)
+}
+
+// AddonsForEnv returns every addon actually provisioned into envID
+// (Addon.EnvironmentID == envID) — the ones scoped to that environment's
+// namespace, as opposed to ListAddons' whole-project view. Rows written
+// before environment-scoped addon creation existed keep environment_id 0
+// and never match here; backfillEnvironments re-parents those to each
+// project's production environment at migration time.
+func (s *Store) AddonsForEnv(envID int64) ([]Addon, error) {
+	return s.listAddons(`SELECT `+addonCols+` FROM addons WHERE environment_id = ? ORDER BY id`, envID)
+}
+
+// SetAddonEnvironmentID re-parents an addon to a different environment. The
+// server layer calls this right after CreateAddon (which only takes a
+// project_id) so a freshly provisioned addon is attributed to the caller's
+// resolved environment instead of environment_id=0 — mirrors
+// SetAppEnvironmentID.
+func (s *Store) SetAddonEnvironmentID(id, envID int64) error {
+	res, err := s.db.Exec(`UPDATE addons SET environment_id = ? WHERE id = ?`, envID, id)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetAddonVersion updates an addon's recorded version. The caller is

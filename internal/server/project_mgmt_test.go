@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,11 +10,14 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"github.com/sutantodadang/luncur/internal/kube"
+	"github.com/sutantodadang/luncur/internal/secret"
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
@@ -105,6 +109,93 @@ func TestDeleteProjectAPI(t *testing.T) {
 	apps, err := kst.ListApps(p.ID)
 	if err != nil || len(apps) != 0 {
 		t.Fatalf("app rows should be gone: %+v %v", apps, err)
+	}
+}
+
+// TestDeleteProjectTearsDownAllEnvironmentNamespaces locks the fix that
+// makes deleteProject walk EVERY environment (not just the default/
+// production one, which used to be the only namespace it deleted): a
+// project with an app and an addon living in a non-default (develop)
+// environment must have both the production and the develop namespaces
+// deleted, and the develop env's app/addon rows must not be orphaned.
+func TestDeleteProjectTearsDownAllEnvironmentNamespaces(t *testing.T) {
+	st := newTestStore(t)
+	cs := k8sfake.NewSimpleClientset()
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	sealer, err := secret.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newServer(Deps{Store: st, Sealer: sealer, Kube: kube.NewForTest(dyn, cs)})
+
+	p, err := st.CreateProject("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = st.GetProjectByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prod, err := st.GetEnvironment(p.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev, err := st.GetEnvironment(p.ID, "develop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev.Namespace == prod.Namespace {
+		t.Fatalf("test fixture invalid: develop namespace %q equals production namespace", dev.Namespace)
+	}
+
+	ctx := context.Background()
+	for _, ns := range []string{prod.Namespace, dev.Namespace} {
+		if _, err := cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: ns},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// An app and an addon living in the NON-default develop environment.
+	if _, err := st.CreateAppInEnv(dev.ID, "worker", 9090, "web", ""); err != nil {
+		t.Fatal(err)
+	}
+	ad := seedPreviewAddon(t, s, st, dev, "postgres", "db1")
+
+	if err := s.deleteProject(ctx, p); err != nil {
+		t.Fatalf("deleteProject: %v", err)
+	}
+
+	// Both namespaces are gone — no leak of the non-default environment's
+	// namespace.
+	for _, ns := range []string{prod.Namespace, dev.Namespace} {
+		if _, err := cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{}); !kube.IsNotFound(err) {
+			t.Fatalf("namespace %s should be deleted, got err=%v", ns, err)
+		}
+	}
+
+	// The develop env's rows are gone too — nothing orphaned.
+	if apps, err := st.ListAppsInEnv(dev.ID); err != nil || len(apps) != 0 {
+		t.Fatalf("develop app rows still present: %+v, err %v", apps, err)
+	}
+	if addons, err := st.AddonsForEnv(dev.ID); err != nil || len(addons) != 0 {
+		t.Fatalf("develop addon rows still present: %+v, err %v", addons, err)
+	}
+	allAddons, err := st.ListAddons(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range allAddons {
+		if a.ID == ad.ID {
+			t.Fatalf("addon %s row was not deleted", ad.Name)
+		}
+	}
+	if _, err := st.GetProjectByID(p.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("project row should be gone, got %v", err)
 	}
 }
 

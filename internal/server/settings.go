@@ -58,6 +58,13 @@ var settableKeys = map[string]func(string) bool{
 		n, err := strconv.Atoi(v)
 		return err == nil && n > 0
 	},
+	// preview_ttl_days: how many days a preview environment may sit idle
+	// (no deploy touching LastActiveAt) before reapPreviews tears it down.
+	// Same integer >= 1 shape as backup_keep/registry_keep.
+	"preview_ttl_days": func(v string) bool {
+		n, err := strconv.Atoi(v)
+		return err == nil && n >= 1
+	},
 	"smtp_host": func(v string) bool { return v != "" },
 	"smtp_port": func(v string) bool {
 		n, err := strconv.Atoi(v)

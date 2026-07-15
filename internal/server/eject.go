@@ -27,12 +27,12 @@ func (s *server) refuseEjected(w http.ResponseWriter, a store.App) bool {
 // app's current manifests, mark it ejected in the store, and best-effort
 // save the rendered YAML under dataDir/ejected for reference. The caller
 // must have already refused an already-ejected app.
-func (s *server) ejectApp(p store.Project, a store.App) (yamlOut []byte, savedTo string, err error) {
+func (s *server) ejectApp(p store.Project, env store.Environment, a store.App) (yamlOut []byte, savedTo string, err error) {
 	image, err := s.appImage(a)
 	if err != nil {
 		return nil, "", fmt.Errorf("image: %w", err)
 	}
-	rendered, err := s.renderApp(p, a, image, true)
+	rendered, err := s.renderApp(p, env, a, image, true)
 	if err != nil {
 		return nil, "", fmt.Errorf("render: %w", err)
 	}
@@ -60,11 +60,11 @@ func (s *server) ejectApp(p store.Project, a store.App) (yamlOut []byte, savedTo
 }
 
 func (s *server) handleEjectApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -72,7 +72,7 @@ func (s *server) handleEjectApp(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
-	y, saved, err := s.ejectApp(p, a)
+	y, saved, err := s.ejectApp(p, env, a)
 	if err != nil {
 		log.Printf("eject %s: %v", a.Name, err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")
@@ -85,11 +85,11 @@ func (s *server) handleEjectApp(w http.ResponseWriter, r *http.Request, u store.
 // rendered state onto the still-running objects, reclaiming
 // fieldManager=luncur (and overwriting any drift — documented behavior).
 func (s *server) handleAdoptApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -107,7 +107,7 @@ func (s *server) handleAdoptApp(w http.ResponseWriter, r *http.Request, u store.
 
 	out := map[string]any{"adopted": true}
 	if s.kube != nil {
-		if err := s.syncApp(r.Context(), p, a); err != nil {
+		if err := s.syncApp(r.Context(), p, env, a); err != nil {
 			log.Printf("adopt %s: sync: %v", a.Name, err)
 			out["warning"] = "adopted, but re-apply failed: " + err.Error()
 		}

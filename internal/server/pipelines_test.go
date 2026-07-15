@@ -251,12 +251,16 @@ func pipelineSeedProject(t *testing.T, st *store.Store, name string) store.Proje
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, _ = seedDefaultEnv(t, st, p)
 	return p
 }
 
 // pipelineSeedApp creates an app of the given kind, optionally with a live
 // deployment (image != ""). kind=job apps take no port (mirrors
-// sweepSeedApp in sweeps_test.go).
+// sweepSeedApp in sweeps_test.go). Re-parented to the project's default
+// environment (see pipelineSeedProject) so applyImageDeploy/scaleApp/startRun
+// — all resolved via GetEnvironmentByID(a.EnvironmentID) from the app-only
+// pipeline action helpers — can find it.
 func pipelineSeedApp(t *testing.T, st *store.Store, projectID int64, name, kind, image string) store.App {
 	t.Helper()
 	port := 8080
@@ -267,6 +271,18 @@ func pipelineSeedApp(t *testing.T, st *store.Store, projectID int64, name, kind,
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, err := st.GetProjectByID(projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := st.GetEnvironment(projectID, p.DefaultEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
+		t.Fatal(err)
+	}
+	a.EnvironmentID = env.ID
 	if image != "" {
 		if _, err := st.CreateDeployment(a.ID, "live", image, 0); err != nil {
 			t.Fatal(err)

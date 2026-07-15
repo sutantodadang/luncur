@@ -4,3 +4,6 @@ luncur.exe
 *.db-wal
 *.db-shm
 tmp-*
+
+# internal workflow docs (specs/plans) — not part of the repo
+docs/superpowers/

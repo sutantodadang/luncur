@@ -19,7 +19,7 @@ var (
 )
 
 func deployCmd() *cobra.Command {
-	var project, image string
+	var project, image, environment string
 	var envs []string
 	cmd := &cobra.Command{
 		Use:   "deploy <app>",
@@ -35,6 +35,7 @@ func deployCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(environment)
 
 			// Set env vars before deploying so the container boots with them
 			// present — e.g. postgres needs POSTGRES_PASSWORD on first start.
@@ -60,6 +61,9 @@ func deployCmd() *cobra.Command {
 	cmd.MarkFlagRequired("project")
 	cmd.Flags().StringVar(&image, "image", "", "image reference (omit to deploy source from the current directory)")
 	cmd.Flags().StringArrayVarP(&envs, "env", "e", nil, "set an env var before deploying (KEY=VALUE, repeatable)")
+	// --env is already the env-var flag above; the deployment environment
+	// selector is --environment here (it is --env on other commands).
+	cmd.Flags().StringVar(&environment, "environment", "", "deployment environment (default: the project's default env)")
 	return cmd
 }
 
@@ -173,7 +177,7 @@ func tailLines(s string, n int) string {
 }
 
 func scaleCmd() *cobra.Command {
-	var project string
+	var project, env string
 	var replicas int
 	var cpu, memory string
 	var gpu int64
@@ -194,6 +198,7 @@ func scaleCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(env)
 			var replicasArg *int
 			var cpuArg, memoryArg *string
 			var gpuArg *int64
@@ -232,6 +237,7 @@ func scaleCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project name")
 	cmd.MarkFlagRequired("project")
+	cmd.Flags().StringVar(&env, "env", "", "environment (default: the project's default env)")
 	cmd.Flags().IntVar(&replicas, "replicas", 0, "number of replicas")
 	cmd.Flags().StringVar(&cpu, "cpu", "", "CPU request+limit (e.g. 250m, 1); empty string clears")
 	cmd.Flags().StringVar(&memory, "memory", "", "memory request+limit (e.g. 256Mi, 1Gi); empty string clears")
@@ -240,7 +246,7 @@ func scaleCmd() *cobra.Command {
 }
 
 func destroyCmd() *cobra.Command {
-	var project string
+	var project, env string
 	cmd := &cobra.Command{
 		Use:   "destroy <app>",
 		Short: "Destroy an app",
@@ -250,6 +256,7 @@ func destroyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			c.SetEnv(env)
 			if err := c.DeleteApp(project, args[0]); err != nil {
 				return err
 			}
@@ -259,5 +266,6 @@ func destroyCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project name")
 	cmd.MarkFlagRequired("project")
+	cmd.Flags().StringVar(&env, "env", "", "environment (default: the project's default env)")
 	return cmd
 }

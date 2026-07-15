@@ -723,8 +723,12 @@ func TestApplyImageDeployNotifies(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		p, env := seedDefaultEnv(t, st, p)
 		a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 			t.Fatal(err)
 		}
 		d, err := st.CreateDeployment(a.ID, "deploying", "nginx:1", 0)
@@ -732,7 +736,7 @@ func TestApplyImageDeployNotifies(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := srv.applyImageDeploy(context.Background(), p, a, d, "nginx:1"); err != nil {
+		if err := srv.applyImageDeploy(context.Background(), p, env, a, d, "nginx:1"); err != nil {
 			t.Fatalf("applyImageDeploy: %v", err)
 		}
 
@@ -771,8 +775,12 @@ func TestApplyImageDeployNotifies(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		p, env := seedDefaultEnv(t, st, p)
 		a, err := st.CreateApp(p.ID, "api", 8080, "web", "")
 		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
 			t.Fatal(err)
 		}
 		d, err := st.CreateDeployment(a.ID, "deploying", "nginx:1", 0)
@@ -780,7 +788,7 @@ func TestApplyImageDeployNotifies(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := srv.applyImageDeploy(context.Background(), p, a, d, "nginx:1"); err == nil {
+		if err := srv.applyImageDeploy(context.Background(), p, env, a, d, "nginx:1"); err == nil {
 			t.Fatal("applyImageDeploy: want error when apply fails")
 		}
 

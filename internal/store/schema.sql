@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS projects (
   gpu_quota     INTEGER NOT NULL DEFAULT 0,
   cpu_quota_milli INTEGER NOT NULL DEFAULT 0,
   mem_quota_mb  INTEGER NOT NULL DEFAULT 0,
+  default_env      TEXT NOT NULL DEFAULT 'production',
+  preview_base_env TEXT NOT NULL DEFAULT 'develop',
+  webhook_secret BLOB,
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -33,9 +36,24 @@ CREATE TABLE IF NOT EXISTS project_members (
   PRIMARY KEY (project_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS environments (
+  id              INTEGER PRIMARY KEY,
+  project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  k8s_namespace   TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'standing' CHECK (kind IN ('standing','preview')),
+  is_default      INTEGER NOT NULL DEFAULT 0,
+  base_branch     TEXT NOT NULL DEFAULT '',
+  source_branch   TEXT NOT NULL DEFAULT '',
+  last_active_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (project_id, name)
+);
+
 CREATE TABLE IF NOT EXISTS apps (
   id            INTEGER PRIMARY KEY,
   project_id    INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  environment_id INTEGER NOT NULL DEFAULT 0,
   name          TEXT NOT NULL,
   source_type   TEXT NOT NULL CHECK (source_type IN ('tarball','git')),
   git_url       TEXT,
@@ -62,7 +80,7 @@ CREATE TABLE IF NOT EXISTS apps (
   autoscale_cpu INTEGER NOT NULL DEFAULT 0,
   suspended     INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (project_id, name)
+  UNIQUE (project_id, environment_id, name)
 );
 
 -- id is an opaque 12-char lowercase base-36 nanoid (see store.NewID), not an
@@ -129,6 +147,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS addons (
   id         INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  environment_id INTEGER NOT NULL DEFAULT 0,
   type       TEXT NOT NULL CHECK (type IN ('postgres','redis','minio','mlflow')),
   name       TEXT NOT NULL,
   version    TEXT NOT NULL,

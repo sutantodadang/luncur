@@ -11,6 +11,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 
 	"github.com/sutantodadang/luncur/internal/kube"
+	"github.com/sutantodadang/luncur/internal/store"
 )
 
 // recordedAction captures verb/resource/namespace/name for every dynamic
@@ -105,6 +106,46 @@ func TestEnsureProjectNamespaceSkipsIsolationWhenOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	if hasAction(*log, "patch", "networkpolicies", "luncur-demo", "luncur-isolation") {
+		t.Fatalf("isolation policy applied despite setting off: %+v", *log)
+	}
+}
+
+// TestEnsureEnvNamespaceAppliesIsolationWhenOn is ensureEnvNamespace's twin
+// of TestEnsureProjectNamespaceAppliesIsolationWhenOn: it must apply the
+// isolation NetworkPolicy to env.Namespace, the environment's own namespace,
+// not the project's.
+func TestEnsureEnvNamespaceAppliesIsolationWhenOn(t *testing.T) {
+	st := newTestStore(t)
+	kubeClient, log := recordingActionsKube(t)
+	srv := newServer(Deps{Store: st, Kube: kubeClient})
+
+	if err := st.SetSetting("network_isolation", "on"); err != nil {
+		t.Fatal(err)
+	}
+	env := store.Environment{Namespace: "luncur-demo-develop"}
+	if err := srv.ensureEnvNamespace(context.Background(), env); err != nil {
+		t.Fatal(err)
+	}
+	if !hasAction(*log, "patch", "networkpolicies", "luncur-demo-develop", "luncur-isolation") {
+		t.Fatalf("no isolation policy applied: %+v", *log)
+	}
+}
+
+// TestEnsureEnvNamespaceSkipsIsolationWhenOff is the off-setting mirror:
+// the namespace is still stamped, but no NetworkPolicy touches the cluster.
+func TestEnsureEnvNamespaceSkipsIsolationWhenOff(t *testing.T) {
+	st := newTestStore(t)
+	kubeClient, log := recordingActionsKube(t)
+	srv := newServer(Deps{Store: st, Kube: kubeClient})
+
+	if err := st.SetSetting("network_isolation", "off"); err != nil {
+		t.Fatal(err)
+	}
+	env := store.Environment{Namespace: "luncur-demo-develop"}
+	if err := srv.ensureEnvNamespace(context.Background(), env); err != nil {
+		t.Fatal(err)
+	}
+	if hasAction(*log, "patch", "networkpolicies", "luncur-demo-develop", "luncur-isolation") {
 		t.Fatalf("isolation policy applied despite setting off: %+v", *log)
 	}
 }

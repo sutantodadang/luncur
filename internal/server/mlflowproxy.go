@@ -54,9 +54,18 @@ func (s *server) handleUIMlflow(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 
+	// ns above is the request's routing namespace (the project's), which is
+	// only correct for the default/production environment; resolve the
+	// addon's actual environment namespace for the proxy target.
+	addonNS, err := s.addonNamespace(ad)
+	if err != nil {
+		log.Printf("ui mlflow: resolve addon namespace: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	target := &url.URL{
 		Scheme: "http",
-		Host:   fmt.Sprintf("%s.%s:%d", addon.ServiceName(ad.Name), p.Namespace, addon.MLflowPort),
+		Host:   fmt.Sprintf("%s.%s:%d", addon.ServiceName(ad.Name), addonNS, addon.MLflowPort),
 	}
 	httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
 }

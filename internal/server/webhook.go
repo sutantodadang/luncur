@@ -62,11 +62,11 @@ func (s *server) enableWebhook(a store.App) (string, error) {
 // secret is returned in this response ONLY — it is never recoverable from
 // the store afterward (only the sealed bytes persist).
 func (s *server) handleWebhookEnable(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -97,11 +97,11 @@ func (s *server) handleWebhookEnable(w http.ResponseWriter, r *http.Request, u s
 // handleWebhookDisable turns off an app's deploy webhook: the stored
 // secret is cleared, so any previously-issued secret stops verifying.
 func (s *server) handleWebhookDisable(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -120,11 +120,11 @@ func (s *server) handleWebhookDisable(w http.ResponseWriter, r *http.Request, u 
 // handleWebhookShow reports whether an app's webhook is enabled and, if so,
 // its path (never its secret — that's only ever returned by enable).
 func (s *server) handleWebhookShow(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -257,7 +257,13 @@ func (s *server) handleWebhookTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d, err := s.deployGitApp(p, a, 0)
+	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+	if err != nil {
+		log.Printf("webhook: get environment: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	d, err := s.deployGitApp(p, env, a, 0)
 	if err != nil {
 		switch {
 		case errors.Is(err, errKubeUnavailable):

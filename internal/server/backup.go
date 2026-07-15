@@ -171,11 +171,52 @@ func (s *server) createBackup(ctx context.Context, upload bool) (store.Backup, [
 	return b, warnings, nil
 }
 
+// addonNamespace resolves the Kubernetes namespace an addon's pod runs in —
+// its environment's namespace (luncur-<project>-<env>). Falls back to the
+// project namespace only for pre-environments addon rows (environment_id 0).
+func (s *server) addonNamespace(ad store.Addon) (string, error) {
+	if ad.EnvironmentID != 0 {
+		env, err := s.st.GetEnvironmentByID(ad.EnvironmentID)
+		if err != nil {
+			return "", err
+		}
+		return env.Namespace, nil
+	}
+	p, err := s.st.GetProjectByID(ad.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	return p.Namespace, nil
+}
+
+// appNamespace resolves the Kubernetes namespace an app's objects live in —
+// its environment's namespace (luncur-<project>-<env>). Falls back to the
+// project namespace only for pre-environments app rows (environment_id 0),
+// mirroring addonNamespace above.
+func (s *server) appNamespace(a store.App) (string, error) {
+	if a.EnvironmentID != 0 {
+		env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
+		if err != nil {
+			return "", err
+		}
+		return env.Namespace, nil
+	}
+	p, err := s.st.GetProjectByID(a.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	return p.Namespace, nil
+}
+
 // dumpAddon streams one addon's logical dump via pods/exec. Credentials are
 // referenced from the pod's own environment — never placed on the command
 // line.
 func (s *server) dumpAddon(ctx context.Context, ad store.Addon) ([]byte, string, error) {
 	p, err := s.st.GetProjectByID(ad.ProjectID)
+	if err != nil {
+		return nil, "", err
+	}
+	ns, err := s.addonNamespace(ad)
 	if err != nil {
 		return nil, "", err
 	}
@@ -195,7 +236,7 @@ func (s *server) dumpAddon(ctx context.Context, ad store.Addon) ([]byte, string,
 	var out, errBuf bytes.Buffer
 	dctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	if err := s.execer.ExecPod(dctx, p.Namespace, pod, ad.Type, cmd, nil, &out, &errBuf); err != nil {
+	if err := s.execer.ExecPod(dctx, ns, pod, ad.Type, cmd, nil, &out, &errBuf); err != nil {
 		return nil, "", fmt.Errorf("%v: %s", err, strings.TrimSpace(errBuf.String()))
 	}
 	return out.Bytes(), member, nil

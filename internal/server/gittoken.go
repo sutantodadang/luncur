@@ -48,11 +48,11 @@ func (s *server) clearGitToken(a store.App) error {
 // token is write-only — there is no GET, matching how it's sealed at rest and
 // never returned to the client.
 func (s *server) handleSetGitToken(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -78,11 +78,11 @@ func (s *server) handleSetGitToken(w http.ResponseWriter, r *http.Request, u sto
 
 // handleDeleteGitToken clears an app's stored git token.
 func (s *server) handleDeleteGitToken(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnvWrite(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}

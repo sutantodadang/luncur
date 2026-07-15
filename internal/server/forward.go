@@ -16,11 +16,11 @@ import (
 // raw byte pipe (one local connection = one request, kubectl-style). Only
 // the app's own Service port may be dialed — no arbitrary host/port (SSRF).
 func (s *server) handleForwardApp(w http.ResponseWriter, r *http.Request, u store.User) {
-	p, ok := s.requireProject(w, u, r.PathValue("project"))
+	p, env, ok := s.requireEnv(w, r, u, r.PathValue("project"), r.PathValue("env"))
 	if !ok {
 		return
 	}
-	a, ok := s.requireApp(w, p, r.PathValue("app"))
+	a, ok := s.requireApp(w, p, env, r.PathValue("app"))
 	if !ok {
 		return
 	}
@@ -43,7 +43,7 @@ func (s *server) handleForwardApp(w http.ResponseWriter, r *http.Request, u stor
 	// The app Service listens on 80 and targets the container's app port
 	// (render.go) — dialing a.Port on the ClusterIP would hang: kube-proxy
 	// silently drops non-service ports.
-	addr := fmt.Sprintf("%s.%s:80", a.Name, p.Namespace)
+	addr := fmt.Sprintf("%s.%s:80", a.Name, env.Namespace)
 	backend, err := s.fwdDial(r.Context(), "tcp", addr)
 	if err != nil {
 		log.Printf("forward dial %s: %v", addr, err)
