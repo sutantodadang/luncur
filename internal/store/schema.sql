@@ -303,3 +303,32 @@ CREATE TABLE IF NOT EXISTS pipeline_run_steps (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pipeline_run_steps_run ON pipeline_run_steps(run_id);
+
+-- SQLite does not index foreign keys automatically. The columns below are
+-- queried on hot paths and are not the leading column of any PRIMARY KEY or
+-- UNIQUE constraint, so without these each lookup — and each ON DELETE
+-- CASCADE — is a full table scan.
+--
+-- Only genuinely uncovered columns are listed. apps(project_id),
+-- addons(project_id), environments(project_id), pipelines(project_id) and
+-- volumes(app_id) already lead a UNIQUE constraint; env_vars(app_id) and
+-- overrides(app_id) already lead their PRIMARY KEY; api_tokens(hash) is
+-- UNIQUE (the auth path); project_s3(project_id) is the PRIMARY KEY.
+-- ponytail: ssh_keys(user_id) and api_tokens(user_id) are left unindexed —
+-- both hold a handful of rows per user; add them if that stops being true.
+
+-- LatestDeployment ("WHERE app_id = ? ORDER BY rowid DESC LIMIT 1") and the
+-- MAX(seq) subquery on every deploy create both hit this. deployments is the
+-- one table here that grows without bound.
+CREATE INDEX IF NOT EXISTS idx_deployments_app ON deployments(app_id);
+
+-- Read per app page render and walked by the cert sweep.
+CREATE INDEX IF NOT EXISTS idx_domains_app ON domains(app_id);
+
+-- PRIMARY KEY (project_id, user_id) covers project_id only; "list the
+-- projects this user belongs to" filters on user_id.
+CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id);
+
+-- PRIMARY KEY (addon_id, app_id) covers addon_id only; attachments are read
+-- per app when building an app's env.
+CREATE INDEX IF NOT EXISTS idx_addon_attachments_app ON addon_attachments(app_id);
