@@ -1,6 +1,10 @@
 # GPU cloud
 
-## GPU cloud rental
+Rent GPU capacity on demand and it joins your cluster like any other node.
+Reach for this when a training run, sweep, or GPU-backed model-serving app
+needs more GPUs than you already own.
+
+## Rent a node
 
 ```sh
 # vast.ai — marketplace: browse offers, rent by offer id
@@ -24,15 +28,21 @@ cloud: pick a platform (hardware generation) and preset (GPU/vCPU/RAM
 bundle) directly — there's no in-luncur offer catalog, so check current
 pricing in the Nebius console before renting.
 
+!!! warning "`gpu stop` is destructive"
+    Terminates the VM. Billing stops immediately, but so does everything on
+    local disk — there's no undo. Get checkpoints/artifacts onto S3 (or
+    wherever you keep them) before stopping a node.
+
 Idle scale-to-zero is **per-instance**: each rented GPU node is destroyed
 independently after `gpu_idle_minutes` (a setting; `0`/unset disables it) of
 no GPU pod scheduled on it, so an always-on inference node survives while a
 burst training node on the same account gets reaped on its own schedule.
 
-Nebius support is docs-derived (API shapes read from docs.nebius.com, not yet
-confirmed against a live account) — see
-[`nebius-smoke-test.md`](../nebius-smoke-test.md) for the pending
-verification checklist.
+!!! note "Nebius support is not yet verified live"
+    Nebius support is docs-derived (API shapes read from docs.nebius.com, not
+    yet confirmed against a live account) — see
+    [`nebius-smoke-test.md`](../nebius-smoke-test.md) for the pending
+    verification checklist.
 
 ## Per-project GPU quota
 
@@ -48,8 +58,10 @@ creates and scale-ups with a friendly error before they reach the cluster.
 The budget counts `gpu × replicas` for `web`/`worker` apps, `gpu × 1` for
 `cron`, and `gpu × nodes` for `job` (a job app's planned footprint is its
 multi-node run shape, not its largely-unused replicas column — see
-[Multi-node training runs](training.md#multi-node-training-runs)). `0` means unlimited
-(the default). Lowering the quota below current usage does not evict running
-pods — new pods are rejected until usage drops, which is standard Kubernetes
-`ResourceQuota` behavior. The project page in the web UI has a matching GPU
-quota control (admin only).
+[Multi-node training runs](training.md#multi-node-training-runs)). `0` means
+unlimited (the default). Lowering the quota below current usage does not
+evict running pods — new pods are rejected until usage drops, which is
+standard Kubernetes `ResourceQuota` behavior. The project page in the web UI
+has a matching GPU quota control (admin only).
+
+**Related:** [Training](training.md) · [Model serving](model-serving.md) · [Sweeps](sweeps.md)

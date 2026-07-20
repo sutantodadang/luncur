@@ -1,6 +1,8 @@
 # Uninstall
 
-`luncur down` reverses `luncur up`. Two tiers:
+`luncur down` reverses `luncur up` — use it to remove luncur from a box
+while keeping K3s for a future reinstall, or to wipe the whole cluster in
+one go. Two tiers:
 
 - **default** — removes luncur itself: the `luncur`/`luncur-ssh`
   Deployment/Services/Ingress/ServiceAccount and RBAC, every luncur-managed
@@ -19,12 +21,16 @@ luncur down --all --yes     # skip the typed confirmation (e.g. scripted)
 luncur down --no-backup     # skip the final DB backup
 ```
 
-Before touching anything (unless `--yes`), it prints what will be destroyed
-and requires typing the literal word `luncur` to proceed — anything else
-aborts. Unless `--no-backup`, the live `luncur.db` is `cat`'d out of the
-running pod first, to `~/luncur-final-backup-<unix-ts>.db`. Each step is
-best-effort: a failure is reported (`step failed: ...`) and the remaining
-steps still run, with a non-zero exit if anything failed.
+!!! warning "Destructive — deletes the `luncur-data` PVC"
+    Run `luncur down --dry-run` first if you're not sure what will be
+    touched. Before touching anything (unless `--yes`), it prints what will
+    be destroyed and requires typing the literal word `luncur` to proceed —
+    anything else aborts. Unless `--no-backup`, the live `luncur.db` is
+    `cat`'d out of the running pod first, to
+    `~/luncur-final-backup-<unix-ts>.db`.
+
+Each step is best-effort: a failure is reported (`step failed: ...`) and the
+remaining steps still run, with a non-zero exit if anything failed.
 
 `--dry-run` output looks like:
 
@@ -36,3 +42,5 @@ dry run — no changes will be made:
 4. remove luncur data volume (PersistentVolumeClaim luncur-data in luncur-system)
 5. remove registries config written by `luncur up` (/etc/rancher/k3s/registries.yaml)
 ```
+
+**Related:** [Disaster recovery](disaster-recovery.md) · [Doctor / diagnostics](doctor.md)

@@ -1,6 +1,11 @@
 # Backups & restore
 
-## Backups
+Snapshot luncur's whole state — SQLite DB, sealer key, and addon data — so
+you can recover from a dead VPS, a bad `restore`, or a fat-fingered
+`destroy`. This page covers taking backups, verifying they actually
+restore, and the full disaster-recovery procedure.
+
+## Create a backup
 
 `luncur backup create` (admin) snapshots luncur's whole state into a
 tar.gz under `backups/` on the data PVC: a consistent SQLite snapshot
@@ -14,6 +19,8 @@ luncur backup create [--no-upload]
 luncur backup list
 luncur backup prune            # keep newest backup_keep (default 7)
 ```
+
+## Upload backups off-box (S3)
 
 Off-box uploads go to any S3-compatible bucket (AWS/R2/minio/B2) — a
 built-in SigV4 client, no SDK:
@@ -32,7 +39,12 @@ With `backup_schedule daily`, the server takes and prunes backups
 automatically. An upload failure keeps the local archive and surfaces a
 warning.
 
-**Invite email (SMTP):**
+!!! warning "Security note"
+    Archives contain the sealer key — whoever can read a backup can unseal
+    your env vars and addon credentials. The S3 bucket is the trust
+    boundary; scope its access accordingly.
+
+## Send invite emails (SMTP)
 
 ```sh
 luncur config set smtp_host mail.example.com   # unset = invite emails disabled
@@ -47,7 +59,7 @@ unconfigured SMTP) never blocks invite creation — the API returns
 `emailed:false` plus a warning, and the invite link can be copied as
 before.
 
-**Notifications (deploy, cert & health events):**
+## Get notified on deploy, cert & health events
 
 ```sh
 luncur config set notify_url https://discord.com/api/webhooks/...   # write-only: reads show "(set)"
@@ -72,11 +84,7 @@ a notification never blocks a deploy, cert issuance, or the monitor loop. The
 RFC3339); `discord`/`slack` POST `{"content"|"text": <message>}`; `telegram`
 adds `"chat_id"` from `notify_telegram_chat`.
 
-**Security note:** archives contain the sealer key — whoever can read a
-backup can unseal your env vars and addon credentials. The S3 bucket is
-the trust boundary; scope its access accordingly.
-
-## Verify
+## Verify a backup restores
 
 ```sh
 luncur backup verify /path/to/luncur-YYYYMMDD-HHMMSS.tar.gz
@@ -87,13 +95,15 @@ Restores the archive into a throwaway scratch directory, runs `PRAGMA
 integrity_check` against the restored DB, and confirms the sealer key is
 present — the live data dir is never touched, so it's safe to run against
 production archives any time, not just during an incident. This is the
-automated restore drill: a backup nobody has restored is not a backup. Run
-it after every `backup create`, and on a quarterly cadence against the
-latest S3 archive — see
-[Disaster recovery](../operations/disaster-recovery.md) for the full drill
-checklist, RTO/RPO numbers, and failure-mode breakdown.
+automated restore drill: a backup nobody has restored is not a backup.
 
-## Restoring
+!!! tip
+    Run `backup verify` after every `backup create`, and on a quarterly
+    cadence against the latest S3 archive — see
+    [Disaster recovery](../operations/disaster-recovery.md) for the full
+    drill checklist, RTO/RPO numbers, and failure-mode breakdown.
+
+## Restore
 
 `luncur restore` automates the DB/key half; addon data stays guided:
 
@@ -133,3 +143,6 @@ Full procedure on a fresh VPS:
      as `dump.rdb`, scale back to 1.
 6. Redeploy apps (`luncur deploy` / `git push`) and verify with
    `luncur status`.
+
+**Related:** [Addons](addons.md) · [Volumes](volumes.md) ·
+[Disaster recovery](../operations/disaster-recovery.md)

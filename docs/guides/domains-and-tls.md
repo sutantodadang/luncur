@@ -1,6 +1,11 @@
 # Domains & TLS
 
-## Custom domains & TLS
+Point your own domain at an app and get it serving HTTPS — luncur handles
+the DNS check, the certificate request, and renewal for you. Reach for this
+once an app is deployed and you want it at `yourdomain.com` instead of the
+default URL.
+
+## Add a custom domain
 
 ```sh
 luncur domain add myapp www.example.com --project myproj
@@ -15,6 +20,8 @@ checks this immediately and returns a warning — shown once in the CLI
 output and, in the web UI, above the Domains table — if the hostname
 doesn't resolve there yet; the domain is still created, since DNS often
 lands after the request.
+
+## Choose a TLS certificate provider
 
 TLS certs come from one of three providers, chosen with `luncur up
 --cert-provider <name>` (fixed for the life of the install; re-run `luncur
@@ -44,7 +51,7 @@ Set the ACME account email (used by the `builtin` provider and passed to
 luncur config set acme_email you@example.com
 ```
 
-## Wildcard domains & DNS-01
+## Use wildcard domains (DNS-01)
 
 `domain add` also accepts `*.example.com` (one leading `*.`). Wildcards
 can't be validated over HTTP-01, so they need a DNS provider luncur can
@@ -74,3 +81,9 @@ without a configured `dns_provider` is refused with a 400. `traefik` and
 `cert-manager` providers are unchanged — they own their own solving.
 Failures behave like HTTP-01: the domain shows `cert_status failed` with
 the message and the app keeps serving.
+
+!!! note
+    Internal (`--internal`) apps can't take a custom domain — see
+    [Apps & projects](apps-and-projects.md).
+
+**Related:** [Deploying](deploying.md) · [Apps & projects](apps-and-projects.md)

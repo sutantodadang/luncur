@@ -4,7 +4,8 @@ luncur's control plane (users, apps, deploy history, settings) lives in a
 single SQLite file on the data PVC; the apps it deployed live as normal
 Kubernetes objects in K3s. Those two facts drive everything below: most
 failures don't touch running apps at all, and the one that does (losing the
-data PVC) is a restore, not a rebuild.
+data PVC) is a restore, not a rebuild. Read this before you need it — during
+an actual incident, jump straight to the restore drill below.
 
 ## Failure model
 
@@ -36,6 +37,12 @@ number.
 
 Steps for restoring after the data PVC is lost or corrupted. Run against a
 test cluster first if you haven't done this before.
+
+!!! warning "Restore overwrites the live database"
+    `luncur restore` is CLI-only and replaces the control-plane SQLite file
+    in place — there's no undo beyond whatever backup you restore from.
+    Verify the archive first (step 2) and scale the server to 0 before
+    restoring (step 3) so nothing writes to SQLite mid-restore.
 
 ```sh
 # 1. Fetch the latest archive (from the S3 bucket, if configured)
@@ -140,3 +147,5 @@ Postgres) instead of embedded SQLite, which cuts against the zero-dependency
 design this project is built on. If a real deployment outgrows this
 trade-off, that's the point at which to revisit it; it is out of scope for
 now.
+
+**Related:** [Doctor / diagnostics](doctor.md) · [Backups & restore](../guides/backups.md) · [Settings](../reference/settings.md) · [Uninstall](uninstall.md)

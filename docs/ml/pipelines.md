@@ -1,9 +1,13 @@
 # Pipelines
 
-A pipeline is a DAG of steps — job-app runs, inline container images, and
-deploy/scale/notify actions — driven by luncur's own orchestrator (or,
-opt-in, by Argo Workflows). No DAG graphic here; the operator UI shows the
-same information as a topo-ordered table instead.
+A pipeline chains multiple steps — training runs, one-off container jobs,
+deploys, scale changes, notifications — into one automated flow with
+dependencies between them. Reach for this once a single run isn't enough:
+e.g. train → evaluate → notify, or train → deploy on success.
+
+Under the hood it's a DAG driven by luncur's own orchestrator (or, opt-in,
+Argo Workflows). There's no DAG graphic in the UI — the operator page shows
+the same information as a topo-ordered table instead.
 
 ## pipeline.yaml
 
@@ -126,3 +130,5 @@ pipelines (engine, cron, last-run status) with a per-row run button, and a
 detail page per pipeline — the yaml editor, run history, and the current
 run's live step table (state chips, attempt, detail, duration), polling
 every 15s while a run is in progress.
+
+**Related:** [Training](training.md) · [Sweeps](sweeps.md) · [GPU cloud](gpu-cloud.md)

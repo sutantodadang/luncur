@@ -1,9 +1,11 @@
 # Model serving
 
-The `model` app kind serves an LLM behind an OpenAI-compatible HTTP API.
-You point it at weights, luncur picks (or you pick) a serving runtime,
-downloads the model into the pod, and wires the Service/Ingress like any
-web app — `POST /v1/chat/completions` works out of the box.
+Serve an LLM behind an OpenAI-compatible HTTP API. Point the `model` app kind
+at a set of weights, luncur picks (or you pick) a serving runtime, downloads
+the model into the pod, and wires up the Service/Ingress like any web app —
+`POST /v1/chat/completions` works out of the box.
+
+## Deploy a model
 
 ```sh
 # CPU inference with llama.cpp (GGUF file from Hugging Face)
@@ -54,3 +56,5 @@ Built-in runtime images are pinned in luncur and bumped deliberately.
   old one holds the node's GPU).
 - Track experiments and versions with the MLflow addon
   (see [Addons](../guides/addons.md)).
+
+**Related:** [GPU cloud](gpu-cloud.md) · [Training](training.md) · [Pipelines](pipelines.md)

@@ -22,6 +22,7 @@ exclude_docs: |
 
 markdown_extensions:
   - admonition
+  - attr_list
   - pymdownx.superfences
   - pymdownx.highlight
   - tables
@@ -31,6 +32,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - Support luncur: support.md
   - Guides:
       - Deploying: guides/deploying.md
       - Apps & projects: guides/apps-and-projects.md

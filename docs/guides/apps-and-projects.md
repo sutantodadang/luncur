@@ -1,31 +1,19 @@
 # Apps & projects
 
-## Auth, users & tokens
+Everything in luncur lives inside a **project** (a namespace for related
+apps and addons) and every project has **apps** (web services, workers, or
+cron jobs) inside it. This page covers logging in, creating projects/apps,
+choosing the right app kind, managing who has access, and the web UI that
+mirrors all of it.
+
+## Log in
 
 ```sh
 luncur login http://localhost:8080
 luncur whoami
-luncur user add teammate@example.com --password ... [--role admin|member]
-
-# Invite teammates instead of setting a password for them (admin only)
-luncur invite create [--role admin|member] [--email addr]  # prints a one-time /ui/register link; --email sends it via SMTP
-luncur invite list                           # TOKEN, ROLE, EXPIRES, USED
-luncur invite revoke <token>
 ```
 
-**API tokens:**
-```sh
-luncur token list           # id, name, created, last used, expires
-luncur token revoke <id>    # revoke a token — if it's the browser's own
-                             # session cookie, that login is logged out too
-```
-
-The web UI mirrors this: every user has a `/ui/tokens` page (nav →
-"tokens") listing their own tokens with per-row revoke buttons. The
-browser session is the row named `session`; revoking it logs that browser
-out.
-
-## Projects & apps
+## Create a project and an app
 
 ```sh
 luncur project create myproj
@@ -39,19 +27,15 @@ luncur app info myapp --project myproj
 luncur app raw myapp --project myproj
 ```
 
-**Member roles:** project membership has its own role, separate from the
-global admin/member role above. `--role member` (the default) can create,
-deploy, and otherwise modify anything in the project. `--role viewer` grants
-read-only access — a viewer can browse apps, deploys, logs, and metrics but
-any mutating request (deploy, scale, env changes, add-ons, etc.) is rejected
-with a 403 `read_only` error, both via the API and the web UI. Global admins
-always have full write access to every project regardless of membership.
+## Choose an app kind — web, worker, cron
 
-**App kinds — web (default), worker, cron:**
+Apps default to `web`; pass `--kind` for the other two:
+
 ```sh
 luncur app create worker1 --project myproj --kind worker
 luncur app create nightly --project myproj --kind cron --schedule "0 3 * * *"
 ```
+
 Workers get a Deployment with no Service/Ingress — no URL, no domains.
 Cron apps run as a Kubernetes CronJob (`concurrencyPolicy: Forbid`, so a slow
 run never overlaps the next trigger); the schedule is only checked for valid
@@ -60,13 +44,16 @@ run never overlaps the next trigger); the schedule is only checked for valid
 applies to web/worker (cron scales cpu/memory only), and domains/health
 checks are web-only.
 
-**Internal (cluster-only) web apps — `--internal`:** a web app that should
-never be reachable from outside the cluster (e.g. an internal AI/microservice
-another app in the same project calls over HTTP) can be created with
-`--internal`:
+## Keep a web app cluster-only with `--internal`
+
+A web app that should never be reachable from outside the cluster (e.g. an
+internal AI/microservice another app in the same project calls over HTTP)
+can be created with `--internal`:
+
 ```sh
 luncur app create ai --project myproj --port 8001 --internal
 ```
+
 An internal app still gets a Deployment and a ClusterIP Service — so other
 apps in the cluster can reach it — but **no Ingress and no public URL**.
 `luncur app info`/`app list` show its cluster DNS address instead of a URL:
@@ -77,6 +64,45 @@ apps (`worker`/`cron` already have no Service to make internal — combining
 `--internal` with `--kind worker` or `--kind cron` is rejected), and adding a
 custom domain to an internal app is rejected too — a custom-domain Ingress
 would defeat the whole point.
+
+## Project member roles
+
+Project membership has its own role, separate from the global admin/member
+role (below). `--role member` (the default) can create, deploy, and
+otherwise modify anything in the project. `--role viewer` grants read-only
+access — a viewer can browse apps, deploys, logs, and metrics but any
+mutating request (deploy, scale, env changes, add-ons, etc.) is rejected
+with a 403 `read_only` error, both via the API and the web UI. Global admins
+always have full write access to every project regardless of membership.
+
+## Add teammates and manage tokens
+
+```sh
+luncur user add teammate@example.com --password ... [--role admin|member]
+
+# Invite teammates instead of setting a password for them (admin only)
+luncur invite create [--role admin|member] [--email addr]  # prints a one-time /ui/register link; --email sends it via SMTP
+luncur invite list                           # TOKEN, ROLE, EXPIRES, USED
+luncur invite revoke <token>
+```
+
+!!! tip
+    `luncur invite create` is usually nicer than `luncur user add` for
+    onboarding — it hands the teammate a link instead of you choosing a
+    password for them.
+
+**API tokens:**
+
+```sh
+luncur token list           # id, name, created, last used, expires
+luncur token revoke <id>    # revoke a token — if it's the browser's own
+                             # session cookie, that login is logged out too
+```
+
+The web UI mirrors this: every user has a `/ui/tokens` page (nav →
+"tokens") listing their own tokens with per-row revoke buttons. The
+browser session is the row named `session`; revoking it logs that browser
+out.
 
 ## Web UI
 
@@ -130,3 +156,6 @@ intact, never discarding the edit.
 The UI's CSS and htmx are vendored into the binary (`internal/server/static/`)
 — nothing is fetched from a CDN at runtime. If you're changing templates,
 see [CONTRIBUTING.md](https://github.com/sutantodadang/luncur/blob/main/CONTRIBUTING.md) for the Tailwind regen command.
+
+**Related:** [Deploying](deploying.md) · [Domains & TLS](domains-and-tls.md) ·
+[Addons](addons.md) · [Volumes](volumes.md)

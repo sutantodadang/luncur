@@ -1,5 +1,9 @@
 # Nebius smoke test — VERIFY gate checklist
 
+What this documents: a manual checklist to confirm luncur's Nebius GPU-cloud
+API assumptions against a real account, before Nebius support is called
+production-ready.
+
 ## Why this exists
 
 `internal/gpucloud/nebius.go` and `internal/gpucloud/nebiusauth.go` implement
@@ -26,7 +30,7 @@ grep -rn "VERIFY(nebius-smoke)" internal/gpucloud/
 internal/gpucloud/nebius.go:199:              // VERIFY(nebius-smoke): CreateInstance JSON body shape
 internal/gpucloud/nebius.go:204:      // VERIFY(nebius-smoke): CreateInstance REST path
 internal/gpucloud/nebius.go:218:              // VERIFY(nebius-smoke): operation poll path
-internal/gpucloud/nebius.go:219:              // VERIFY(nebius-smoke): operation response shape
+internal/gpucloud/nebius.go:219:      // VERIFY(nebius-smoke): operation response shape
 internal/gpucloud/nebius.go:248:      // VERIFY(nebius-smoke): List instances path
 internal/gpucloud/nebius.go:266:      // VERIFY(nebius-smoke): Destroy instance path
 internal/gpucloud/nebiusauth.go:173:  // VERIFY(nebius-smoke): token-exchange endpoint path
@@ -184,3 +188,5 @@ passing run against a real account.
 Until this checklist is fully run and closed out, Nebius support in luncur is
 **docs-derived** — functional against the documented API shape, unconfirmed
 against a live account.
+
+**Related:** [GPU cloud](ml/gpu-cloud.md)

@@ -1,9 +1,13 @@
 # Settings
 
+What this documents: every install-level setting luncur has, in one table.
+
 `luncur config set <key> <value>` writes an install-level setting; secret
 values are write-only (reads show `(set)`). This table collects every
 setting documented elsewhere in this manual, assembled from the pages
 where each one is explained in context.
+
+## All settings
 
 | Key | Default | Effect | Where documented |
 |---|---|---|---|
@@ -34,3 +38,5 @@ where each one is explained in context.
 | `train_gang_timeout_minutes` | `10` | How long a multi-node training run waits for all pods to schedule together before the Job is torn down; `0` disables the guard | [Training](../ml/training.md) |
 | `pipeline_engine` | `native` | Default orchestrator engine for pipeline runs when a pipeline doesn't pin its own `engine`: `native` or `argo` (`luncur argo install` first) | [Pipelines](../ml/pipelines.md) |
 | `metrics_token` | unset (write-only) | Bearer token gating `GET /metrics/prometheus`; unset 404s the endpoint | — |
+
+**Related:** [Audit log](../operations/audit.md) · [Backups & restore](../guides/backups.md) · [Domains & TLS](../guides/domains-and-tls.md)

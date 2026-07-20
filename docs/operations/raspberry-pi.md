@@ -76,3 +76,5 @@ luncur node ls                    # verify they registered
 
 Keep every node on the same 64-bit OS and arch, and you have a tidy,
 low-power PaaS you can hold in one hand.
+
+**Related:** [Build pipeline](../reference/build-pipeline.md) · [Getting started](../getting-started.md)

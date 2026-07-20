@@ -20,6 +20,15 @@ and real Kubernetes underneath, with an escape hatch when you outgrow it.*
 
 ---
 
+**What is luncur?** A self-hosted Platform-as-a-Service. Point it at a fresh
+Linux VPS and you get `git push` deploys, automatic HTTPS, managed
+Postgres/Redis, backups, and a web panel — all from one Go binary running K3s
+(lightweight Kubernetes) under the hood.
+
+**Who it's for:** solo developers and small teams comfortable in a terminal who
+want Heroku-grade convenience on hardware they own — without babysitting raw
+Kubernetes. New here? Start with **[Getting started](docs/getting-started.md)**.
+
 ## Why luncur?
 
 You have a side project and a $5 VPS. Your choices today:
@@ -140,6 +149,7 @@ Full operator manual: **[sutantodadang.github.io/luncur](https://sutantodadang.g
 - [Addons](docs/guides/addons.md) · [Volumes](docs/guides/volumes.md) · [Backups](docs/guides/backups.md)
 - [GPU cloud](docs/ml/gpu-cloud.md) · [Training](docs/ml/training.md) · [Model serving](docs/ml/model-serving.md) · [Sweeps](docs/ml/sweeps.md) · [Pipelines](docs/ml/pipelines.md)
 - [Operations](docs/operations/audit.md) · [Reference](docs/reference/build-pipeline.md)
+- [Support luncur](docs/support.md) — sponsor, star, contribute, report bugs
 
 ## 🗺️ Roadmap
 
@@ -191,6 +201,9 @@ One month of a hobby-dyno bill funds real features here.
 ⭐ **Can't sponsor? Star the repo** — it genuinely helps others find luncur.
 
 </div>
+
+Every way to help — sponsor, star, contribute, report bugs, spread the word —
+is on the **[Support luncur](docs/support.md)** page.
 
 ## 🤝 Contributing
 

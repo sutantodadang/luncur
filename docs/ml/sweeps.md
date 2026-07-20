@@ -1,5 +1,26 @@
 # Hyperparameter sweeps
 
+A sweep runs many trials of a training job across a range of hyperparameter
+values and tracks which one wins — grid search over discrete choices, random
+search over continuous ranges, with optional early stopping to kill
+obviously-bad trials early. Reach for this instead of hand-launching N
+training runs and comparing metrics yourself.
+
+## Start a sweep
+
+```sh
+cat > params.yaml <<'EOF'
+lr: {min: 1e-5, max: 1e-2, log: true}
+batch_size: [16, 32]
+EOF
+luncur sweep start train --project ml --params params.yaml \
+  --metric val_loss --max-trials 12 --parallel 3 --early-stop
+luncur sweep status <id> --app train --project ml
+```
+
+The app page's Sweeps card mirrors this: a start form, the sweep's trial
+table (state, params, metric, best-trial highlight), and a stop button.
+
 ## params.yaml
 
 A sweep's parameter space is a YAML mapping, one axis per key. Two forms:
@@ -53,17 +74,4 @@ have GPU budget free for the next trial this tick, it's left `pending` and
 retried on a later tick as other trials finish and free up quota — the sweep
 never hard-fails on a transient budget squeeze.
 
-## Example
-
-```sh
-cat > params.yaml <<'EOF'
-lr: {min: 1e-5, max: 1e-2, log: true}
-batch_size: [16, 32]
-EOF
-luncur sweep start train --project ml --params params.yaml \
-  --metric val_loss --max-trials 12 --parallel 3 --early-stop
-luncur sweep status <id> --app train --project ml
-```
-
-The app page's Sweeps card mirrors this: a start form, the sweep's trial
-table (state, params, metric, best-trial highlight), and a stop button.
+**Related:** [Training](training.md) · [GPU cloud](gpu-cloud.md) · [Pipelines](pipelines.md)

@@ -5,6 +5,22 @@
 *Deploys as simple as Heroku, on hardware you own — one Go binary, SQLite,
 and real Kubernetes underneath, with an escape hatch when you outgrow it.*
 
+## Start here
+
+- **New?** → [Getting started](getting-started.md): install on a fresh VPS and
+  deploy your first app in a few commands.
+- **Deploying an app** → [Deploying](guides/deploying.md) ·
+  [Apps & projects](guides/apps-and-projects.md) ·
+  [Domains & TLS](guides/domains-and-tls.md)
+- **Databases & storage** → [Addons](guides/addons.md) ·
+  [Volumes](guides/volumes.md) · [Backups & restore](guides/backups.md)
+- **GPUs & ML** → [GPU cloud](ml/gpu-cloud.md) · [Training](ml/training.md) ·
+  [Model serving](ml/model-serving.md)
+- **Running it in production** → [Doctor](operations/doctor.md) ·
+  [Disaster recovery](operations/disaster-recovery.md) ·
+  [Security](reference/security.md)
+- **Like luncur?** → [Support the project](support.md).
+
 ## Why luncur?
 
 You have a side project and a $5 VPS. Your choices today:
@@ -65,3 +81,11 @@ browser (web panel) ───►   │     │ renders manifests, SSA-applies   
 Everything luncur creates is a normal Kubernetes object applied with
 server-side apply (`fieldManager=luncur`). `kubectl` sees exactly what you
 see. Delete luncur and your apps keep running.
+
+## Support luncur
+
+luncur is free and open source (AGPL-3.0). If it replaced a PaaS bill for you,
+[sponsoring](support.md) funds roadmap features, real-provider test
+infrastructure, and fast security responses. Can't sponsor?
+[Star the repo](https://github.com/sutantodadang/luncur) — it helps others find
+it. See [Support luncur](support.md) for every way to help.

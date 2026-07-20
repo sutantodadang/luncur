@@ -1,6 +1,19 @@
 # Build pipeline
 
-When you run `luncur deploy` on a local source or git repository, the following happens: source is uploaded (tarball from local cwd or cloned from git URL) → a BuildKit Job runs in the `luncur-system` namespace, applying Nixpacks if no Dockerfile exists or using the Dockerfile if present → the resulting image is pushed to the in-cluster registry (default `registry.luncur-system:5000`) → app manifests are rendered and applied to Kubernetes → the app becomes live at `http://<app>.<ip>.sslip.io`. Build logs are streamed on demand via `luncur logs`.
+What this documents: what happens between `luncur deploy` and a running app, and the flags/settings that control each stage.
+
+## Pipeline stages
+
+When you run `luncur deploy` on a local source or git repository: source is
+uploaded (tarball from local cwd or cloned from git URL) → a BuildKit Job
+runs in the `luncur-system` namespace, applying Nixpacks if no Dockerfile
+exists or using the Dockerfile if present → the resulting image is pushed to
+the in-cluster registry (default `registry.luncur-system:5000`) → app
+manifests are rendered and applied to Kubernetes → the app becomes live at
+`http://<app>.<ip>.sslip.io`. Build logs are streamed on demand via `luncur
+logs`.
+
+## Deploy numbering
 
 Deploys are numbered per app, Heroku-style (`#1`, `#2`, ...) — that's the
 number shown in `luncur status`, the web UI's Deploy history table, and
@@ -9,10 +22,14 @@ number shown in `luncur status`, the web UI's Deploy history table, and
 internal id (a random 12-character id, not a counter) — it backs Build Job
 names, log/tarball filenames, and the rollback API's request body, but the
 per-app `#N` above is the only deploy number you should ever need to type or
-read. (Beta note: an upgrade from a pre-nanoid luncur regenerates every
-deployment's internal id in place — history and `#N` numbering are
-preserved, but any build log/tarball already on disk under the old id
-orphans.)
+read.
+
+!!! note "Beta note"
+    An upgrade from a pre-nanoid luncur regenerates every deployment's
+    internal id in place — history and `#N` numbering are preserved, but any
+    build log/tarball already on disk under the old id orphans.
+
+## Build cache
 
 Builds reuse a per-app BuildKit cache stored as an image manifest in the
 embedded registry (`luncur-cache/<project>-<app>:buildcache`), so repeat
@@ -24,13 +41,16 @@ Since the cache is exported with `mode=max` (intermediate layers, not just
 the final image), factor that into disk sizing for the registry's PVC
 alongside app images.
 
+## Build timeout
+
 A build is allotted a fixed time budget before it's given up on and marked
 failed — 15 minutes by default. Override it with
 `luncur config set build_timeout_minutes 30` (1-720); the new budget applies
 to builds started afterward, including ones re-attached by restart
 reconciliation (see below).
 
-**Serve flags for build infrastructure:**
+## Serve flags for build infrastructure
+
 - `--data-dir` — path where build sources and logs are persisted; becomes a Kubernetes PVC in production (default `./data`)
 - `--builder-image` — OCI image for the build environment (default `ghcr.io/sutantodadang/luncur-builder:latest`); built and published to ghcr.io by the release pipeline
 - The system namespace (`luncur-system`) that build Jobs run in is provisioned at PodSecurity level `privileged`, not `restricted`: rootless BuildKit needs setuid `newuidmap` to remap uids (forbidden by `restricted` as privilege escalation) and unconfined seccomp/AppArmor profiles for its mount-namespace setup (forbidden by `baseline`). The build pod itself still runs as the unprivileged uid 1000 — the namespace label only stops Kubernetes from rejecting those profile settings. Project/app namespaces are unaffected and stay `restricted`.
@@ -81,3 +101,5 @@ builder pod", the builder pod itself isn't starting.
   `[luncur] ... server restarted — re-attached to running build job` line
   appears in the log); if the Job is gone too, or the resumed build/deploy
   fails, the deployment is marked `failed` rather than left stuck forever.
+
+**Related:** [Registry GC](../operations/registry-gc.md) · [Doctor / diagnostics](../operations/doctor.md) · [Settings](settings.md)

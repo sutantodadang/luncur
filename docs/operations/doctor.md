@@ -1,10 +1,12 @@
 # Doctor / diagnostics
 
+`luncur doctor` runs nine health checks against your install in one request
+and prints a table — use it to sanity-check a fresh install, before an
+upgrade, or as a heartbeat you wire into cron.
+
 ```sh
 luncur doctor   # admin only
 ```
-
-Runs nine checks in one request and prints a table:
 
 ```
 CHECK          STATUS  DETAIL
@@ -20,6 +22,8 @@ backups        warn    scheduled backups off
 version        ok      client v0.5.0 == server v0.5.0
 ```
 
+## What each check means
+
 - **database** — the SQLite connection is reachable.
 - **kubernetes** — every node's `Ready` condition is true; fails outright if no kubeconfig was ever wired up.
 - **registry** — the embedded registry answers its catalog endpoint.
@@ -29,7 +33,11 @@ version        ok      client v0.5.0 == server v0.5.0
 - **smtp**, **notifications**, **backups** — whether the corresponding setting (`smtp_host`, `notify_url`, `backup_schedule`) is configured; these only ever warn, never fail.
 - **version** — added client-side: compares the CLI binary's version against the server's, since a stale CLI against a newer server (or vice versa) is a common source of confusing behavior.
 
+## Exit codes
+
 Exit code is `0` when every check is `ok` or `warn`, and `1` if any check
 `fail`s — safe to wire into cron or an uptime check. Each check runs
 independently with its own 5-second timeout, so one wedged dependency never
 blocks the rest.
+
+**Related:** [Disaster recovery](disaster-recovery.md) · [Settings](../reference/settings.md) · [Build pipeline](../reference/build-pipeline.md)
