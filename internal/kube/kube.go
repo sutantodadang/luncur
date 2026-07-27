@@ -682,6 +682,18 @@ type PodInfo struct {
 	CPUMilli  int64  `json:"cpu_millicores"`
 	MemoryMiB int64  `json:"memory_mib"`
 	MetricsOK bool   `json:"metrics_available"`
+	// ExitReason/ExitCode capture why a container last terminated (e.g.
+	// "OOMKilled", "Error" + a non-zero code, "Completed"), read from the
+	// container's current Terminated state or — for a pod stuck retrying
+	// (Waiting/CrashLoopBackOff) — its LastTerminationState. Empty when the
+	// pod has never had a container terminate. "" for a pod that is still
+	// starting or running cleanly.
+	ExitReason string `json:"exit_reason,omitempty"`
+	ExitCode   int32  `json:"exit_code,omitempty"`
+	// EvictedMessage is the pod-level Status.Message when Status.Reason is
+	// "Evicted" — the kubelet's pressure detail (e.g. "node ran out of
+	// memory"). Empty for any other pod.
+	EvictedMessage string `json:"evicted_message,omitempty"`
 }
 
 // AppPodInfos lists an app's pods with status and (when metrics-server is
@@ -710,12 +722,29 @@ func (c *Client) AppPodInfos(ctx context.Context, namespace, app string) ([]PodI
 			}
 		}
 		var restarts int32
-		var reason string
+		var reason, exitReason string
+		var exitCode int32
 		for _, cst := range p.Status.ContainerStatuses {
 			restarts += cst.RestartCount
 			if reason == "" && cst.State.Waiting != nil && cst.State.Waiting.Reason != "" {
 				reason = cst.State.Waiting.Reason
 			}
+			// Prefer the container's current Terminated state (a Failed/
+			// Succeeded pod); fall back to LastTerminationState for a pod
+			// still retrying (Waiting/CrashLoopBackOff) whose current state
+			// carries no termination detail of its own.
+			if exitReason == "" {
+				if t := cst.State.Terminated; t != nil {
+					exitReason, exitCode = t.Reason, t.ExitCode
+				} else if t := cst.LastTerminationState.Terminated; t != nil {
+					exitReason, exitCode = t.Reason, t.ExitCode
+				}
+			}
+		}
+		evictedMessage := ""
+		if p.Status.Reason == "Evicted" {
+			exitReason = "Evicted"
+			evictedMessage = p.Status.Message
 		}
 		startedAt := ""
 		if p.Status.StartTime != nil {
@@ -724,6 +753,7 @@ func (c *Client) AppPodInfos(ctx context.Context, namespace, app string) ([]PodI
 		out = append(out, PodInfo{
 			Name: p.Name, Phase: phase, Reason: reason, Ready: ready,
 			Restarts: restarts, Node: p.Spec.NodeName, StartedAt: startedAt,
+			ExitReason: exitReason, ExitCode: exitCode, EvictedMessage: evictedMessage,
 		})
 	}
 

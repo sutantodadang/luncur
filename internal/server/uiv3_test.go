@@ -403,6 +403,14 @@ func TestUIInternalAppShowsOpenAndForwardHint(t *testing.T) {
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
 	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000,"internal":true}`).Body.Close()
 	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"pub","port":4000}`).Body.Close()
+	// Shipped apps: the never-deployed Launch Sequence checklist (DESIGN.md
+	// "Launch Sequence") replaces the status card this test asserts on.
+	if _, err := st.CreateDeployment(appID(t, st, "web", "api"), "live", "img:1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateDeployment(appID(t, st, "web", "pub"), "live", "img:1", 0); err != nil {
+		t.Fatal(err)
+	}
 
 	u, err := st.GetUserByEmail("root@b.co")
 	if err != nil {

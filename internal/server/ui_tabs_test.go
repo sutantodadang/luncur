@@ -16,6 +16,12 @@ func TestUITabDefaultRendersOverview(t *testing.T) {
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
 	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+	// A shipped app: the never-deployed Launch Sequence checklist (DESIGN.md
+	// "Launch Sequence") replaces the status board + pipeline this test
+	// otherwise asserts on.
+	if _, err := st.CreateDeployment(appID(t, st, "proj", "web"), "live", "nginx:1", 0); err != nil {
+		t.Fatal(err)
+	}
 
 	u, err := st.GetUserByEmail("root@b.co")
 	if err != nil {
@@ -129,6 +135,11 @@ func TestUITabInvalidFallsBackToOverview(t *testing.T) {
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
 	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
+	// A shipped app: the never-deployed Launch Sequence checklist (DESIGN.md
+	// "Launch Sequence") replaces the pipeline card this test asserts on.
+	if _, err := st.CreateDeployment(appID(t, st, "proj", "web"), "live", "nginx:1", 0); err != nil {
+		t.Fatal(err)
+	}
 
 	u, err := st.GetUserByEmail("root@b.co")
 	if err != nil {
@@ -159,6 +170,11 @@ func TestUIJobsTabVisibilityByKind(t *testing.T) {
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
 	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"web","port":8080}`).Body.Close()
 	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin, `{"name":"train","kind":"job"}`).Body.Close()
+	// A shipped app: the never-deployed Launch Sequence checklist (DESIGN.md
+	// "Launch Sequence") replaces the pipeline card this test asserts on.
+	if _, err := st.CreateDeployment(appID(t, st, "proj", "web"), "live", "nginx:1", 0); err != nil {
+		t.Fatal(err)
+	}
 
 	u, err := st.GetUserByEmail("root@b.co")
 	if err != nil {

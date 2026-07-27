@@ -1398,18 +1398,26 @@ type uiPipelineStage struct {
 	Class string // "pipe-done" | "pipe-current" | "pipe-fail" | "pipe-pending"
 }
 
+// deployFailedStage names the pipeline stage a failed deploy died in:
+// "deploying" unless no image was ever resolved (still empty at failure),
+// in which case it died in "building" — the two points
+// applyImageDeploy/deployGitApp can fail at. Shared by uiPipelineStages
+// (which stage to mark red) and the Overview error card's "what" line
+// (DESIGN.md "Error contract"), so the two surfaces never disagree about
+// where a deploy died.
+func deployFailedStage(latestImageRef string) string {
+	if latestImageRef == "" {
+		return "building"
+	}
+	return "deploying"
+}
+
 // uiPipelineStages classifies the latest deployment's status into the four
-// pipeline boxes: queued -> building -> deploying -> live. A failed deploy's
-// dead stage is "deploying" unless no image was ever resolved (still empty
-// at failure), in which case it died in "building" — the two points
-// applyImageDeploy/deployGitApp can fail at.
+// pipeline boxes: queued -> building -> deploying -> live.
 func uiPipelineStages(status, latestImageRef string) []uiPipelineStage {
 	names := []string{"queued", "building", "deploying", "live"}
 	order := map[string]int{"queued": 0, "building": 1, "deploying": 2, "live": 3}
-	failedAt := "deploying"
-	if latestImageRef == "" {
-		failedAt = "building"
-	}
+	failedAt := deployFailedStage(latestImageRef)
 	current := -1
 	switch status {
 	case "building", "deploying", "live":
@@ -1431,6 +1439,217 @@ func uiPipelineStages(status, latestImageRef string) []uiPipelineStage {
 		stages[i] = uiPipelineStage{Name: n, Class: class}
 	}
 	return stages
+}
+
+// uiErrorCard is Overview's 3-line error contract (DESIGN.md "Error
+// contract") for a failed latest deploy: what broke, a best-effort why
+// (deployFailureHint against the build log's tail), and the next command —
+// the template adds the copyable CLI-echo and a link into Ship's deploy
+// history row for this deploy's raw log.
+type uiErrorCard struct {
+	Seq   int64
+	Stage string
+	Why   string
+}
+
+// deployLogTailLines bounds how much of a failed build's log
+// deployFailureHint reads — recent enough to hold the actual failure,
+// small enough to stay a cheap best-effort heuristic, not a log parser.
+const deployLogTailLines = 40
+
+// lastLines returns at most n trailing lines of s, joined back with "\n".
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// deployFailureHint is the error card's "why" line: a best-effort guess at
+// why a build failed, read from the tail of its build log. Markers are
+// checked in this fixed order — an OOM during "npm install" must still
+// report OOM, not a dependency failure — so order is part of the contract.
+// Pure function (no log I/O) so it's cheaply table-tested; the caller
+// passes lastLines(actual log, deployLogTailLines).
+func deployFailureHint(logTail string) string {
+	lower := strings.ToLower(logTail)
+	switch {
+	case logTail == "":
+		return "See the build log for the failing step."
+	case strings.Contains(lower, "oom") || strings.Contains(lower, "killed"):
+		return "builder pod ran out of memory (OOM-killed)"
+	case strings.Contains(lower, "no space left"):
+		return "builder disk is full (no space left on device)"
+	case strings.Contains(lower, "copy failed") || strings.Contains(lower, "not found"):
+		return "a file or path referenced in the build was not found"
+	case strings.Contains(lower, "npm err!") || strings.Contains(lower, "pip install") || strings.Contains(lower, "go build"):
+		for _, line := range strings.Split(logTail, "\n") {
+			l := strings.ToLower(line)
+			if strings.Contains(l, "npm err!") || strings.Contains(l, "pip install") || strings.Contains(l, "go build") {
+				line = strings.TrimSpace(line)
+				if len(line) > 120 {
+					line = line[:120]
+				}
+				return fmt.Sprintf("dependency install or compile step failed: %q", line)
+			}
+		}
+		return "dependency install or compile step failed"
+	case strings.Contains(lower, "failedcreate") || strings.Contains(lower, "forbidden"):
+		return "cluster policy or RBAC blocked the builder pod"
+	default:
+		return "See the build log for the failing step."
+	}
+}
+
+// uiPodHistoryRow is one row of the Pods card's collapsed history
+// disclosure (DESIGN.md "Pods presentation"): an exited pod with its
+// plain-language reason, so an operator doesn't have to decode
+// "CrashLoopBackOff" vs a raw Evicted message themselves.
+type uiPodHistoryRow struct {
+	Name   string
+	Reason string
+	Age    string
+}
+
+// podHistoryReason maps a history pod's raw kube.PodInfo exit detail to the
+// plain-language sentence DESIGN.md's Pods presentation calls for. Falls
+// back to the pod's raw waiting/exit reason (or "-") for anything the
+// mapping doesn't special-case, so an unexpected reason still shows
+// something rather than going blank.
+func podHistoryReason(p kube.PodInfo) string {
+	switch p.ExitReason {
+	case "Evicted":
+		return "Evicted — node memory/disk pressure"
+	case "OOMKilled":
+		return "OOM-killed — memory limit hit"
+	case "Error":
+		if p.ExitCode != 0 {
+			return fmt.Sprintf("exited with code %d", p.ExitCode)
+		}
+		return "exited with an error"
+	case "Completed":
+		return "completed"
+	case "":
+		if p.Reason != "" {
+			return p.Reason
+		}
+		return "-"
+	default:
+		return p.ExitReason
+	}
+}
+
+// uiPodsView is app_observe's Pods card view model and Overview's summary
+// line (DESIGN.md "Pods presentation"): live pods (Running/Pending) keep
+// the full table; Failed/Succeeded/Terminating pods move into History with
+// a plain-language reason instead, since they're only around until the
+// hourly failed-pod GC prunes them.
+type uiPodsView struct {
+	Wanted, Running, Restarts int
+	Live                      []kube.PodInfo
+	History                   []uiPodHistoryRow
+}
+
+// uiPods builds the Pods view model. wanted is the autoscale floor when
+// autoscale is on, else the app's stored replica count — the same
+// AutoMin>0?AutoMin:Replicas floor logic scaleApp/autoscaleApp use.
+// Restarts sums only live pods' restart counts — a pod already moved to
+// History no longer contributes to "current" restart pressure.
+func uiPods(pods []kube.PodInfo, autoMin, replicas int) uiPodsView {
+	wanted := replicas
+	if autoMin > 0 {
+		wanted = autoMin
+	}
+	v := uiPodsView{Wanted: wanted}
+	for _, p := range pods {
+		switch p.Phase {
+		case "Failed", "Succeeded", "Terminating":
+			v.History = append(v.History, uiPodHistoryRow{
+				Name: p.Name, Reason: podHistoryReason(p), Age: p.StartedAt,
+			})
+		default:
+			v.Live = append(v.Live, p)
+			v.Restarts += int(p.Restarts)
+			if p.Phase == "Running" && p.Ready {
+				v.Running++
+			}
+		}
+	}
+	return v
+}
+
+// uiLaunchStep is one row of Overview's Launch Sequence checklist
+// (DESIGN.md "Launch Sequence"): State is "done" (green ●), "current"
+// (orange ◌ — its form expands inline), "todo" (muted ○), or "skipped"
+// (muted checkmark, env vars skipped because a deploy already shipped
+// without them).
+type uiLaunchStep struct {
+	Label string
+	State string
+	Hint  string
+}
+
+// uiLaunchSequence is the checklist Overview shows in place of the status
+// board + pipeline for an app that has never deployed. Exactly one step is
+// ever "current"; EnvCurrent/DeployCurrent tell the template which inline
+// form (if any — a tarball/image-source app has no UI deploy control yet,
+// see DESIGN.md's Parity Contract) to expand in that row.
+type uiLaunchSequence struct {
+	Steps         []uiLaunchStep
+	EnvCurrent    bool
+	DeployCurrent bool
+}
+
+// uiLaunchSequenceFor builds the checklist. Every step observes real
+// store state, never click history, so a step completed via the CLI shows
+// done in the UI too. hasLiveDeploy/hasInFlightDeploy are always false on
+// Overview's actual call site (it only builds this checklist when the app
+// has zero deployments ever — DESIGN.md: the checklist disappears for
+// good the moment a first deploy exists), but the branches that key off
+// them are kept correct rather than assumed unreachable, since this is a
+// pure function worth testing on its own terms.
+func uiLaunchSequenceFor(a store.App, envKeyCount int, hasLiveDeploy, hasInFlightDeploy bool, domainCount int) uiLaunchSequence {
+	step1Label := "Connect repository"
+	if a.SourceType != "git" {
+		step1Label = "Choose image source"
+	}
+	step1 := uiLaunchStep{Label: step1Label, State: "done", Hint: "connected"}
+
+	step2 := uiLaunchStep{Label: "Set environment variables"}
+	switch {
+	case envKeyCount > 0:
+		step2.State, step2.Hint = "done", fmt.Sprintf("%d set", envKeyCount)
+	case hasLiveDeploy || hasInFlightDeploy:
+		step2.State, step2.Hint = "skipped", "skipped"
+	default:
+		step2.State, step2.Hint = "current", "no env vars yet"
+	}
+
+	step3 := uiLaunchStep{Label: "First deploy"}
+	switch {
+	case hasLiveDeploy:
+		step3.State, step3.Hint = "done", "live"
+	case hasInFlightDeploy:
+		step3.State, step3.Hint = "current", "in progress"
+	case step2.State == "current":
+		step3.State, step3.Hint = "todo", "not started"
+	default:
+		step3.State, step3.Hint = "current", "not started"
+	}
+
+	step4 := uiLaunchStep{Label: "Attach domain (optional)"}
+	if domainCount > 0 {
+		step4.State, step4.Hint = "done", fmt.Sprintf("%d attached", domainCount)
+	} else {
+		step4.State, step4.Hint = "todo", "optional"
+	}
+
+	return uiLaunchSequence{
+		Steps:         []uiLaunchStep{step1, step2, step3, step4},
+		EnvCurrent:    step2.State == "current",
+		DeployCurrent: step3.State == "current" && a.SourceType == "git",
+	}
 }
 
 // renderAppDetail assembles app.html's view model for tab and renders it —
@@ -1533,6 +1752,36 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 			}
 		}
 	}
+	podsView := uiPods(pods, a.AutoMin, a.Replicas)
+
+	// Error card (Overview-only, DESIGN.md "Error contract"): best-effort
+	// "why" read from the failed deploy's own build log tail. Gated to the
+	// one tab that renders it so a failed deploy sitting on, say, the Data
+	// tab doesn't pay for a log read it won't show.
+	var errorCard *uiErrorCard
+	if tab == tabOverview && status == "failed" {
+		why := ""
+		if s.src != nil {
+			if logBytes, err := s.src.ReadLog(latestID); err == nil {
+				why = deployFailureHint(lastLines(string(logBytes), deployLogTailLines))
+			}
+		}
+		if why == "" {
+			why = deployFailureHint("")
+		}
+		errorCard = &uiErrorCard{Seq: latestSeq, Stage: deployFailedStage(latestImageRef), Why: why}
+	}
+
+	// Launch Sequence (Overview-only, DESIGN.md "Launch Sequence"): shown
+	// in place of the status board + pipeline while the app has never
+	// deployed — status stays the "never_deployed" sentinel exactly until
+	// that first deployment row exists, so this and the status board can
+	// never both apply.
+	var launch *uiLaunchSequence
+	if tab == tabOverview && status == "never_deployed" {
+		seq := uiLaunchSequenceFor(a, len(envKeys), false, false, len(domains))
+		launch = &seq
+	}
 
 	// Runs/CronRuns/Sweeps cards are Jobs-tab-only (also kind-gated, same as
 	// before) — the store queries and the cronRuns kube call are the other
@@ -1610,7 +1859,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"WebhookEnabled": a.WebhookSecret != nil,
 		"WebhookURL":     "http://" + r.Host + webhookPath(p.Name, a.Name),
 		"Domains":        domains, "Volumes": volumes, "Warning": firstNonEmpty(r.URL.Query().Get("warn"), r.URL.Query().Get("err")),
-		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics, "Pods": pods,
+		"Addons": attached, "ProjectAddons": projectAddons, "Metrics": metrics, "PodsView": podsView,
 		"Runs": runRows, "TrainFrameworks": render.TrainFrameworks,
 		"CronRuns": cronRuns,
 		"Sweeps":   sweepRows, "Sweep": sweep,
@@ -1618,6 +1867,8 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"Env": uiEnvChipFrom(env), "Envs": envs,
 		"Tab": string(tab), "TabItems": uiTabItems(a.Kind, tab),
 		"PipelineStages": uiPipelineStages(status, latestImageRef),
+		"ErrorCard":      errorCard,
+		"LaunchSequence": launch,
 	}
 	for k, v := range extra {
 		data[k] = v

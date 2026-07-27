@@ -88,6 +88,13 @@
   .card {
     @apply rounded-md border border-line bg-panel p-5;
   }
+  /* Error contract card (DESIGN.md "Error contract") — red 2px left
+     border, product-wide: what broke / why / next command. */
+  .err3 {
+    @apply rounded-md border border-line bg-panel p-5;
+    border-left-width: 2px;
+    border-left-color: var(--c-fail);
+  }
   .chip {
     @apply inline-flex items-center rounded-[4px] px-2 py-0.5 font-mono text-[11px] font-medium;
   }

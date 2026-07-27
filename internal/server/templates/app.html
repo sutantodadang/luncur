@@ -34,10 +34,7 @@
   {{if not .Env.Default}} <span class="chip {{if .Env.Preview}}chip-warn{{else}}chip-muted{{end}}">{{.Env.Name}}</span>{{end}}
   <div class="ml-auto flex gap-2">
   {{if and .IsGit (not .App.Ejected)}}
-  <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/deploy">
-    <input type="hidden" name="_csrf" value="{{.CSRF}}">
-    <button type="submit" class="btn">Deploy from git</button>
-  </form>
+  {{template "deployFromGitButton" .}}
   {{end}}
   {{if not .App.Ejected}}
   <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/redeploy">
@@ -72,6 +69,14 @@
 {{end}}
 </div>
 {{end}}
+
+{{/* deployFromGitButton is the primary "kick a build" action for a
+     git-sourced app, shared by the shell's title row and Overview's Launch
+     Sequence step 3 (DESIGN.md "Launch Sequence"). */}}
+{{define "deployFromGitButton"}}<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/deploy">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn">Deploy from git</button>
+</form>{{end}}
 
 {{/* statuschip is the polling fragment: while the latest deploy is still
      building/deploying it re-fetches itself every 3s; once it lands on a

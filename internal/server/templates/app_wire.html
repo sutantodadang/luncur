@@ -82,12 +82,7 @@
     <input type="hidden" name="key" value="{{.}}"><button type="submit" class="btn-ghost" hx-confirm="Unset env var {{.}}? This cannot be undone.">unset</button>
   </form></td></tr>{{end}}
 </table>
-<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/env" class="mt-3 flex flex-wrap items-center gap-2">
-  <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <input class="input w-auto flex-1" name="key" placeholder="KEY" required>
-  <input class="input w-auto flex-1" name="value" placeholder="value" required>
-  <button type="submit" class="btn">set</button>
-</form>
+{{template "envSetForm" .}}
 <details class="mt-3">
   <summary class="cursor-pointer text-xs text-mut">bulk edit (.env)</summary>
   <form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/env/bulk" class="mt-2">
@@ -119,3 +114,14 @@
 </div>
 </details>
 {{end}}
+
+{{/* envSetForm is the quick key/value env-set form, shared by this tab's
+     Environment card and Overview's Launch Sequence step 2 (DESIGN.md
+     "Launch Sequence": the current step's inline expansion reuses the
+     existing form rather than duplicating it). */}}
+{{define "envSetForm"}}<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/env" class="mt-3 flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input w-auto flex-1" name="key" placeholder="KEY" required>
+  <input class="input w-auto flex-1" name="value" placeholder="value" required>
+  <button type="submit" class="btn">set</button>
+</form>{{end}}

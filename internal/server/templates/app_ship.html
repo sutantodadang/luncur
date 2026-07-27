@@ -15,12 +15,12 @@
 <div class="card mb-6">
 <h2>Deploy history</h2>
 <table class="tbl"><tr><th>#</th><th>Status</th><th>Image</th><th>Actor</th><th>When</th><th></th></tr>
-{{range .Deploys}}<tr>
+{{range .Deploys}}<tr id="deploy-{{.Seq}}">
   <td>{{.Seq}}</td><td><span class="status-{{.Status}}">{{.Status}}</span></td>
   <td><code class="font-mono text-xs" title="{{.ImageRef}}">{{.ImageTag}}</code>{{if .RolledBackFromSeq}} <em>(rollback of #{{.RolledBackFromSeq}})</em>{{end}}</td>
   <td class="text-xs text-mut">{{.Actor}}</td>
   <td class="text-xs text-mut">{{.CreatedAt}}</td>
-  <td>{{if and .ImageRef (ne .ID $.LatestID) (not $.App.Ejected)}}
+  <td class="flex items-center gap-2"><a class="text-xs text-mut hover:text-signal" href="/v1/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/deploys/{{.ID}}/logs" target="_blank" rel="noopener">view log</a>{{if and .ImageRef (ne .ID $.LatestID) (not $.App.Ejected)}}
     <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollback">
       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
       <input type="hidden" name="deploy_id" value="{{.ID}}">
