@@ -6,6 +6,7 @@ import (
 )
 
 func TestModelAppAPI(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()

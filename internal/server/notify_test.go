@@ -52,6 +52,7 @@ func recvMail(t *testing.T, ch chan mailMsg, timeout time.Duration) mailMsg {
 }
 
 func TestValidNotifyEvents(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		v    string
 		want bool
@@ -72,6 +73,7 @@ func TestValidNotifyEvents(t *testing.T) {
 }
 
 func TestParseNotifyEvents(t *testing.T) {
+	t.Parallel()
 	got := parseNotifyEvents(" deploy_success ,cert_failed")
 	if !got["deploy_success"] || !got["cert_failed"] || len(got) != 2 {
 		t.Fatalf("got %v", got)
@@ -79,6 +81,7 @@ func TestParseNotifyEvents(t *testing.T) {
 }
 
 func TestBuildNotifyPayloadGeneric(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
 
 	b, err := buildNotifyPayload("generic", "", notifyEvent{
@@ -125,6 +128,7 @@ func TestBuildNotifyPayloadGeneric(t *testing.T) {
 }
 
 func TestBuildNotifyPayloadDiscordSlackTelegram(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	ev := notifyEvent{Event: "deploy_success", Project: "web", App: "api", DeployID: "10", Seq: 1, URL: "http://x"}
 
@@ -173,6 +177,7 @@ func TestBuildNotifyPayloadDiscordSlackTelegram(t *testing.T) {
 }
 
 func TestBuildNotifyPayloadMessages(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	cases := []struct {
 		ev   notifyEvent
@@ -199,6 +204,7 @@ func TestBuildNotifyPayloadMessages(t *testing.T) {
 }
 
 func TestBuildNotifyPayloadUnknownFormat(t *testing.T) {
+	t.Parallel()
 	if _, err := buildNotifyPayload("bogus", "", notifyEvent{Event: "deploy_success"}, time.Now()); err == nil {
 		t.Fatal("want error for unknown format")
 	}
@@ -235,6 +241,7 @@ func setSealedNotifyURL(t *testing.T, s *server, url string) {
 }
 
 func TestNotifyDefaultEventsFiltering(t *testing.T) {
+	t.Parallel()
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(captureHandler(ch))
 	t.Cleanup(ts.Close)
@@ -265,6 +272,7 @@ func TestNotifyDefaultEventsFiltering(t *testing.T) {
 }
 
 func TestNotifyExplicitEventsCSVHonored(t *testing.T) {
+	t.Parallel()
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(captureHandler(ch))
 	t.Cleanup(ts.Close)
@@ -292,6 +300,7 @@ func TestNotifyExplicitEventsCSVHonored(t *testing.T) {
 }
 
 func TestNotifyUnsetURLNoop(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	sealer, err := secret.New(make([]byte, 32))
 	if err != nil {
@@ -312,6 +321,7 @@ func TestNotifyUnsetURLNoop(t *testing.T) {
 }
 
 func TestNotifyTelegramFormat(t *testing.T) {
+	t.Parallel()
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(captureHandler(ch))
 	t.Cleanup(ts.Close)
@@ -347,6 +357,7 @@ func TestNotifyTelegramFormat(t *testing.T) {
 }
 
 func TestNotifyTelegramMissingChatSkipsSend(t *testing.T) {
+	t.Parallel()
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(captureHandler(ch))
 	t.Cleanup(ts.Close)
@@ -374,6 +385,7 @@ func TestNotifyTelegramMissingChatSkipsSend(t *testing.T) {
 }
 
 func TestNotifyErrTailTruncated(t *testing.T) {
+	t.Parallel()
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(captureHandler(ch))
 	t.Cleanup(ts.Close)
@@ -404,6 +416,7 @@ func TestNotifyErrTailTruncated(t *testing.T) {
 }
 
 func TestNotifyPostFailureLoggedNotFatal(t *testing.T) {
+	t.Parallel()
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -435,6 +448,7 @@ func TestNotifyPostFailureLoggedNotFatal(t *testing.T) {
 }
 
 func TestNotify500LoggedNotFatal(t *testing.T) {
+	t.Parallel()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -468,6 +482,7 @@ func TestNotify500LoggedNotFatal(t *testing.T) {
 // and a *_failed event's HTML carries the fail color plus an
 // html-escaped error string (never raw-concatenated).
 func TestNotifyEmailFormatSendsHTMLToEachRecipient(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	sealer, err := secret.New(make([]byte, 32))
 	if err != nil {
@@ -521,6 +536,7 @@ func TestNotifyEmailFormatSendsHTMLToEachRecipient(t *testing.T) {
 // subscription filter applies to the email format exactly like the webhook
 // formats.
 func TestNotifyEmailFormatSkipsNonSubscribedEvent(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	sealer, err := secret.New(make([]byte, 32))
 	if err != nil {
@@ -551,6 +567,7 @@ func TestNotifyEmailFormatSkipsNonSubscribedEvent(t *testing.T) {
 // TestNotifyEmailFormatSkipsWithoutRecipients: notify_format=email with
 // notify_email unset is a no-op, not a panic or a send to "".
 func TestNotifyEmailFormatSkipsWithoutRecipients(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	sealer, err := secret.New(make([]byte, 32))
 	if err != nil {

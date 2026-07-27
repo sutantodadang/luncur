@@ -8,8 +8,18 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/sutantodadang/luncur/internal/store"
 )
+
+// Mirrors internal/store's own test init: password hashing at production
+// cost dominates wall-clock for every auth-ish test in this package too.
+// Production always uses store.BcryptCost's default (bcrypt.DefaultCost);
+// this override only ever applies inside _test.go files.
+func init() {
+	store.BcryptCost = bcrypt.MinCost
+}
 
 // httptestServer names the concrete type newHTTPTest returns, for helpers
 // (e.g. apps_test.go's kubeServer) that need to spell it in a signature.
@@ -73,6 +83,7 @@ func postJSON(t *testing.T, url, body string) *http.Response {
 }
 
 func TestHealth(t *testing.T) {
+	t.Parallel()
 	srv, _ := testServer(t)
 	resp, err := http.Get(srv.URL + "/v1/health")
 	if err != nil {
@@ -85,6 +96,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	if _, err := st.CreateUser("a@b.co", "pw123456", "admin"); err != nil {
 		t.Fatal(err)
@@ -125,6 +137,7 @@ func TestLogin(t *testing.T) {
 }
 
 func TestUnknownPathReturns404Envelope(t *testing.T) {
+	t.Parallel()
 	srv, _ := testServer(t)
 	resp, err := http.Get(srv.URL + "/v1/no-such-endpoint")
 	if err != nil {

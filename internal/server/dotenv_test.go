@@ -6,6 +6,7 @@ import (
 )
 
 func TestParseDotenv(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		in      string
@@ -104,6 +105,7 @@ func TestParseDotenv(t *testing.T) {
 }
 
 func TestParseDotenvMalformedLineNumber(t *testing.T) {
+	t.Parallel()
 	_, err := parseDotenv("A=1\nNOVALUE\nB=2")
 	if err == nil {
 		t.Fatal("want error, got none")

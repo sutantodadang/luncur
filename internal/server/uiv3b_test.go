@@ -13,6 +13,7 @@ import (
 // core deployImage/rollback use, leaving a "live" deployment row for the new
 // app with that image ref.
 func TestUICreateAppWithImageDeploys(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -34,8 +35,8 @@ func TestUICreateAppWithImageDeploys(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("POST create with image: want 303, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web" {
-		t.Fatalf("POST create with image: want Location /ui/projects/proj/apps/web, got %q", loc)
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web?tab=ship" {
+		t.Fatalf("POST create with image: want Location /ui/projects/proj/apps/web?tab=ship, got %q", loc)
 	}
 
 	id := appID(t, st, "proj", "web")
@@ -55,6 +56,7 @@ func TestUICreateAppWithImageDeploys(t *testing.T) {
 // image field) behaves exactly as before: app created, no deployment row,
 // redirect to the project page.
 func TestUICreateAppWithoutImageUnchanged(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -87,6 +89,7 @@ func TestUICreateAppWithoutImageUnchanged(t *testing.T) {
 // app is still created (only the deploy attempt fails) and the redirect
 // carries an ?err= the app page surfaces as a banner.
 func TestUICreateAppWithImageNoKube(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()

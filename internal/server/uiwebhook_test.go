@@ -11,6 +11,7 @@ import (
 // TestUIWebhookRowGating checks the app page shows no Webhook section for a
 // tarball-source app, but does for a git-source app.
 func TestUIWebhookRowGating(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := ejectTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -47,10 +48,10 @@ func TestUIWebhookRowGating(t *testing.T) {
 		return string(body)
 	}
 
-	if strings.Contains(getPage("/ui/projects/proj/apps/tb"), "<h2>Webhook</h2>") {
+	if strings.Contains(getPage("/ui/projects/proj/apps/tb?tab=ship"), "<h2>Webhook</h2>") {
 		t.Fatal("tarball app page should not show a Webhook section")
 	}
-	if !strings.Contains(getPage("/ui/projects/proj/apps/g"), "<h2>Webhook</h2>") {
+	if !strings.Contains(getPage("/ui/projects/proj/apps/g?tab=ship"), "<h2>Webhook</h2>") {
 		t.Fatal("git app page should show a Webhook section")
 	}
 }
@@ -60,6 +61,7 @@ func TestUIWebhookRowGating(t *testing.T) {
 // secret (shown once), a reload of the app page never shows it again, and
 // disable removes the webhook row's URL/disable-button state.
 func TestUIWebhookEnableShowsSecretOnceThenDisable(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := ejectTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -91,7 +93,7 @@ func TestUIWebhookEnableShowsSecretOnceThenDisable(t *testing.T) {
 	}
 
 	// Reload: the secret is gone, but the URL + disable button remain.
-	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/g", nil)
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/g?tab=ship", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +124,7 @@ func TestUIWebhookEnableShowsSecretOnceThenDisable(t *testing.T) {
 		t.Fatalf("disable webhook: want 303, got %d", disResp.StatusCode)
 	}
 
-	req2, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/g", nil)
+	req2, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/g?tab=ship", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

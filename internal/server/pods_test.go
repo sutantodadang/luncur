@@ -24,6 +24,7 @@ type podsResponse struct {
 }
 
 func TestAppPodsEndpoint(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	p, err := st.CreateProject("proj")
 	if err != nil {
@@ -121,6 +122,7 @@ func TestAppPodsEndpoint(t *testing.T) {
 // TestUIAppPodsCard asserts the app page's Pods card renders a running
 // pod's name.
 func TestUIAppPodsCard(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	p, err := st.CreateProject("proj")
 	if err != nil {
@@ -152,7 +154,7 @@ func TestUIAppPodsCard(t *testing.T) {
 	}
 	client := noRedirectClient()
 
-	status, body := getUIPage(t, client, srv.URL, "/ui/projects/proj/apps/web", uiSessionCookie(t, st, admin.ID))
+	status, body := getUIPage(t, client, srv.URL, "/ui/projects/proj/apps/web?tab=observe", uiSessionCookie(t, st, admin.ID))
 	if status != http.StatusOK {
 		t.Fatalf("GET app page: want 200, got %d", status)
 	}
@@ -164,7 +166,89 @@ func TestUIAppPodsCard(t *testing.T) {
 	}
 }
 
+// TestUIAppPodsSummaryAndHistory checks the Observe tab's Pods card
+// (DESIGN.md "Pods presentation"): the "wanted N · running N · restarts N"
+// summary line counts only live pods, and a Failed pod moves out of the
+// live table into the collapsed history disclosure with a plain-language
+// exit reason instead of the raw kube reason.
+func TestUIAppPodsSummaryAndHistory(t *testing.T) {
+	t.Parallel()
+	st := newTestStore(t)
+	p, err := st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, env := seedDefaultEnv(t, st, p)
+	a, err := st.CreateApp(p.ID, "web", 8080, "web", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAppEnvironmentID(a.ID, env.ID); err != nil {
+		t.Fatal(err)
+	}
+	running := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "web-1", Namespace: p.Namespace,
+			Labels: map[string]string{"app.kubernetes.io/name": a.Name},
+		},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			ContainerStatuses: []corev1.ContainerStatus{
+				{RestartCount: 1, Ready: true},
+			},
+		},
+	}
+	failed := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "web-2", Namespace: p.Namespace,
+			Labels: map[string]string{"app.kubernetes.io/name": a.Name},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodFailed,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+					Reason: "OOMKilled", ExitCode: 137,
+				}},
+			}},
+		},
+	}
+	cs := k8sfake.NewSimpleClientset(running, failed)
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{podMetricsGVR: "PodMetricsList"},
+	)
+	srv := newHTTPTest(t, Deps{Store: st, Kube: kube.NewForTest(dyn, cs)})
+	admin, err := st.CreateUser("root@b.co", "password123", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := noRedirectClient()
+
+	status, body := getUIPage(t, client, srv.URL, "/ui/projects/proj/apps/web?tab=observe", uiSessionCookie(t, st, admin.ID))
+	if status != http.StatusOK {
+		t.Fatalf("GET app page: want 200, got %d", status)
+	}
+	// App.Replicas defaults to 1 and AutoMin is 0, so wanted = 1; only
+	// web-1 (Running+Ready) counts toward running/restarts.
+	if !strings.Contains(body, "wanted 1 &middot; running 1 &middot; restarts 1") {
+		t.Fatalf("app page missing pods summary line, got: %s", body)
+	}
+	if !strings.Contains(body, "web-1") {
+		t.Fatalf("app page missing live pod name, got: %s", body)
+	}
+	if !strings.Contains(body, "history (1 exited") {
+		t.Fatalf("app page missing history disclosure, got: %s", body)
+	}
+	if !strings.Contains(body, "web-2") {
+		t.Fatalf("app page missing history pod name, got: %s", body)
+	}
+	if !strings.Contains(body, "OOM-killed — memory limit hit") {
+		t.Fatalf("app page missing plain-language OOM reason, got: %s", body)
+	}
+}
+
 func TestAppPodsNoKube(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st})
 	admin := seedUserToken(t, st, "root@b.co", "admin")

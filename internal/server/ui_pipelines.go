@@ -278,7 +278,7 @@ func (s *server) handleUIPipeline(w http.ResponseWriter, r *http.Request, u stor
 		engine = "native"
 	}
 
-	s.renderPage(w, "pipeline.html", map[string]any{
+	s.renderPage(w, r, "pipeline.html", map[string]any{
 		"User": u, "Project": p, "Pipeline": pl, "Engine": engine,
 		"Runs": uiPipelineRunRows(runs), "CurrentRun": currentRun,
 		"WebhookEnabled": pl.WebhookSecret != nil,

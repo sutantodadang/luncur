@@ -14,6 +14,7 @@ import (
 // in a terminal state ("failed") with a written log file should replay the
 // file as data events then immediately emit the end event with the status.
 func TestDeployLogsFollow(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	dataDir := t.TempDir()
 	handler := New(Deps{Store: st, ExternalIP: "1.2.3.4", DataDir: dataDir})

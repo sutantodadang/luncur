@@ -1,0 +1,122 @@
+{{/* app_jobs is the Jobs tab: cron, runs, sweeps — shown only for kind=job
+     or kind=cron apps (see uiTabItems/uiResolveTab in ui.go, which also hide
+     this tab from the bar and fall an out-of-kind ?tab=jobs request back to
+     Overview). Within it, cards stay gated by kind exactly as before. */}}
+{{define "app_jobs"}}
+{{if eq .App.Kind "job"}}
+<div class="card mb-6">
+<h2>Runs</h2>
+{{if not .App.Ejected}}
+<form class="mb-2 flex flex-wrap items-end gap-2" method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/runs">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <label class="flex flex-col gap-1 text-xs text-mut">nodes<input class="input w-20" type="number" name="nodes" min="0" placeholder="{{.App.Nodes}}"></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">framework<select class="input w-auto" name="framework">
+    <option value="">app default</option>
+    {{range .TrainFrameworks}}<option value="{{.}}">{{.}}</option>{{end}}
+  </select></label>
+  <button type="submit" class="btn">run now</button>
+</form>
+<div class="cli-echo mb-3">$ <b>luncur run {{.App.Name}} --project {{.Project.Name}} [--nodes N] [--framework f]</b></div>
+
+<form class="mb-4 flex flex-wrap items-end gap-2" method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/training">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <label class="flex flex-col gap-1 text-xs text-mut">default nodes<input class="input w-20" type="number" name="nodes" min="1" value="{{.App.Nodes}}"></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">default framework<select class="input w-auto" name="framework">
+    <option value=""{{if eq .App.Framework ""}} selected{{end}}>none</option>
+    {{range .TrainFrameworks}}<option value="{{.}}"{{if eq . $.App.Framework}} selected{{end}}>{{.}}</option>{{end}}
+  </select></label>
+  <button type="submit" class="btn-ghost">save training defaults</button>
+</form>
+<div class="cli-echo mb-3">$ <b>luncur app training {{.App.Name}} --project {{.Project.Name}} --nodes N --framework f</b></div>
+{{end}}
+{{if .Runs}}
+<table class="tbl"><tr><th>#</th><th>Status</th><th>Nodes</th><th>Exit</th><th>Started</th><th>Finished</th></tr>
+{{range .Runs}}<tr>
+  <td>{{.ID}}</td>
+  <td><span class="status-{{.Status}}">{{.Status}}</span></td>
+  <td class="font-mono text-xs">{{.Nodes}}</td>
+  <td class="font-mono text-xs">{{if .ExitCode}}{{.ExitCode}}{{else}}&ndash;{{end}}</td>
+  <td class="text-xs text-mut">{{.StartedAt}}</td>
+  <td class="text-xs text-mut">{{if .FinishedAt}}{{.FinishedAt}}{{else}}&ndash;{{end}}</td>
+</tr>{{end}}
+</table>
+{{else}}<p class="text-sm text-mut">No runs yet. Deploy an image, then trigger the first run.</p>{{end}}
+</div>
+
+<div class="card mb-6">
+<h2>Sweeps</h2>
+{{if not .App.Ejected}}
+<form class="mb-2 flex flex-wrap items-end gap-2" method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/sweeps">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <label class="flex w-full flex-col gap-1 text-xs text-mut">params.yaml<textarea class="input w-full font-mono text-xs" name="params_yaml" rows="3" placeholder="lr: {min: 1e-5, max: 1e-2, log: true}&#10;batch_size: [16, 32]" required></textarea></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">metric<input class="input w-32" name="metric" placeholder="val_loss" required></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">direction<select class="input w-auto" name="direction">
+    <option value="min" selected>min</option>
+    <option value="max">max</option>
+  </select></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">max trials<input class="input w-20" type="number" name="max_trials" min="1" max="500" value="20" required></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">parallel<input class="input w-20" type="number" name="parallel" min="1" max="50" value="2" required></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">nodes<input class="input w-20" type="number" name="nodes" min="0" placeholder="{{.App.Nodes}}"></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">framework<select class="input w-auto" name="framework">
+    <option value="">app default</option>
+    {{range .TrainFrameworks}}<option value="{{.}}">{{.}}</option>{{end}}
+  </select></label>
+  <label class="flex items-center gap-1 text-xs text-mut"><input type="checkbox" name="early_stop" value="1"> early stop</label>
+  <button type="submit" class="btn">start sweep</button>
+</form>
+<div class="cli-echo mb-3">$ <b>luncur sweep start {{.App.Name}} --project {{.Project.Name}} --params params.yaml --metric &lt;m&gt; [--direction min] [--max-trials N] [--parallel N] [--early-stop]</b></div>
+{{end}}
+{{if .Sweeps}}
+<table class="tbl"><tr><th>ID</th><th>Status</th><th>Metric</th><th>Direction</th><th>Trials</th><th>Best</th></tr>
+{{range .Sweeps}}<tr>
+  <td class="font-mono text-xs">{{.ID}}</td>
+  <td><span class="chip {{.ChipClass}}">{{.Status}}</span></td>
+  <td class="font-mono text-xs">{{.Metric}}</td>
+  <td class="font-mono text-xs">{{.Direction}}</td>
+  <td class="font-mono text-xs">{{.Done}}/{{.Total}}</td>
+  <td class="font-mono text-xs">{{if .Best}}{{.Best}}{{else}}&ndash;{{end}}</td>
+</tr>{{end}}
+</table>
+{{if .Sweep}}{{template "sweeptrials" .Sweep}}{{end}}
+{{else}}<p class="text-sm text-mut">No sweeps yet. Start one above.</p>{{end}}
+<div class="cli-echo mt-2">$ <b>luncur sweep ls {{.App.Name}} --project {{.Project.Name}}</b> &middot; $ <b>luncur sweep status &lt;id&gt; --app {{.App.Name}} --project {{.Project.Name}}</b></div>
+</div>
+{{end}}
+
+{{if eq .App.Kind "cron"}}
+<div class="card mb-6">
+<h2>Cron</h2>
+{{if not .App.Ejected}}
+<div class="mb-3 flex flex-wrap gap-2">
+{{if .App.Suspended}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/resume">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn">resume</button>
+</form>
+{{else}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/pause">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn-ghost" hx-confirm="Pause {{.App.Name}}? Its schedule stops firing until resumed.">pause</button>
+</form>
+{{end}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/run-now">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn">run now</button>
+</form>
+</div>
+<div class="cli-echo mb-3">$ <b>luncur app pause {{.App.Name}} --project {{.Project.Name}}</b> &middot; $ <b>luncur app resume {{.App.Name}} --project {{.Project.Name}}</b> &middot; $ <b>luncur app run-now {{.App.Name}} --project {{.Project.Name}}</b></div>
+{{end}}
+{{if .CronRuns}}
+<table class="tbl"><tr><th>Job</th><th>Status</th><th>Started</th><th>Finished</th></tr>
+{{range .CronRuns}}<tr>
+  <td class="font-mono text-xs">{{.Name}}</td>
+  <td><span class="status-{{.Status}}">{{.Status}}</span></td>
+  <td class="text-xs text-mut">{{if .StartTime}}{{.StartTime}}{{else}}&ndash;{{end}}</td>
+  <td class="text-xs text-mut">{{if .CompletionT}}{{.CompletionT}}{{else}}&ndash;{{end}}</td>
+</tr>{{end}}
+</table>
+{{else}}<p class="text-sm text-mut">No runs yet.</p>{{end}}
+<div class="cli-echo mt-2">$ <b>luncur app runs {{.App.Name}} --project {{.Project.Name}}</b></div>
+</div>
+{{end}}
+{{end}}

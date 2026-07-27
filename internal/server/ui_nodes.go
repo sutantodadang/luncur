@@ -71,7 +71,7 @@ func (s *server) handleUINodes(w http.ResponseWriter, r *http.Request, u store.U
 		rows = append(rows, m)
 	}
 
-	s.renderPage(w, "nodes.html", map[string]any{
+	s.renderPage(w, r, "nodes.html", map[string]any{
 		"User": u, "Nodes": nodes, "Error": kubeErr,
 		"HasGPUKey": hasVastKey || hasNebiusKey,
 		"HasVastKey": hasVastKey, "HasNebiusKey": hasNebiusKey,

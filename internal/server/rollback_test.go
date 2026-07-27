@@ -77,6 +77,7 @@ func rollbackServer(t *testing.T, registryHost string) (*httptestServer, *store.
 }
 
 func TestRollbackHappyPath(t *testing.T) {
+	t.Parallel()
 	registryHost := fakeRegistry(t, "proj/web:1", "proj/web:2")
 	srv, st := rollbackServer(t, registryHost)
 
@@ -134,6 +135,7 @@ func TestRollbackHappyPath(t *testing.T) {
 }
 
 func TestRollbackExplicitAndErrors(t *testing.T) {
+	t.Parallel()
 	registryHost := fakeRegistry(t, "proj/web:1", "proj/web:2")
 	srv, st := rollbackServer(t, registryHost)
 

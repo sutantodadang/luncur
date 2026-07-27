@@ -26,6 +26,7 @@ import (
 // TestMetricRingWrap asserts the ring keeps only the newest monitorWindow
 // samples, oldest-first, once it has wrapped.
 func TestMetricRingWrap(t *testing.T) {
+	t.Parallel()
 	var r metricRing
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	total := monitorWindow + 5
@@ -47,6 +48,7 @@ func TestMetricRingWrap(t *testing.T) {
 // TestSparkPoints asserts the exact points string sparkPoints emits for a
 // known 3-sample series, and that <2 samples renders "".
 func TestSparkPoints(t *testing.T) {
+	t.Parallel()
 	samples := []metricSample{{CPUMilli: 0}, {CPUMilli: 50}, {CPUMilli: 100}}
 	pick := func(s metricSample) int64 { return s.CPUMilli }
 	got := sparkPoints(samples, pick, 600, 48)
@@ -67,6 +69,7 @@ func TestSparkPoints(t *testing.T) {
 // twice, then removed, and a third sample must zero-fill instead of
 // repeating the last real value.
 func TestSampleMetricsRecords(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	p, err := st.CreateProject("proj")
 	if err != nil {
@@ -121,6 +124,7 @@ func TestSampleMetricsRecords(t *testing.T) {
 // sampler) and asserts the JSON history endpoint reports it, with an empty
 // ring rendering "samples":[] rather than null.
 func TestAppMetricsHistoryEndpoint(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	p, err := st.CreateProject("proj")
 	if err != nil {
@@ -176,6 +180,7 @@ func TestAppMetricsHistoryEndpoint(t *testing.T) {
 // TestUIAppChartFragment asserts the chart fragment reports "collecting"
 // with <2 samples and renders an svg polyline once seeded with >=2.
 func TestUIAppChartFragment(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	p, err := st.CreateProject("proj")
 	if err != nil {
@@ -224,6 +229,7 @@ func TestUIAppChartFragment(t *testing.T) {
 // TestUINodeChartsFragment asserts the nodes charts fragment includes the
 // seeded node's name and an svg once the monitor has samples for it.
 func TestUINodeChartsFragment(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	cp := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "cp1"},
@@ -281,6 +287,7 @@ func crashPod(ns, app string, restarts int32) *corev1.Pod {
 // further delta -> nothing sent, exercising the same suppression path the
 // cooldown uses).
 func TestMonitorNotifiesCrashLoop(t *testing.T) {
+	t.Parallel()
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(captureHandler(ch))
 	t.Cleanup(ts.Close)
@@ -342,6 +349,7 @@ func TestMonitorNotifiesCrashLoop(t *testing.T) {
 // never found and no alert ever fired — RestartCount silently returns 0 for
 // a namespace with no matching pods rather than erroring.
 func TestMonitorNotifiesCrashLoopNonDefaultEnv(t *testing.T) {
+	t.Parallel()
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(captureHandler(ch))
 	t.Cleanup(ts.Close)

@@ -8,6 +8,7 @@ import (
 // TestSetTrainingEndpoint covers the happy path: PUT persists nodes/framework
 // on a kind=job app and echoes them back.
 func TestSetTrainingEndpoint(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -38,6 +39,7 @@ func TestSetTrainingEndpoint(t *testing.T) {
 // TestSetTrainingKindMismatch covers requireJobApp's guard: a non-job app
 // gets 400 kind_mismatch, not a store update.
 func TestSetTrainingKindMismatch(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -54,6 +56,7 @@ func TestSetTrainingKindMismatch(t *testing.T) {
 // nodes=1 app raising to nodes=3 needs 2 more GPUs (1×3 − 1×1); a quota of 2
 // with the app's own footprint (1) already counted leaves only 1 free.
 func TestSetTrainingOverBudget(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -78,6 +81,7 @@ func TestSetTrainingOverBudget(t *testing.T) {
 // TestSetTrainingBadFramework covers store.SetAppTraining's framework
 // validation surfacing as 400 bad_request through the handler.
 func TestSetTrainingBadFramework(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()

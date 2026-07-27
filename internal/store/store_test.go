@@ -4,7 +4,20 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
+
+// Password hashing at production cost (bcrypt.DefaultCost) is the single
+// biggest contributor to this package's test wall-clock — every user
+// created or authenticated pays ~60-100ms. Tests don't need that work
+// factor to prove correctness, so drop it to the minimum for the whole
+// test binary. Production always uses BcryptCost's zero-value default
+// (bcrypt.DefaultCost, set in users.go); this override only ever applies
+// inside _test.go files.
+func init() {
+	BcryptCost = bcrypt.MinCost
+}
 
 func openTest(t *testing.T) *Store {
 	t.Helper()

@@ -9,6 +9,7 @@ import (
 )
 
 func TestSetHealthRoundTrip(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube; app never live, so no sync required
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -52,6 +53,7 @@ func TestSetHealthRoundTrip(t *testing.T) {
 }
 
 func TestSetHealthInvalid400(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -67,6 +69,7 @@ func TestSetHealthInvalid400(t *testing.T) {
 }
 
 func TestSetHealthEjected409(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := ejectTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -82,6 +85,7 @@ func TestSetHealthEjected409(t *testing.T) {
 }
 
 func TestSetHealthLiveAppSyncsManifestWithProbes(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()

@@ -97,6 +97,7 @@ func decodeWebhookEnable(t *testing.T, resp *http.Response) (path, secretHex str
 // enable (secret returned once, 64 hex chars), rotate (new secret differs),
 // show (never leaks the secret), and disable.
 func TestWebhookEnableShowDisable(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -145,6 +146,7 @@ func TestWebhookEnableShowDisable(t *testing.T) {
 // TestWebhookEnableGates checks the two enable-time rejections: a
 // tarball-source app (400 bad_request) and an ejected app (409 app_ejected).
 func TestWebhookEnableGates(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -183,6 +185,7 @@ func TestWebhookEnableGates(t *testing.T) {
 // app, disabled webhook, bad signature, missing headers, a rotated-out
 // secret — answers with the byte-identical 401 body (no existence oracle).
 func TestWebhookTriggerAuth(t *testing.T) {
+	t.Parallel()
 	srv, st := webhookTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -241,6 +244,7 @@ func TestWebhookTriggerAuth(t *testing.T) {
 // push again (deduped against the in-progress build), and a GitLab non-push
 // event skipped.
 func TestWebhookTriggerEvents(t *testing.T) {
+	t.Parallel()
 	srv, st := webhookTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -323,6 +327,7 @@ func TestWebhookTriggerEvents(t *testing.T) {
 // (on a second app, so it doesn't race the first app's in-progress build)
 // and the ejected-app 409.
 func TestWebhookTriggerGitLabPushAndEjected(t *testing.T) {
+	t.Parallel()
 	srv, st := webhookTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -355,6 +360,7 @@ func TestWebhookTriggerGitLabPushAndEjected(t *testing.T) {
 // TestWebhookTriggerOversizedBody checks the 1 MiB cap rejects a too-large
 // body without ever reaching the deploy logic.
 func TestWebhookTriggerOversizedBody(t *testing.T) {
+	t.Parallel()
 	srv, st := webhookTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()

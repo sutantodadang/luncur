@@ -121,6 +121,7 @@ func seedBackupAddon(t *testing.T, srv *server, st *store.Store) {
 }
 
 func TestCreateBackupArchive(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := backupServer(t, &fakeExecer{out: "PGDUMPDATA"})
 	seedBackupAddon(t, srv, st)
 
@@ -154,6 +155,7 @@ func TestCreateBackupArchive(t *testing.T) {
 }
 
 func TestCreateBackupAddonFailureWarns(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := backupServer(t, &fakeExecer{err: fmt.Errorf("pod gone")})
 	seedBackupAddon(t, srv, st)
 
@@ -174,6 +176,7 @@ func TestCreateBackupAddonFailureWarns(t *testing.T) {
 }
 
 func TestBackupUploadAndPrune(t *testing.T) {
+	t.Parallel()
 	var puts, deletes []string
 	s3srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -240,6 +243,7 @@ func TestBackupUploadAndPrune(t *testing.T) {
 }
 
 func TestBackupAPI(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := backupServer(t, nil)
 	h := srv.handler()
 	ts := httptest.NewServer(h)
@@ -291,6 +295,7 @@ func TestBackupAPI(t *testing.T) {
 // data dir configured, createBackup fails immediately and that failure must
 // notify backup_failed exactly once.
 func TestScheduledBackupFailureNotifies(t *testing.T) {
+	t.Parallel()
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(captureHandler(ch))
 	t.Cleanup(ts.Close)

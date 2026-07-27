@@ -18,7 +18,7 @@ func (s *server) handleUISSHKeys(w http.ResponseWriter, r *http.Request, u store
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.renderPage(w, "sshkeys.html", map[string]any{
+	s.renderPage(w, r, "sshkeys.html", map[string]any{
 		"User": u, "Keys": list, "CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	})
 }

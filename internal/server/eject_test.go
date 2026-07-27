@@ -70,6 +70,7 @@ func assertAppEjected(t *testing.T, resp *http.Response, label string) {
 }
 
 func TestEjectFlow(t *testing.T) {
+	t.Parallel()
 	srv, st, actions, dataDir := ejectTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -149,6 +150,7 @@ func TestEjectFlow(t *testing.T) {
 }
 
 func TestPushRefusesEjected(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := buildServer(t)
 
 	p, err := st.CreateProject("web")
@@ -179,6 +181,7 @@ func TestPushRefusesEjected(t *testing.T) {
 }
 
 func TestAdoptFlow(t *testing.T) {
+	t.Parallel()
 	srv, st, actions, _ := ejectTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()

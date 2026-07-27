@@ -7,6 +7,7 @@ import (
 )
 
 func TestListTokensOwnOnly(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	tokA := seedUserToken(t, st, "tokusera@b.co", "member")
 	tokB := seedUserToken(t, st, "tokuserb@b.co", "member")
@@ -45,6 +46,7 @@ func TestListTokensOwnOnly(t *testing.T) {
 }
 
 func TestRevokeOwnTokenLogsOut(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	tok := seedUserToken(t, st, "revoke1@b.co", "member")
 
@@ -74,6 +76,7 @@ func TestRevokeOwnTokenLogsOut(t *testing.T) {
 }
 
 func TestRevokeForeignTokenNotFound(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	tokA := seedUserToken(t, st, "foreigna@b.co", "member")
 	tokB := seedUserToken(t, st, "foreignb@b.co", "member")

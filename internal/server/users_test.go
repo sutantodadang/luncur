@@ -39,6 +39,7 @@ func seedUserToken(t *testing.T, st *store.Store, email, role string) string {
 }
 
 func TestMeRequiresAuth(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	resp := doAuthed(t, "GET", srv.URL+"/v1/me", "", "")
 	defer resp.Body.Close()
@@ -65,6 +66,7 @@ func TestMeRequiresAuth(t *testing.T) {
 }
 
 func TestCreateUserAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	adminTok := seedUserToken(t, st, "root@b.co", "admin")
 	memberTok := seedUserToken(t, st, "pleb@b.co", "member")
@@ -88,6 +90,7 @@ func TestCreateUserAdminOnly(t *testing.T) {
 }
 
 func TestCreateUserDuplicateEmail(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	adminTok := seedUserToken(t, st, "admin2@b.co", "admin")
 

@@ -11,6 +11,7 @@ import (
 // stale PodDisruptionBudget deleted, since sync only upserts and never
 // deletes what a shrinking floor makes stale.
 func TestScaleDownDeletesStalePDB(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -58,6 +59,7 @@ func TestScaleDownDeletesStalePDB(t *testing.T) {
 // happy path: setting a non-zero CPU/memory quota syncs both a
 // ResourceQuota and a LimitRange into the project namespace.
 func TestProjectQuotaEndpointAppliesResourceQuotaAndLimitRange(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p1"}`).Body.Close()
@@ -87,6 +89,7 @@ func TestProjectQuotaEndpointAppliesResourceQuotaAndLimitRange(t *testing.T) {
 // both cpu_milli and memory_mb back to 0 deletes the ResourceQuota and
 // LimitRange (best-effort, never fails the request).
 func TestProjectQuotaEndpointZeroDeletesBoth(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p1"}`).Body.Close()
@@ -113,6 +116,7 @@ func TestProjectQuotaEndpointZeroDeletesBoth(t *testing.T) {
 // TestProjectQuotaEndpointNegativeRejected mirrors TestGPUQuotaEndpoint's
 // negative-value guard.
 func TestProjectQuotaEndpointNegativeRejected(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p1"}`).Body.Close()
@@ -127,6 +131,7 @@ func TestProjectQuotaEndpointNegativeRejected(t *testing.T) {
 // TestProjectQuotaEndpointNonAdminForbidden checks the route is admin-only,
 // mirroring the gpu-quota endpoint's access control.
 func TestProjectQuotaEndpointNonAdminForbidden(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p1"}`).Body.Close()
@@ -145,6 +150,7 @@ func TestProjectQuotaEndpointNonAdminForbidden(t *testing.T) {
 // actually configured — this exercises that path against a fake dynamic
 // client and asserts the apply succeeds and is recorded.
 func TestGPUQuotaAppliesResourceQuotaAgainstFakeKube(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p1"}`).Body.Close()

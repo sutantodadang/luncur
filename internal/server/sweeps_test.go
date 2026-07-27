@@ -77,6 +77,7 @@ func pendingTrial(id string) trialView {
 // --- decideSweep pure-core matrix -----------------------------------------
 
 func TestDecideSweepLaunchRespectsParallel(t *testing.T) {
+	t.Parallel()
 	sw := store.Sweep{Parallel: 2, Direction: "min"}
 	trials := []trialView{
 		runningTrial("r1", sweep.Obs{}),
@@ -91,6 +92,7 @@ func TestDecideSweepLaunchRespectsParallel(t *testing.T) {
 }
 
 func TestDecideSweepNoPruneBeforeThreeDone(t *testing.T) {
+	t.Parallel()
 	sw := store.Sweep{Parallel: 1, Direction: "min", EarlyStop: true}
 	trials := []trialView{
 		doneTrial("d1", 1.0, 10),
@@ -104,6 +106,7 @@ func TestDecideSweepNoPruneBeforeThreeDone(t *testing.T) {
 }
 
 func TestDecideSweepPrunesWorseThanMedianDirectionMin(t *testing.T) {
+	t.Parallel()
 	sw := store.Sweep{Parallel: 1, Direction: "min", EarlyStop: true}
 	trials := []trialView{
 		doneTrial("d1", 1.0, 10),
@@ -119,6 +122,7 @@ func TestDecideSweepPrunesWorseThanMedianDirectionMin(t *testing.T) {
 }
 
 func TestDecideSweepPrunesWorseThanMedianDirectionMax(t *testing.T) {
+	t.Parallel()
 	sw := store.Sweep{Parallel: 1, Direction: "max", EarlyStop: true}
 	trials := []trialView{
 		doneTrial("d1", 1.0, 10),
@@ -134,6 +138,7 @@ func TestDecideSweepPrunesWorseThanMedianDirectionMax(t *testing.T) {
 }
 
 func TestDecideSweepNoPruneWhenLiveNotFound(t *testing.T) {
+	t.Parallel()
 	sw := store.Sweep{Parallel: 1, Direction: "min", EarlyStop: true}
 	trials := []trialView{
 		doneTrial("d1", 1.0, 10),
@@ -148,6 +153,7 @@ func TestDecideSweepNoPruneWhenLiveNotFound(t *testing.T) {
 }
 
 func TestDecideSweepNoPruneBelowComparableStep(t *testing.T) {
+	t.Parallel()
 	sw := store.Sweep{Parallel: 1, Direction: "min", EarlyStop: true}
 	trials := []trialView{
 		// minDoneStep = 10.
@@ -165,6 +171,7 @@ func TestDecideSweepNoPruneBelowComparableStep(t *testing.T) {
 }
 
 func TestDecideSweepFinishOnlyWhenDrained(t *testing.T) {
+	t.Parallel()
 	sw := store.Sweep{Parallel: 1, Direction: "min"}
 
 	drained := []trialView{doneTrial("d1", 1.0, 10)}
@@ -186,6 +193,7 @@ func TestDecideSweepFinishOnlyWhenDrained(t *testing.T) {
 // --- loop-level tests (store + fakes) --------------------------------------
 
 func TestSweepTickHarvestsFinishedRun(t *testing.T) {
+	t.Parallel()
 	var hits int
 	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
@@ -245,6 +253,7 @@ func TestSweepTickHarvestsFinishedRun(t *testing.T) {
 }
 
 func TestSweepTickOverBudgetLeavesPending(t *testing.T) {
+	t.Parallel()
 	// No kube fake: the over-budget check happens purely in the store, so
 	// startRun must never reach s.kube (nil here) for this trial.
 	s := sweepTestServer(t, nil)
@@ -278,6 +287,7 @@ func TestSweepTickOverBudgetLeavesPending(t *testing.T) {
 }
 
 func TestSweepTickMlflowDegradeSetsWarningOnce(t *testing.T) {
+	t.Parallel()
 	var hits int
 	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
@@ -327,6 +337,7 @@ func TestSweepTickMlflowDegradeSetsWarningOnce(t *testing.T) {
 }
 
 func TestSweepReconcileMarksOrphansFailed(t *testing.T) {
+	t.Parallel()
 	scheme := runtime.NewScheme()
 	dyn := dynamicfake.NewSimpleDynamicClient(scheme) // no Job objects seeded -> JobExists is false
 	s := sweepTestServer(t, dyn)
@@ -365,6 +376,7 @@ func TestSweepReconcileMarksOrphansFailed(t *testing.T) {
 }
 
 func TestSweepReconcileLeavesRunningJobAlone(t *testing.T) {
+	t.Parallel()
 	// CreateProject("ml") always derives namespace "luncur-ml", and this
 	// is a fresh store's first job run, so jobRunName("train", 1) ==
 	// "train-run-1" — both computed independently of s here so the Job
@@ -440,6 +452,7 @@ func sweepAPIServer(t *testing.T) (*httptestServer, *store.Store, *[]string) {
 }
 
 func TestCreateSweepHappyPath(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepAPIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -472,6 +485,7 @@ func TestCreateSweepHappyPath(t *testing.T) {
 }
 
 func TestCreateSweepOnWebAppKindMismatch(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepAPIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -484,6 +498,7 @@ func TestCreateSweepOnWebAppKindMismatch(t *testing.T) {
 }
 
 func TestCreateSweepBadYAML(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepAPIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -502,6 +517,7 @@ func TestCreateSweepBadYAML(t *testing.T) {
 }
 
 func TestCreateSweepNotDeployed(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepAPIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -515,6 +531,7 @@ func TestCreateSweepNotDeployed(t *testing.T) {
 }
 
 func TestGetSweepReturnsBestTrial(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepAPIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -565,6 +582,7 @@ func TestGetSweepReturnsBestTrial(t *testing.T) {
 }
 
 func TestStopSweepKillsRunningTrialsAndIsIdempotent(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := sweepAPIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -641,6 +659,7 @@ func TestStopSweepKillsRunningTrialsAndIsIdempotent(t *testing.T) {
 }
 
 func TestSweepEndpointsNonMemberForbidden(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepAPIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()

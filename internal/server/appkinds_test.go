@@ -41,6 +41,7 @@ func errCode(t *testing.T, respBody []byte) string {
 }
 
 func TestCreateAppPerKind(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -84,6 +85,7 @@ func TestCreateAppPerKind(t *testing.T) {
 }
 
 func TestKindGateMatrix(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -129,6 +131,7 @@ func TestKindGateMatrix(t *testing.T) {
 }
 
 func TestDeployWorkerAndCronHappyPath(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -171,6 +174,7 @@ func TestDeployWorkerAndCronHappyPath(t *testing.T) {
 // (app-<hash>-<hash>) but still carry the app.kubernetes.io/name label
 // Render sets, so selection is unaffected by kind.
 func TestRuntimeLogsForJobStylePodName(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 
 	pod := &corev1.Pod{

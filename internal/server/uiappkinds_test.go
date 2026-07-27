@@ -12,6 +12,7 @@ import (
 // for all three kinds: web (default), worker (no port), and cron (schedule
 // required).
 func TestUICreateAppFormPerKind(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -74,6 +75,7 @@ func TestUICreateAppFormPerKind(t *testing.T) {
 // domains/health/replicas appropriately per kind: worker keeps replicas but
 // loses health+domains; cron loses replicas+health+domains.
 func TestUIAppPageSectionVisibilityPerKind(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -109,33 +111,40 @@ func TestUIAppPageSectionVisibilityPerKind(t *testing.T) {
 		return string(b)
 	}
 
-	worker := get("/ui/projects/web/apps/worker1")
-	if !strings.Contains(worker, `name="replicas"`) {
+	// replicas/Health check/Domains live on Wire (and, for web-only Health
+	// check, Observe); edit links live on Ship — check each on its own tab.
+	workerWire := get("/ui/projects/web/apps/worker1?tab=wire")
+	if !strings.Contains(workerWire, `name="replicas"`) {
 		t.Fatal("worker page should keep the replicas input")
 	}
-	if strings.Contains(worker, "Health check") {
-		t.Fatal("worker page should not show the health check section")
-	}
-	if strings.Contains(worker, "<h2>Domains</h2>") {
+	if strings.Contains(workerWire, "<h2>Domains</h2>") {
 		t.Fatal("worker page should not show the domains section")
 	}
-	if !strings.Contains(worker, "edit/Deployment") || strings.Contains(worker, "edit/Service") || strings.Contains(worker, "edit/Ingress") {
-		t.Fatalf("worker edit links wrong:\n%s", worker)
+	workerObserve := get("/ui/projects/web/apps/worker1?tab=observe")
+	if strings.Contains(workerObserve, "Health check") {
+		t.Fatal("worker page should not show the health check section")
+	}
+	workerShip := get("/ui/projects/web/apps/worker1?tab=ship")
+	if !strings.Contains(workerShip, "edit/Deployment") || strings.Contains(workerShip, "edit/Service") || strings.Contains(workerShip, "edit/Ingress") {
+		t.Fatalf("worker edit links wrong:\n%s", workerShip)
 	}
 
-	cron := get("/ui/projects/web/apps/nightly")
-	if strings.Contains(cron, `name="replicas"`) {
+	cronWire := get("/ui/projects/web/apps/nightly?tab=wire")
+	if strings.Contains(cronWire, `name="replicas"`) {
 		t.Fatal("cron page should not show the replicas input")
 	}
-	if strings.Contains(cron, "Health check") {
-		t.Fatal("cron page should not show the health check section")
-	}
-	if strings.Contains(cron, "<h2>Domains</h2>") {
+	if strings.Contains(cronWire, "<h2>Domains</h2>") {
 		t.Fatal("cron page should not show the domains section")
 	}
-	if !strings.Contains(cron, "edit/CronJob") {
+	cronObserve := get("/ui/projects/web/apps/nightly?tab=observe")
+	if strings.Contains(cronObserve, "Health check") {
+		t.Fatal("cron page should not show the health check section")
+	}
+	cronShip := get("/ui/projects/web/apps/nightly?tab=ship")
+	if !strings.Contains(cronShip, "edit/CronJob") {
 		t.Fatal("cron page should link to the CronJob editor")
 	}
+	cron := get("/ui/projects/web/apps/nightly")
 	if !strings.Contains(cron, "0 3 * * *") {
 		t.Fatal("cron page should show the schedule")
 	}

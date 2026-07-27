@@ -13,6 +13,7 @@ import (
 // duplicate name redirects back with an ?err= banner instead of erroring
 // out.
 func TestUIProjectCreate(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin, err := st.CreateUser("root@b.co", "password123", "admin")
 	if err != nil {
@@ -59,6 +60,7 @@ func TestUIProjectCreate(t *testing.T) {
 // adds the member and redirects to the project page, and an unknown email
 // redirects back with an ?err= banner instead of a hard error.
 func TestUIAddMember(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -112,6 +114,7 @@ func TestUIAddMember(t *testing.T) {
 // deleted (recorded on the fake dynamic client) and the app row is gone from
 // the store, with a redirect back to the project page.
 func TestUIAppDestroy(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -150,6 +153,7 @@ func TestUIAppDestroy(t *testing.T) {
 // TestUIEject checks the eject route marks the app ejected in the store and
 // redirects back to the app page.
 func TestUIEject(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := ejectTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -168,8 +172,8 @@ func TestUIEject(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("eject: want 303, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web" {
-		t.Fatalf("Location = %q, want the app page", loc)
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web?tab=wire" {
+		t.Fatalf("Location = %q, want the app page's Wire tab", loc)
 	}
 
 	p, err := st.GetProject("proj")
@@ -197,6 +201,7 @@ func TestUIEject(t *testing.T) {
 // store, then checks the retry route resets it to "none" and redirects back
 // to the app page.
 func TestUIDomainRetry(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -225,8 +230,8 @@ func TestUIDomainRetry(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("domain retry: want 303, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web" {
-		t.Fatalf("Location = %q, want the app page", loc)
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web?tab=wire" {
+		t.Fatalf("Location = %q, want the app page's Wire tab", loc)
 	}
 
 	list, err := st.ListDomains(id)
@@ -250,6 +255,7 @@ func TestUIDomainRetry(t *testing.T) {
 // applies the re-rendered manifests (recorded on the fake dynamic client),
 // and redirects back to the project page.
 func TestUIAddonUpgrade(t *testing.T) {
+	t.Parallel()
 	_, srv, st, actions := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -301,6 +307,7 @@ func TestUIAddonUpgrade(t *testing.T) {
 // the KEY=URL body for a logged-in session, 303 (login redirect) without
 // one, and 404 for an unknown addon name.
 func TestUIAddonURL(t *testing.T) {
+	t.Parallel()
 	_, srv, st, _ := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -336,6 +343,7 @@ func TestUIAddonURL(t *testing.T) {
 // new create-project and add-member forms for an admin, and hide the write
 // forms (but still show the list) for a plain member.
 func TestUIProjectsMembersPageFields(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin, err := st.CreateUser("root@b.co", "password123", "admin")
 	if err != nil {
@@ -398,11 +406,20 @@ func TestUIProjectsMembersPageFields(t *testing.T) {
 // .App.Internal condition as the "internal" badge — a public (non-internal)
 // app's page must not leak the /open link.
 func TestUIInternalAppShowsOpenAndForwardHint(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
 	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000,"internal":true}`).Body.Close()
 	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"pub","port":4000}`).Body.Close()
+	// Shipped apps: the never-deployed Launch Sequence checklist (DESIGN.md
+	// "Launch Sequence") replaces the status card this test asserts on.
+	if _, err := st.CreateDeployment(appID(t, st, "web", "api"), "live", "img:1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateDeployment(appID(t, st, "web", "pub"), "live", "img:1", 0); err != nil {
+		t.Fatal(err)
+	}
 
 	u, err := st.GetUserByEmail("root@b.co")
 	if err != nil {

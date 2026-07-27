@@ -32,7 +32,7 @@ func (s *server) handleUIDoctor(w http.ResponseWriter, r *http.Request, u store.
 		}
 		rows = append(rows, uiDoctorRow{Name: c.Name, Status: c.Status, Detail: c.Detail, Chip: chip})
 	}
-	s.renderPage(w, "doctor.html", map[string]any{
+	s.renderPage(w, r, "doctor.html", map[string]any{
 		"User": u, "Version": s.version, "Checks": rows,
 		"CSRF": s.csrf(w, r), "IsAdmin": true,
 	})

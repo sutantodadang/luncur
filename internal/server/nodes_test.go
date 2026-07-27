@@ -24,6 +24,7 @@ type nodesResponse struct {
 
 // TestListNodesForbidsMember asserts a non-admin token gets 403.
 func TestListNodesForbidsMember(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st})
 	member := seedUserToken(t, st, "pleb@b.co", "member")
@@ -37,6 +38,7 @@ func TestListNodesForbidsMember(t *testing.T) {
 
 // TestListNodesNoKube asserts kube==nil returns 503 kubernetes_unavailable.
 func TestListNodesNoKube(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st})
 	admin := seedUserToken(t, st, "root@b.co", "admin")
@@ -51,6 +53,7 @@ func TestListNodesNoKube(t *testing.T) {
 // TestListNodesHappyPath seeds one ready control-plane node and one not-ready
 // agent node, and asserts both are reported with the right fields.
 func TestListNodesHappyPath(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	cp := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -112,6 +115,7 @@ func TestListNodesHappyPath(t *testing.T) {
 // output when the dynamic client is wired (nil dyn -> MetricsOK stays false,
 // covered by TestListNodesHappyPath).
 func TestListNodesWithMetrics(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	cp := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "cp1"},

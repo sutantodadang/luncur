@@ -528,6 +528,69 @@ func TestDeleteFailedPods(t *testing.T) {
 	}
 }
 
+// TestAppPodInfosExitDetails checks AppPodInfos captures why a container
+// last terminated: OOMKilled from the current Terminated state, an exit
+// code from LastTerminationState for a pod stuck retrying (Waiting,
+// current state carries no termination detail of its own), and pod-level
+// Evicted with its kubelet pressure message — the raw detail the UI's
+// plain-language pods-history mapping (DESIGN.md "Pods presentation")
+// reads from.
+func TestAppPodInfosExitDetails(t *testing.T) {
+	oomKilled := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "web-oom", Namespace: "proj",
+		Labels: map[string]string{"app.kubernetes.io/name": "web"},
+	}, Status: corev1.PodStatus{
+		Phase: corev1.PodFailed,
+		ContainerStatuses: []corev1.ContainerStatus{{
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				Reason: "OOMKilled", ExitCode: 137,
+			}},
+		}},
+	}}
+	crashLoop := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "web-crash", Namespace: "proj",
+		Labels: map[string]string{"app.kubernetes.io/name": "web"},
+	}, Status: corev1.PodStatus{
+		Phase: corev1.PodRunning,
+		ContainerStatuses: []corev1.ContainerStatus{{
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				Reason: "Error", ExitCode: 1,
+			}},
+		}},
+	}}
+	evicted := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "web-evicted", Namespace: "proj",
+		Labels: map[string]string{"app.kubernetes.io/name": "web"},
+	}, Status: corev1.PodStatus{
+		Phase: corev1.PodFailed, Reason: "Evicted", Message: "node ran out of memory",
+	}}
+	cs := k8sfake.NewSimpleClientset(oomKilled, crashLoop, evicted)
+	c := NewForTest(nil, cs)
+
+	pods, err := c.AppPodInfos(context.Background(), "proj", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]PodInfo{}
+	for _, p := range pods {
+		byName[p.Name] = p
+	}
+
+	oom, ok := byName["web-oom"]
+	if !ok || oom.ExitReason != "OOMKilled" || oom.ExitCode != 137 {
+		t.Fatalf("web-oom = %+v, want ExitReason OOMKilled code 137", oom)
+	}
+	crash, ok := byName["web-crash"]
+	if !ok || crash.Reason != "CrashLoopBackOff" || crash.ExitReason != "Error" || crash.ExitCode != 1 {
+		t.Fatalf("web-crash = %+v, want Reason CrashLoopBackOff, ExitReason Error code 1 (from LastTerminationState)", crash)
+	}
+	ev, ok := byName["web-evicted"]
+	if !ok || ev.ExitReason != "Evicted" || ev.EvictedMessage != "node ran out of memory" {
+		t.Fatalf("web-evicted = %+v, want ExitReason Evicted with pressure message", ev)
+	}
+}
+
 func TestWaitDeployment(t *testing.T) {
 	dep := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apps/v1", "kind": "Deployment",

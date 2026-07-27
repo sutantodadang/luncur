@@ -232,6 +232,7 @@ func TestCreateRunMultiNode(t *testing.T) {
 // TestCreateRunBadFramework covers handleCreateRun rejecting an unknown
 // framework before ever touching the cluster or the run table.
 func TestCreateRunBadFramework(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -250,6 +251,7 @@ func TestCreateRunBadFramework(t *testing.T) {
 // counted leaves only 1 free, so the request is rejected before any run
 // row or cluster object is created.
 func TestCreateRunOverBudget(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()

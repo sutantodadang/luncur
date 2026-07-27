@@ -20,6 +20,7 @@ import (
 )
 
 func TestValidPanelDomain(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		v    string
 		want bool
@@ -41,6 +42,7 @@ func TestValidPanelDomain(t *testing.T) {
 // path handleSetSetting and the UI form both use), not just the validator
 // function directly.
 func TestPanelDomainSetting(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st})
 
@@ -84,6 +86,7 @@ func recordingKube(t *testing.T) (*kube.Client, *[]recordedPatch) {
 // end to end through the JSON settings API: setting panel_domain adds the
 // custom host to luncur's own Ingress; clearing it removes it again.
 func TestSetPanelDomainAppliesIngress(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	kubeClient, patches := recordingKube(t)
 	sealer, err := secret.New(make([]byte, 32))
@@ -130,6 +133,7 @@ func TestSetPanelDomainAppliesIngress(t *testing.T) {
 // flip panel_cert_status to issued, write the panel TLS secret, and
 // re-apply the Ingress with a tls block over the custom host.
 func TestPanelCertIssue(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	kubeClient, patches := recordingKube(t)
 	sealer, err := secret.New(make([]byte, 32))
@@ -174,6 +178,7 @@ func TestPanelCertIssue(t *testing.T) {
 // TestPanelSweepRenews: a panel_domain with an expired issued cert must be
 // re-enqueued by sweep().
 func TestPanelSweepRenews(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	kubeClient, _ := recordingKube(t)
 	sealer, err := secret.New(make([]byte, 32))

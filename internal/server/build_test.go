@@ -68,6 +68,7 @@ func buildServer(t *testing.T) (*server, *store.Store, *[]string) {
 }
 
 func TestRunBuildSuccess(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := buildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -174,6 +175,7 @@ func jobJSONEnv(t *testing.T, jobJSON []byte) map[string]string {
 }
 
 func TestRunBuildIncludesCacheRefByDefault(t *testing.T) {
+	t.Parallel()
 	srv, st, jobJSON := captureBuildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -209,6 +211,7 @@ func TestRunBuildIncludesCacheRefByDefault(t *testing.T) {
 // Dockerfile's `ARG VITE_API_URL` see a real value instead of its baked-in
 // default.
 func TestRunBuildIncludesAppEnvAsBuildArgs(t *testing.T) {
+	t.Parallel()
 	srv, st, jobJSON := captureBuildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -244,6 +247,7 @@ func TestRunBuildIncludesAppEnvAsBuildArgs(t *testing.T) {
 // a Build Job with no LUNCUR_BUILDARG_* vars at all — build jobs for
 // env-less apps stay byte-identical to before this feature existed.
 func TestRunBuildOmitsBuildArgsWithNoEnv(t *testing.T) {
+	t.Parallel()
 	srv, st, jobJSON := captureBuildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -275,6 +279,7 @@ func TestRunBuildOmitsBuildArgsWithNoEnv(t *testing.T) {
 }
 
 func TestRunBuildOmitsCacheRefWhenDisabled(t *testing.T) {
+	t.Parallel()
 	srv, st, jobJSON := captureBuildServer(t)
 	if err := st.SetSetting("build_cache", "off"); err != nil {
 		t.Fatal(err)
@@ -352,6 +357,7 @@ func setSealedNotifyURLForTest(t *testing.T, srv *server, url string) {
 }
 
 func TestRunBuildNotifiesOnSuccess(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := buildServer(t)
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +411,7 @@ func TestRunBuildNotifiesOnSuccess(t *testing.T) {
 }
 
 func TestRunBuildNotifiesOnFailure(t *testing.T) {
+	t.Parallel()
 	srv, st := buildServerFailingJob(t)
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -461,6 +468,7 @@ func TestRunBuildNotifiesOnFailure(t *testing.T) {
 // isn't blind before the builder pod exists — the actual builder pod
 // entrypoint output is appended by a real cluster, not this fake-kube test.
 func TestRunBuildWritesMilestoneLog(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := buildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -498,6 +506,7 @@ func TestRunBuildWritesMilestoneLog(t *testing.T) {
 // TestRunBuildFailureLogsMilestone checks fail()'s "build failed: <err>"
 // milestone lands in the deploy log before the deployment flips to failed.
 func TestRunBuildFailureLogsMilestone(t *testing.T) {
+	t.Parallel()
 	srv, st := buildServerFailingJob(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -532,6 +541,7 @@ func TestRunBuildFailureLogsMilestone(t *testing.T) {
 // TestBuildLogfNoopWithoutSource guards buildLogf's nil-src early return:
 // no data dir configured (s.src == nil) must never panic or create files.
 func TestBuildLogfNoopWithoutSource(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st})
 	srv.buildLogf(store.Deployment{ID: "1"}, "hello %s", "world")
@@ -663,6 +673,7 @@ func TestWatchBuildPodLogsWatcherErrorOnce(t *testing.T) {
 // TestBuildTimeoutDefaultAndSetting checks buildTimeout falls back to 15
 // minutes when build_timeout_minutes is unset, and honors it once set.
 func TestBuildTimeoutDefaultAndSetting(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st})
 
@@ -675,5 +686,51 @@ func TestBuildTimeoutDefaultAndSetting(t *testing.T) {
 	}
 	if got := srv.buildTimeout(); got != 30*time.Minute {
 		t.Fatalf("buildTimeout with setting = %v, want 30m", got)
+	}
+}
+
+// TestDeployFailureHint table-tests the Overview error card's "why" line
+// heuristic (DESIGN.md "Error contract"): markers are checked in a fixed
+// order so, e.g., an OOM during "npm install" still reports OOM rather than
+// a dependency failure.
+func TestDeployFailureHint(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		logTail string
+		want    string
+	}{
+		{"empty log", "", "See the build log for the failing step."},
+		{"oom", "[luncur] 2026-01-01T00:00:00Z builder pod OOMKilled", "builder pod ran out of memory (OOM-killed)"},
+		{"killed", "container process was Killed by the kernel", "builder pod ran out of memory (OOM-killed)"},
+		{"disk full", "write /data/x: no space left on device", "builder disk is full (no space left on device)"},
+		{"copy failed", `COPY failed: file not found in build context`, "a file or path referenced in the build was not found"},
+		{
+			"npm dependency failure",
+			"Step 4/10 : RUN npm install\nnpm ERR! code E404\nnpm ERR! registry fetch failed for left-pad",
+			`dependency install or compile step failed: "npm ERR! code E404"`,
+		},
+		{"pip failure", "Step 3/6 : RUN pip install -r requirements.txt\nERROR: Could not find a version", "dependency install or compile step failed: \"Step 3/6 : RUN pip install -r requirements.txt\""},
+		{"go build failure", "# app\n./main.go:10:2: undefined: foo\ngo build exited with code 1", "dependency install or compile step failed: \"go build exited with code 1\""},
+		{"rbac forbidden", `pods "build-1-" is forbidden: violates PodSecurity "restricted:latest"`, "cluster policy or RBAC blocked the builder pod"},
+		{"failedcreate", "Warning FailedCreate: error creating pod", "cluster policy or RBAC blocked the builder pod"},
+		{"unrecognized", "Step 1/3 : FROM golang:1.22\nStep 2/3 : COPY . .\nbuild complete", "See the build log for the failing step."},
+		{
+			"oom takes priority over npm marker",
+			"npm ERR! code ELIFECYCLE\nContainer was OOMKilled",
+			"builder pod ran out of memory (OOM-killed)",
+		},
+		{
+			"long line truncated to 120 chars",
+			"npm ERR! " + strings.Repeat("x", 200),
+			`dependency install or compile step failed: "` + ("npm ERR! " + strings.Repeat("x", 200))[:120] + `"`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := deployFailureHint(c.logTail); got != c.want {
+				t.Fatalf("deployFailureHint(%q) = %q, want %q", c.logTail, got, c.want)
+			}
+		})
 	}
 }

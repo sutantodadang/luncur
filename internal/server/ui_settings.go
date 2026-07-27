@@ -152,7 +152,7 @@ func (s *server) handleUISettings(w http.ResponseWriter, r *http.Request, u stor
 		panelExpiresAt, _ = s.st.GetSetting("panel_cert_expires_at")
 	}
 
-	s.renderPage(w, "settings.html", map[string]any{
+	s.renderPage(w, r, "settings.html", map[string]any{
 		"User": u, "Groups": groups, "Banner": banner,
 		"CSRF": s.csrf(w, r), "IsAdmin": true, "Version": s.version,
 		"PanelDomain": panelDomain, "PanelCertStatus": panelStatus,

@@ -8,6 +8,7 @@ import (
 // TestGitTokenRoundTrip covers the git-token API: set on a git app seals the
 // token at rest, a non-git app is rejected, and delete clears it.
 func TestGitTokenRoundTrip(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()

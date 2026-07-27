@@ -47,6 +47,7 @@ func dialForward(t *testing.T, baseURL, token, project, app string, port int) (n
 }
 
 func TestForwardTunnelEcho(t *testing.T) {
+	t.Parallel()
 	// echo listener stands in for the in-cluster service
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -88,6 +89,7 @@ func TestForwardTunnelEcho(t *testing.T) {
 }
 
 func TestForwardTunnelErrors(t *testing.T) {
+	t.Parallel()
 	ts, st, srv := newForwardTestServer(t)
 	srv.fwdDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return nil, fmt.Errorf("connection refused")

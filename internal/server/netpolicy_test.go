@@ -57,6 +57,7 @@ func hasAction(log []recordedAction, verb, resource, namespace, name string) boo
 // TestNetworkIsolationValidation exercises settableKeys' network_isolation
 // rule through setSetting, mirroring TestPanelDomainSetting's shape.
 func TestNetworkIsolationValidation(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st})
 
@@ -76,6 +77,7 @@ func TestNetworkIsolationValidation(t *testing.T) {
 // ensureProjectNamespace must apply the luncur-isolation NetworkPolicy right
 // alongside the namespace itself.
 func TestEnsureProjectNamespaceAppliesIsolationWhenOn(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	kubeClient, log := recordingActionsKube(t)
 	srv := newServer(Deps{Store: st, Kube: kubeClient})
@@ -95,6 +97,7 @@ func TestEnsureProjectNamespaceAppliesIsolationWhenOn(t *testing.T) {
 // setting off: the namespace is still stamped, but no NetworkPolicy touches
 // the cluster.
 func TestEnsureProjectNamespaceSkipsIsolationWhenOff(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	kubeClient, log := recordingActionsKube(t)
 	srv := newServer(Deps{Store: st, Kube: kubeClient})
@@ -115,6 +118,7 @@ func TestEnsureProjectNamespaceSkipsIsolationWhenOff(t *testing.T) {
 // isolation NetworkPolicy to env.Namespace, the environment's own namespace,
 // not the project's.
 func TestEnsureEnvNamespaceAppliesIsolationWhenOn(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	kubeClient, log := recordingActionsKube(t)
 	srv := newServer(Deps{Store: st, Kube: kubeClient})
@@ -134,6 +138,7 @@ func TestEnsureEnvNamespaceAppliesIsolationWhenOn(t *testing.T) {
 // TestEnsureEnvNamespaceSkipsIsolationWhenOff is the off-setting mirror:
 // the namespace is still stamped, but no NetworkPolicy touches the cluster.
 func TestEnsureEnvNamespaceSkipsIsolationWhenOff(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	kubeClient, log := recordingActionsKube(t)
 	srv := newServer(Deps{Store: st, Kube: kubeClient})
@@ -155,6 +160,7 @@ func TestEnsureEnvNamespaceSkipsIsolationWhenOff(t *testing.T) {
 // toggling network_isolation off removes the policy from every existing
 // project's namespace, and toggling it back on re-applies it.
 func TestNetworkIsolationChangedFansOutToProjects(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	kubeClient, log := recordingActionsKube(t)
 	srv := newHTTPTest(t, Deps{Store: st, Kube: kubeClient})

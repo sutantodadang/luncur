@@ -173,6 +173,36 @@ func (s *Store) CountDeployments(appID int64) (int64, error) {
 	return n, err
 }
 
+// LatestStatusesForProject returns every app in projectID mapped to its
+// latest deployment's status ("" for an app with no deployments yet) — the
+// workspace tree's batch twin of calling LatestDeployment per app. One
+// query for the whole project instead of N+1, via a correlated subquery
+// picking each app's newest deployment row by rowid (see LatestDeployment's
+// own doc comment on why rowid, not id, orders "latest").
+func (s *Store) LatestStatusesForProject(projectID int64) (map[int64]string, error) {
+	rows, err := s.db.Query(
+		`SELECT a.id, d.status FROM apps a
+		 LEFT JOIN deployments d ON d.rowid = (
+		   SELECT rowid FROM deployments WHERE app_id = a.id ORDER BY rowid DESC LIMIT 1
+		 )
+		 WHERE a.project_id = ?`, projectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]string{}
+	for rows.Next() {
+		var appID int64
+		var status sql.NullString
+		if err := rows.Scan(&appID, &status); err != nil {
+			return nil, err
+		}
+		out[appID] = status.String
+	}
+	return out, rows.Err()
+}
+
 // Ping verifies the database connection is reachable.
 func (s *Store) Ping() error {
 	var one int

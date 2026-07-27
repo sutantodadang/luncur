@@ -9,6 +9,7 @@ import (
 )
 
 func TestVolumeAddListRemoveRoundTrip(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube; app never live, so no sync required
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -72,6 +73,7 @@ func TestVolumeAddListRemoveRoundTrip(t *testing.T) {
 }
 
 func TestVolumeAddCronKindMismatch400(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -94,6 +96,7 @@ func TestVolumeAddCronKindMismatch400(t *testing.T) {
 }
 
 func TestVolumeAddEjected409(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := ejectTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -129,6 +132,7 @@ func assertVolumeReplicaConflict(t *testing.T, resp *http.Response, label string
 }
 
 func TestVolumeReplicaConflicts(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -164,6 +168,7 @@ func TestVolumeReplicaConflicts(t *testing.T) {
 }
 
 func TestVolumePurgeDeletesPVC(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -200,6 +205,7 @@ func TestVolumePurgeDeletesPVC(t *testing.T) {
 }
 
 func TestVolumePurgeWithoutKube503RowSurvives(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -228,6 +234,7 @@ func TestVolumePurgeWithoutKube503RowSurvives(t *testing.T) {
 }
 
 func TestVolumeLiveAddAppliesPVCAndRecreate(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()

@@ -14,6 +14,7 @@ func seedWebAPI(t *testing.T, srv *httptestServer, admin string) {
 }
 
 func TestEnvRoundTrip(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	seedWebAPI(t, srv, admin)
@@ -47,6 +48,7 @@ func TestEnvRoundTrip(t *testing.T) {
 // export stripped), and malformed/empty payloads are rejected with 400
 // before anything is written.
 func TestBulkSetEnv(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	seedWebAPI(t, srv, admin)
@@ -82,6 +84,7 @@ func TestBulkSetEnv(t *testing.T) {
 }
 
 func TestOverrideAndRaw(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	seedWebAPI(t, srv, admin)
@@ -116,6 +119,7 @@ func TestOverrideAndRaw(t *testing.T) {
 // contract and bind to $PORT. renderApp must inject PORT=<app.port> so the
 // container listens where the Service targets — and a user-set PORT wins.
 func TestRenderInjectsPortEnv(t *testing.T) {
+	t.Parallel()
 	s, srv, st, _ := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()

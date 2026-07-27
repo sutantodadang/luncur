@@ -14,6 +14,7 @@ import (
 // metrics_token is set; wrong/missing bearer token 401s; the right token
 // yields Prometheus exposition text with the app metrics.
 func TestPrometheusEndpoint(t *testing.T) {
+	t.Parallel()
 	srv, _ := testServer(t) // no metrics_token set -> 404
 
 	resp, err := http.Get(srv.URL + "/metrics/prometheus")

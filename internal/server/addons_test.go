@@ -50,6 +50,7 @@ func addonTestServer(t *testing.T) (*server, *httptest.Server, *store.Store, *[]
 }
 
 func TestAddonCreateAttachInject(t *testing.T) {
+	t.Parallel()
 	s, srv, st, actions := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -155,6 +156,7 @@ func TestAddonCreateAttachInject(t *testing.T) {
 }
 
 func TestAddonURL(t *testing.T) {
+	t.Parallel()
 	_, srv, st, _ := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -188,6 +190,7 @@ func TestAddonURL(t *testing.T) {
 }
 
 func TestAddonRemoveGuard(t *testing.T) {
+	t.Parallel()
 	_, srv, st, actions := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -224,6 +227,7 @@ func TestAddonRemoveGuard(t *testing.T) {
 }
 
 func TestAddonSecondSameTypeSuffix(t *testing.T) {
+	t.Parallel()
 	s, srv, st, _ := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -268,6 +272,7 @@ func TestAddonSecondSameTypeSuffix(t *testing.T) {
 }
 
 func TestAddonUpgrade(t *testing.T) {
+	t.Parallel()
 	_, srv, st, actions := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -330,6 +335,7 @@ func TestAddonUpgrade(t *testing.T) {
 }
 
 func TestMlflowAddonURL(t *testing.T) {
+	t.Parallel()
 	_, srv, st, _ := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -356,6 +362,7 @@ func TestMlflowAddonURL(t *testing.T) {
 }
 
 func TestMlflowInjectsTrackingURI(t *testing.T) {
+	t.Parallel()
 	s, srv, st, _ := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()

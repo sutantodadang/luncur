@@ -15,6 +15,7 @@ import (
 // a.Port on the ClusterIP hangs — kube-proxy drops non-service ports.
 // Field-found regression: browser spun forever, then 502.
 func TestFwdProxyTargetUsesServicePort80(t *testing.T) {
+	t.Parallel()
 	u := fwdProxyTarget(
 		store.Project{Namespace: "luncur-waku"},
 		store.App{Name: "waku-simpaniz", Port: 8001},
@@ -25,6 +26,7 @@ func TestFwdProxyTargetUsesServicePort80(t *testing.T) {
 }
 
 func TestForwardHostParsing(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st, ExternalIP: "1.2.3.4"})
 
@@ -72,6 +74,7 @@ func TestForwardHostParsing(t *testing.T) {
 }
 
 func TestForwardOpenRedirect(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st, ExternalIP: "1.2.3.4"}) // no kube: apply is skipped
 	ts := httptest.NewServer(srv.handler())
@@ -119,6 +122,7 @@ func TestForwardOpenRedirect(t *testing.T) {
 }
 
 func TestForwardOpenRejectsDoubleDash(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st, ExternalIP: "1.2.3.4"})
 	ts := httptest.NewServer(srv.handler())
@@ -154,6 +158,7 @@ func TestForwardOpenRejectsDoubleDash(t *testing.T) {
 }
 
 func TestForwardAuthSetsCookieAndProxies(t *testing.T) {
+	t.Parallel()
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("hello from app"))
 	}))
@@ -289,6 +294,7 @@ func TestForwardAuthSetsCookieAndProxies(t *testing.T) {
 }
 
 func TestDestroyAppDeletesForwardIngress(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"waku"}`).Body.Close()

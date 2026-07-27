@@ -12,6 +12,7 @@ import (
 // live app: add (with DNS warning), list, raw-manifest pickup, delete, and
 // a rejected malformed hostname.
 func TestDomainCRUDAndRender(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -90,6 +91,7 @@ func TestDomainCRUDAndRender(t *testing.T) {
 }
 
 func TestCertSecretName(t *testing.T) {
+	t.Parallel()
 	got := certSecretName("web", "www.example.com")
 	if !strings.HasPrefix(got, "tls-web-") || len(got) != len("tls-web-")+8 {
 		t.Fatalf("secret name = %q", got)
@@ -102,6 +104,7 @@ func TestCertSecretName(t *testing.T) {
 // TestRenderAppIncludesResources checks renderApp carries an app's stored
 // cpu_milli/memory_mb through to the rendered Deployment's container.
 func TestRenderAppIncludesResources(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	s := newServer(Deps{Store: st, ExternalIP: "1.2.3.4"})
 
@@ -153,6 +156,7 @@ func TestRenderAppIncludesResources(t *testing.T) {
 // setting at a time, and inspects the rendered Ingress JSON for the
 // annotations/TLS block each provider is supposed to produce.
 func TestRenderProviderAnnotations(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	s := newServer(Deps{Store: st, ExternalIP: "1.2.3.4"})
 
@@ -242,6 +246,7 @@ func TestRenderProviderAnnotations(t *testing.T) {
 // with a provider set the row is created and the A-record warning is
 // skipped (a wildcard can't be resolved directly).
 func TestWildcardDomainNeedsDNSProvider(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -291,6 +296,7 @@ func TestWildcardDomainNeedsDNSProvider(t *testing.T) {
 // attach a custom domain to — a custom-domain Ingress would defeat the whole
 // point of "cluster-only, no public URL" — so domain add is rejected.
 func TestAddDomainRejectedForInternalApp(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -312,6 +318,7 @@ func TestAddDomainRejectedForInternalApp(t *testing.T) {
 // "TLS issuance will fail" — validation runs over DNS-01, which does not
 // care where the A record points.
 func TestAddDomainDNS01Warning(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
