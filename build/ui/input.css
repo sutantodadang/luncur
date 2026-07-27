@@ -268,28 +268,6 @@
     background-position: -1px -1px;
   }
 
-  /* Toasts (DESIGN.md §Motion) — bottom-right stack, panel-raised bg, 2px
-     left border. Green for success, fail red for error; never orange
-     (accent discipline). One line, no titles, no icons. */
-  .toast-wrap {
-    @apply fixed bottom-4 right-4 z-50 flex flex-col gap-2;
-  }
-  .toast {
-    @apply rounded-[5px] border border-line bg-panel2 px-4 py-2.5 text-[13px] text-ink shadow-lg;
-    border-left-width: 2px;
-    animation: toast-in 120ms ease-out;
-  }
-  .toast-ok {
-    border-left-color: var(--c-phosphor);
-  }
-  .toast-err {
-    border-left-color: var(--c-fail);
-  }
-  .toast.fade-out {
-    opacity: 0;
-    transition: opacity 120ms ease-in;
-  }
-
   /* Global request bar (DESIGN.md §Motion) — 2px, signal orange,
      indeterminate sweep, boosted navigations only (see base.html's
      htmx:beforeRequest handler — it checks e.detail.boosted so 15s
@@ -337,17 +315,6 @@
   .htmx-settling:not([hx-trigger*="every"]) {
     opacity: 1;
     transition: opacity 120ms ease-out;
-  }
-}
-
-@keyframes toast-in {
-  from {
-    transform: translateY(8px);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
   }
 }
 

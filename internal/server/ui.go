@@ -33,6 +33,12 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/register", s.handleUIRegister)
 	mux.HandleFunc("GET /ui/users", s.uiPage(s.handleUIUsers))
 	mux.HandleFunc("GET /ui/audit", s.uiPage(s.handleUIAudit))
+	// Event ticker poll target and Session Transcript fragment (DESIGN.md
+	// "Event ticker" / "Session Transcript") — both read-only, both scoped
+	// per-user inside their handlers (see transcript.go), so no admin gate
+	// belongs here.
+	mux.HandleFunc("GET /ui/ticker", s.uiPage(s.handleUITicker))
+	mux.HandleFunc("GET /ui/transcript", s.uiPage(s.handleUITranscript))
 	mux.HandleFunc("POST /ui/users/invite", s.uiPage(s.handleUIInviteCreate))
 	mux.HandleFunc("POST /ui/users/invite/revoke", s.uiPage(s.handleUIInviteRevoke))
 	mux.HandleFunc("POST /ui/users/delete", s.uiPage(s.handleUIUserDelete))

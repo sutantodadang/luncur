@@ -68,6 +68,51 @@
 {{else if eq .Tab "jobs"}}{{template "app_jobs" .}}
 {{end}}
 </div>
+
+{{/* Session Transcript (DESIGN.md "Session Transcript"): CLI-echo inverted
+     — this session's own actions, rendered as the CLI commands that did
+     them, copyable as a script. Lives outside #tab-content (app_shell only
+     re-renders on a full page load, never on a tab switch), so opening it
+     once keeps it open across tab switches, and it costs nothing until
+     opened (hx-trigger="toggle once from:closest details" — see fallback
+     note below if a browser's htmx build doesn't fire "toggle" on
+     <details>). */}}
+<details class="mt-8 rounded-md border border-line bg-panel">
+  <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2.5 font-mono text-[11px] font-semibold uppercase tracking-[.14em] text-mut hover:text-inkhi">
+    <span>session transcript &mdash; actions this session as CLI</span>
+    <button type="button" id="transcript-copy" class="btn-ghost px-2 py-1 text-[11px] normal-case tracking-normal" onclick="event.preventDefault(); event.stopPropagation(); luncurCopyTranscript(this);">copy</button>
+  </summary>
+  <div id="transcript-body" class="border-t border-line p-4" hx-get="/ui/transcript?project={{.Project.Name}}&app={{.App.Name}}" hx-trigger="toggle once from:closest details" hx-swap="innerHTML">
+    <p class="text-xs text-mut">loading&hellip;</p>
+  </div>
+</details>
+<script>
+// Global on purpose: re-declaring this on every app_shell render (full page
+// loads and hx-boost swaps re-run inline <script> tags) is harmless — it's
+// a plain function assignment, not a listener registration, so there's
+// nothing to double-fire.
+function luncurCopyTranscript(btn){
+  var pre = document.getElementById("transcript-pre");
+  if(!pre || !navigator.clipboard) return;
+  navigator.clipboard.writeText(pre.textContent).then(function(){
+    var orig = btn.textContent;
+    btn.textContent = "copied";
+    setTimeout(function(){ btn.textContent = orig; }, 2000);
+  });
+}
+</script>
+{{end}}
+
+{{/* transcript-body is handleUITranscript's fragment (DESIGN.md "Session
+     Transcript"): one command per line, "# HH:MM" comments interleaved so
+     the whole <pre> stays a paste-able shell script. .term reuses the
+     terminal-pane phosphor-on-dark styling; values the audit log doesn't
+     record (form fields) show up as <placeholder> tokens in .Command
+     already, so the footnote just explains why. */}}
+{{define "transcript-body"}}{{if .Lines}}<pre id="transcript-pre" class="term overflow-x-auto whitespace-pre">{{range .Lines}}# {{.Ts}}
+{{.Command}}
+{{end}}</pre>{{else}}<p id="transcript-pre" class="text-xs text-mut">no mapped actions in the last 4 hours.</p>{{end}}
+<p class="mt-2 text-[11px] text-mut">values elided &mdash; the audit log records which action ran, not the form values it carried (counts, keys, hostnames, ...); placeholders like &lt;n&gt; mark what a real run would fill in.</p>
 {{end}}
 
 {{/* deployFromGitButton is the primary "kick a build" action for a
