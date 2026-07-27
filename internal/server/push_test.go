@@ -66,6 +66,7 @@ func pushTestPubKey(t *testing.T) string {
 }
 
 func TestPushBackendHappyPath(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := buildServer(t)
 
 	p, err := st.CreateProject("web")
@@ -157,6 +158,7 @@ func TestPushBackendHappyPath(t *testing.T) {
 }
 
 func TestPushBackendBuildFailure(t *testing.T) {
+	t.Parallel()
 	srv, st := buildFailingServer(t)
 
 	p, err := st.CreateProject("web")

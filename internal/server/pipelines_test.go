@@ -61,6 +61,7 @@ func containsID(ids []string, id string) bool {
 // --- decidePipelineRun pure-core matrix ------------------------------------
 
 func TestDecidePipelineRunParallelRootsBothLaunch(t *testing.T) {
+	t.Parallel()
 	views := []pipeStepView{
 		stepView("a", "app", "pending", nil),
 		stepView("b", "app", "pending", nil),
@@ -78,6 +79,7 @@ func TestDecidePipelineRunParallelRootsBothLaunch(t *testing.T) {
 }
 
 func TestDecidePipelineRunDiamondJoinWaitsForBoth(t *testing.T) {
+	t.Parallel()
 	views := []pipeStepView{
 		stepView("a", "app", "done", nil),
 		stepView("b", "app", "pending", []string{"a"}),
@@ -94,6 +96,7 @@ func TestDecidePipelineRunDiamondJoinWaitsForBoth(t *testing.T) {
 }
 
 func TestDecidePipelineRunDiamondJoinLaunchesOnceBothDone(t *testing.T) {
+	t.Parallel()
 	views := []pipeStepView{
 		stepView("a", "app", "done", nil),
 		stepView("b", "app", "done", []string{"a"}),
@@ -107,6 +110,7 @@ func TestDecidePipelineRunDiamondJoinLaunchesOnceBothDone(t *testing.T) {
 }
 
 func TestDecidePipelineRunFailedStepSkipsDownstreamKeepsSibling(t *testing.T) {
+	t.Parallel()
 	views := []pipeStepView{
 		stepView("a", "app", "failed", nil),
 		stepView("b", "app", "pending", []string{"a"}), // downstream of failed a
@@ -122,6 +126,7 @@ func TestDecidePipelineRunFailedStepSkipsDownstreamKeepsSibling(t *testing.T) {
 }
 
 func TestDecidePipelineRunRunningAppRetryUnderBudgetLaunches(t *testing.T) {
+	t.Parallel()
 	views := []pipeStepView{
 		{
 			Row:  store.PipelineRunStep{ID: "r", Name: "r", State: "running", Attempt: 1},
@@ -136,6 +141,7 @@ func TestDecidePipelineRunRunningAppRetryUnderBudgetLaunches(t *testing.T) {
 }
 
 func TestDecidePipelineRunRunningAppRetryExhaustedDoesNotLaunch(t *testing.T) {
+	t.Parallel()
 	views := []pipeStepView{
 		{
 			Row:  store.PipelineRunStep{ID: "r", Name: "r", State: "running", Attempt: 2},
@@ -153,6 +159,7 @@ func TestDecidePipelineRunRunningAppRetryExhaustedDoesNotLaunch(t *testing.T) {
 }
 
 func TestDecidePipelineRunAllDoneFinishesDone(t *testing.T) {
+	t.Parallel()
 	views := []pipeStepView{
 		stepView("a", "app", "done", nil),
 		stepView("b", "app", "done", []string{"a"}),
@@ -164,6 +171,7 @@ func TestDecidePipelineRunAllDoneFinishesDone(t *testing.T) {
 }
 
 func TestDecidePipelineRunFailedAndSkippedDrainedFinishesFailed(t *testing.T) {
+	t.Parallel()
 	views := []pipeStepView{
 		stepView("a", "app", "failed", nil),
 		stepView("b", "app", "skipped", []string{"a"}),
@@ -179,6 +187,7 @@ func TestDecidePipelineRunFailedAndSkippedDrainedFinishesFailed(t *testing.T) {
 // nothing left to launch — Finish only fires once a later tick observes b
 // already skipped (see TestDecidePipelineRunFailedAndSkippedDrainedFinishesFailed).
 func TestDecidePipelineRunFinishEmptyWhileSkipPending(t *testing.T) {
+	t.Parallel()
 	views := []pipeStepView{
 		stepView("a", "app", "failed", nil),
 		stepView("b", "app", "pending", []string{"a"}),
@@ -195,6 +204,7 @@ func TestDecidePipelineRunFinishEmptyWhileSkipPending(t *testing.T) {
 // --- pipelineStepEnv (pure) --------------------------------------------
 
 func TestPipelineStepEnvStepEnvOverlaysArtifactEnv(t *testing.T) {
+	t.Parallel()
 	pl := store.Pipeline{Name: "pl"}
 	st := pipeline.Step{
 		Name: "train", Kind: "app", Outputs: []string{"model"},
@@ -336,6 +346,7 @@ func pipelineFindStep(t *testing.T, st *store.Store, runID, name string) store.P
 // --- loop-level tests (store + fakes) ------------------------------------
 
 func TestPipelineTickLaunchesRootAppStep(t *testing.T) {
+	t.Parallel()
 	dyn := recordingDyn(t)
 	s := pipelineTestServer(t, dyn, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
@@ -354,6 +365,7 @@ func TestPipelineTickLaunchesRootAppStep(t *testing.T) {
 }
 
 func TestPipelineTickHarvestDoneFinishesRun(t *testing.T) {
+	t.Parallel()
 	s := pipelineTestServer(t, nil, nil) // no launch needed: only step is already running
 	p := pipelineSeedProject(t, s.st, "ml")
 	a := pipelineSeedApp(t, s.st, p.ID, "train", "job", "trainer:1")
@@ -389,6 +401,7 @@ func TestPipelineTickHarvestDoneFinishesRun(t *testing.T) {
 }
 
 func TestPipelineTickAppRetryRelaunchesUnderRetryLimit(t *testing.T) {
+	t.Parallel()
 	dyn := recordingDyn(t)
 	s := pipelineTestServer(t, dyn, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
@@ -424,6 +437,7 @@ func TestPipelineTickAppRetryRelaunchesUnderRetryLimit(t *testing.T) {
 }
 
 func TestPipelineTickAppRetryExhaustedFailsStep(t *testing.T) {
+	t.Parallel()
 	s := pipelineTestServer(t, nil, nil) // exhausted -> FinishStep directly, no relaunch, no kube needed
 	p := pipelineSeedProject(t, s.st, "ml")
 	a := pipelineSeedApp(t, s.st, p.ID, "train", "job", "trainer:1")
@@ -460,6 +474,7 @@ func TestPipelineTickAppRetryExhaustedFailsStep(t *testing.T) {
 }
 
 func TestPipelineTickFailFastSkipsDownstreamKeepsSibling(t *testing.T) {
+	t.Parallel()
 	s := pipelineTestServer(t, nil, nil) // both siblings unreachable/skipped -> no kube needed
 	p := pipelineSeedProject(t, s.st, "ml")
 	pipelineSeedApp(t, s.st, p.ID, "train", "job", "trainer:1")
@@ -503,6 +518,7 @@ func TestPipelineTickFailFastSkipsDownstreamKeepsSibling(t *testing.T) {
 }
 
 func TestPipelineTickDeployActionRedeploysLiveImage(t *testing.T) {
+	t.Parallel()
 	dyn := recordingDyn(t)
 	s := pipelineTestServer(t, dyn, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
@@ -526,6 +542,7 @@ func TestPipelineTickDeployActionRedeploysLiveImage(t *testing.T) {
 }
 
 func TestPipelineTickScaleActionSetsReplicas(t *testing.T) {
+	t.Parallel()
 	s := pipelineTestServer(t, nil, nil) // app has no live deployment -> scaleApp never touches kube
 	p := pipelineSeedProject(t, s.st, "ml")
 	a := pipelineSeedApp(t, s.st, p.ID, "web1", "web", "")
@@ -550,6 +567,7 @@ func TestPipelineTickScaleActionSetsReplicas(t *testing.T) {
 }
 
 func TestPipelineTickNotifyActionFiresAndFinishes(t *testing.T) {
+	t.Parallel()
 	s := pipelineTestServer(t, nil, nil)
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(captureHandler(ch))
@@ -576,6 +594,7 @@ func TestPipelineTickNotifyActionFiresAndFinishes(t *testing.T) {
 }
 
 func TestStopPipelineRunKillsRunningAndSkipsPending(t *testing.T) {
+	t.Parallel()
 	cs := k8sfake.NewSimpleClientset()
 	dyn := recordingDyn(t)
 	s := pipelineTestServer(t, dyn, cs)
@@ -630,6 +649,7 @@ func TestStopPipelineRunKillsRunningAndSkipsPending(t *testing.T) {
 }
 
 func TestPipelineReconcileMarksOrphanedAppStepFailed(t *testing.T) {
+	t.Parallel()
 	scheme := runtime.NewScheme()
 	dyn := dynamicfake.NewSimpleDynamicClient(scheme) // no Job objects seeded -> JobExists is false
 	s := pipelineTestServer(t, dyn, nil)
@@ -664,6 +684,7 @@ func TestPipelineReconcileMarksOrphanedAppStepFailed(t *testing.T) {
 }
 
 func TestPipelineReconcileMarksOrphanedImageStepFailed(t *testing.T) {
+	t.Parallel()
 	scheme := runtime.NewScheme()
 	dyn := dynamicfake.NewSimpleDynamicClient(scheme) // no Job objects seeded -> JobExists is false
 	s := pipelineTestServer(t, dyn, nil)
@@ -704,6 +725,7 @@ func pipelineSeedCronPipeline(t *testing.T, st *store.Store, projectID int64, na
 }
 
 func TestFirePipelineCronsDueMinuteFiresTriggerCron(t *testing.T) {
+	t.Parallel()
 	s := pipelineTestServer(t, nil, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
 	pl := pipelineSeedCronPipeline(t, s.st, p.ID, "nightly", "0 3 * * *")
@@ -740,6 +762,7 @@ func TestFirePipelineCronsDueMinuteFiresTriggerCron(t *testing.T) {
 }
 
 func TestFirePipelineCronsSameMinuteNoDoubleFire(t *testing.T) {
+	t.Parallel()
 	s := pipelineTestServer(t, nil, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
 	pl := pipelineSeedCronPipeline(t, s.st, p.ID, "everymin", "* * * * *")
@@ -785,6 +808,7 @@ func TestFirePipelineCronsSameMinuteNoDoubleFire(t *testing.T) {
 }
 
 func TestFirePipelineCronsRunningPreviousRunSkips(t *testing.T) {
+	t.Parallel()
 	s := pipelineTestServer(t, nil, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
 	a := pipelineSeedApp(t, s.st, p.ID, "train", "job", "trainer:1")
@@ -818,6 +842,7 @@ func TestFirePipelineCronsRunningPreviousRunSkips(t *testing.T) {
 }
 
 func TestFirePipelineCronsEmptyCronNeverFires(t *testing.T) {
+	t.Parallel()
 	s := pipelineTestServer(t, nil, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
 	pl := pipelineSeedCronPipeline(t, s.st, p.ID, "manual-only", "")
@@ -838,6 +863,7 @@ func TestFirePipelineCronsEmptyCronNeverFires(t *testing.T) {
 // persistence: bad cron -> 400 bad_request naming the field, good cron
 // persists (and comes back in the detail JSON), empty cron clears.
 func TestPipelineCronValidationAPI(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -908,6 +934,7 @@ func TestPipelineCronValidationAPI(t *testing.T) {
 // launching its root step instantly, deleting a busy pipeline, idempotent
 // stop, and topo-ordered step output.
 func TestPipelinesAPI(t *testing.T) {
+	t.Parallel()
 	// kubeServerWithPods (not kubeServer): stopping the run below calls
 	// kube.DeleteJob, which needs the typed clientset half wired (nil cs
 	// panics), unlike a plain create/list flow.
@@ -1052,6 +1079,7 @@ func TestPipelinesAPI(t *testing.T) {
 // step applied+marked running, then immediately flipped to failed by that
 // same first tick's missing-workflow handling.
 func TestPipelineRunEngineArgoHTTP(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -1102,6 +1130,7 @@ func TestPipelineRunEngineArgoHTTP(t *testing.T) {
 // TestPipelinesUnknownProjectNotFound covers the existing project-scope
 // pattern (requireProject) for a project that doesn't exist.
 func TestPipelinesUnknownProjectNotFound(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -1114,6 +1143,7 @@ func TestPipelinesUnknownProjectNotFound(t *testing.T) {
 // TestSettingPipelineEngineValidation covers settableKeys["pipeline_engine"]:
 // native/argo accepted, anything else rejected.
 func TestSettingPipelineEngineValidation(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -1204,6 +1234,7 @@ func pipelineWebhookCreate(t *testing.T, srv *httptestServer, admin, project, na
 // in the DB never equal the plaintext, and a second generate rotates the
 // secret — the old signature stops verifying.
 func TestPipelineWebhookSecretGenerateSealedAndRotate(t *testing.T) {
+	t.Parallel()
 	srv, st := pipelineWebhookHTTPTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -1240,6 +1271,7 @@ func TestPipelineWebhookSecretGenerateSealedAndRotate(t *testing.T) {
 // answers with the byte-identical 401 body (no existence oracle), and that a
 // correctly signed request fires a run recorded with trigger "webhook".
 func TestPipelineWebhookTriggerAuthIdenticalAndFires(t *testing.T) {
+	t.Parallel()
 	srv, st := pipelineWebhookHTTPTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -1301,6 +1333,7 @@ func TestPipelineWebhookTriggerAuthIdenticalAndFires(t *testing.T) {
 // TestPipelineWebhookSecretDeleteClearsHook covers DELETE .../webhook-secret:
 // the hook stops verifying once cleared.
 func TestPipelineWebhookSecretDeleteClearsHook(t *testing.T) {
+	t.Parallel()
 	srv, st := pipelineWebhookHTTPTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -1328,6 +1361,7 @@ func TestPipelineWebhookSecretDeleteClearsHook(t *testing.T) {
 // needed to make a step "running"), then a webhook fire must still create a
 // brand new run.
 func TestPipelineWebhookTriggerNotForbidGated(t *testing.T) {
+	t.Parallel()
 	srv, st := pipelineWebhookHTTPTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()

@@ -22,6 +22,7 @@ import (
 )
 
 func TestRenameProjectAPI(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	member := seedUserToken(t, st, "member@b.co", "member")
@@ -63,6 +64,7 @@ func TestRenameProjectAPI(t *testing.T) {
 }
 
 func TestDeleteProjectAPI(t *testing.T) {
+	t.Parallel()
 	// Non-ejected app with no kube configured: 503.
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
@@ -119,6 +121,7 @@ func TestDeleteProjectAPI(t *testing.T) {
 // environment must have both the production and the develop namespaces
 // deleted, and the develop env's app/addon rows must not be orphaned.
 func TestDeleteProjectTearsDownAllEnvironmentNamespaces(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	cs := k8sfake.NewSimpleClientset()
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
@@ -200,6 +203,7 @@ func TestDeleteProjectTearsDownAllEnvironmentNamespaces(t *testing.T) {
 }
 
 func TestRemoveMemberAPI(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	member := seedUserToken(t, st, "member@b.co", "member")
@@ -237,6 +241,7 @@ func TestRemoveMemberAPI(t *testing.T) {
 // POST (303 to the renamed project's page), then deletes it via POST (303
 // to the project list), and the project is gone from the store afterward.
 func TestUIProjectRenameDelete(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube; project has no apps/addons
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()

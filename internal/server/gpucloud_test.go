@@ -62,6 +62,7 @@ func setSetting(t *testing.T, s *server, key, value string) {
 // TestSetGPUKeyVastaiBackCompat ensures a body with just api_key (no
 // provider field) still stores the vast.ai key, matching pre-Nebius clients.
 func TestSetGPUKeyVastaiBackCompat(t *testing.T) {
+	t.Parallel()
 	s, srv := gpuTestServer(t)
 	admin := seedUserToken(t, s.st, "root@b.co", "admin")
 
@@ -78,6 +79,7 @@ func TestSetGPUKeyVastaiBackCompat(t *testing.T) {
 // TestSetGPUKeyNebius covers both the happy path (all five fields) and the
 // missing-field 400.
 func TestSetGPUKeyNebius(t *testing.T) {
+	t.Parallel()
 	s, srv := gpuTestServer(t)
 	admin := seedUserToken(t, s.st, "root@b.co", "admin")
 
@@ -147,6 +149,7 @@ func nebiusFakeServer(t *testing.T, instanceID string) *httptest.Server {
 // the endpoint test seam at a fake Nebius server, rent, and confirm the row
 // carries the string external ref.
 func TestRentGPUNebiusEndToEnd(t *testing.T) {
+	t.Parallel()
 	s, srv := gpuTestServer(t)
 	admin := seedUserToken(t, s.st, "root@b.co", "admin")
 	fake := nebiusFakeServer(t, "computeinstance-e2e")
@@ -190,6 +193,7 @@ func TestRentGPUNebiusEndToEnd(t *testing.T) {
 // TestRentGPURequiresPlatformPresetForNebius checks the nebius-specific
 // request validation (offer_id is a vast-only concept).
 func TestRentGPURequiresPlatformPresetForNebius(t *testing.T) {
+	t.Parallel()
 	s, srv := gpuTestServer(t)
 	admin := seedUserToken(t, s.st, "root@b.co", "admin")
 
@@ -203,6 +207,7 @@ func TestRentGPURequiresPlatformPresetForNebius(t *testing.T) {
 // TestRentGPUUnknownProvider confirms an unrecognized provider name surfaces
 // as a clean provider error rather than a panic or 500.
 func TestRentGPUUnknownProvider(t *testing.T) {
+	t.Parallel()
 	s, srv := gpuTestServer(t)
 	admin := seedUserToken(t, s.st, "root@b.co", "admin")
 
@@ -241,6 +246,7 @@ func (p *stubProvider) Destroy(ctx context.Context, ref string) error         { 
 // TestRentWithProviderAmbiguous confirms an ErrRentAmbiguous outcome still
 // records a row (status "renting") instead of losing the contract.
 func TestRentWithProviderAmbiguous(t *testing.T) {
+	t.Parallel()
 	s, _ := gpuTestServer(t)
 	prov := &stubProvider{rentRef: "", rentErr: gpucloud.ErrRentAmbiguous}
 
@@ -271,6 +277,7 @@ func TestRentWithProviderAmbiguous(t *testing.T) {
 // gpucloud.TestNebiusRent_AmbiguousOnPollTimeout for the provider-level
 // timeout behavior).
 func TestHandleRentGPUAmbiguousResponseShape(t *testing.T) {
+	t.Parallel()
 	s, _ := gpuTestServer(t)
 	prov := &stubProvider{rentRef: "", rentErr: gpucloud.ErrRentAmbiguous}
 	g, err := s.rentWithProvider(context.Background(), prov, "nebius",
@@ -288,6 +295,7 @@ func TestHandleRentGPUAmbiguousResponseShape(t *testing.T) {
 // (fakes) plus a stored row for each, and checks GET /v1/gpu/instances
 // merges live provider_status from both.
 func TestListGPUInstancesMergesProviders(t *testing.T) {
+	t.Parallel()
 	s, srv := gpuTestServer(t)
 	admin := seedUserToken(t, s.st, "root@b.co", "admin")
 
@@ -354,6 +362,7 @@ func TestListGPUInstancesMergesProviders(t *testing.T) {
 // TestDecideIdleDestroysBusyNeverDestroyed covers a busy instance: it's
 // never a destroy candidate and carries no idle clock into next.
 func TestDecideIdleDestroysBusyNeverDestroyed(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	instances := []store.GPUInstance{{Label: "gpu-1", Status: "active"}}
 	busy := map[string]bool{"gpu-1": true}
@@ -370,6 +379,7 @@ func TestDecideIdleDestroysBusyNeverDestroyed(t *testing.T) {
 // the first idle tick sets the clock without destroying, and a later tick
 // once the window has elapsed destroys it.
 func TestDecideIdleDestroysIdleTicksThenDestroys(t *testing.T) {
+	t.Parallel()
 	instances := []store.GPUInstance{{Label: "gpu-1", Status: "active"}}
 	busy := map[string]bool{}
 	window := 5 * time.Minute
@@ -398,6 +408,7 @@ func TestDecideIdleDestroysIdleTicksThenDestroys(t *testing.T) {
 // unscheduled Pending GPU pod): destroys freeze entirely this tick, and
 // idleSince is returned unchanged even though an instance is long idle.
 func TestDecideIdleDestroysPendingUnscheduledFreezes(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	instances := []store.GPUInstance{{Label: "gpu-1", Status: "active"}}
 	busy := map[string]bool{"": true}
@@ -416,6 +427,7 @@ func TestDecideIdleDestroysPendingUnscheduledFreezes(t *testing.T) {
 // the window: only the long-idle one is destroyed, the busy one is cleared
 // from next, and the short-idle one carries its clock forward.
 func TestDecideIdleDestroysMixedFleet(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	window := 5 * time.Minute
 	instances := []store.GPUInstance{
@@ -447,6 +459,7 @@ func TestDecideIdleDestroysMixedFleet(t *testing.T) {
 // TestDecideIdleDestroysWindowBoundary confirms now.Sub(since) == window
 // counts as destroy (>=, not >).
 func TestDecideIdleDestroysWindowBoundary(t *testing.T) {
+	t.Parallel()
 	window := 5 * time.Minute
 	now := time.Now()
 	instances := []store.GPUInstance{{Label: "gpu-1", Status: "active"}}

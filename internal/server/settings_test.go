@@ -11,6 +11,7 @@ import (
 // TestSettingsAdminRoundTrip exercises the install-settings API as an admin:
 // unset key 404s, PUT persists, GET reads it back.
 func TestSettingsAdminRoundTrip(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -44,6 +45,7 @@ func TestSettingsAdminRoundTrip(t *testing.T) {
 }
 
 func TestSettingsMemberForbidden(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	member := seedUserToken(t, st, "pleb@b.co", "member")
 
@@ -63,6 +65,7 @@ func TestSettingsMemberForbidden(t *testing.T) {
 // TestSettingsTrainGangTimeout covers train_gang_timeout_minutes' entry in
 // settableKeys: settable via the generic settings API, integer >= 0 only.
 func TestSettingsTrainGangTimeout(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -98,6 +101,7 @@ func TestSettingsTrainGangTimeout(t *testing.T) {
 // settableKeys: settable via the generic settings API, integer >= 1 only —
 // reapPreviews (preview.go) reads it back via previewTTLDays.
 func TestSettingsPreviewTTLDays(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -130,6 +134,7 @@ func TestSettingsPreviewTTLDays(t *testing.T) {
 }
 
 func TestSettingsUnknownKey(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -147,6 +152,7 @@ func TestSettingsUnknownKey(t *testing.T) {
 }
 
 func TestSettingsInvalidCertProviderValue(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -158,6 +164,7 @@ func TestSettingsInvalidCertProviderValue(t *testing.T) {
 }
 
 func TestSettingsBackupSchedule(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -175,6 +182,7 @@ func TestSettingsBackupSchedule(t *testing.T) {
 }
 
 func TestSettingsBackupKeep(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -195,6 +203,7 @@ func TestSettingsBackupKeep(t *testing.T) {
 // no sealer configured -> 503; with a sealer, PUT persists a sealed value
 // (never the plaintext) and GET echoes "(set)" instead of the secret.
 func TestSettingsRegistryKeep(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -212,6 +221,7 @@ func TestSettingsRegistryKeep(t *testing.T) {
 }
 
 func TestSettingsBuildTimeoutMinutes(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -231,6 +241,7 @@ func TestSettingsBuildTimeoutMinutes(t *testing.T) {
 }
 
 func TestSettingsBuildCache(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -263,6 +274,7 @@ func TestSettingsBuildCache(t *testing.T) {
 }
 
 func TestSettingsBackupS3SecretKey(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -314,6 +326,7 @@ func TestSettingsBackupS3SecretKey(t *testing.T) {
 // TestSettingsSMTPKeys: plain smtp_* keys round-trip; smtp_port must be a
 // valid port number.
 func TestSettingsSMTPKeys(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -354,6 +367,7 @@ func TestSettingsSMTPKeys(t *testing.T) {
 // TestSettingsSMTPPassSealed mirrors TestSettingsBackupS3SecretKey for
 // smtp_pass: 503 without a sealer; sealed at rest; GET masks to "(set)".
 func TestSettingsSMTPPassSealed(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -403,6 +417,7 @@ func TestSettingsSMTPPassSealed(t *testing.T) {
 
 // TestSettingsDNSKeys: provider enum enforced; a sealed dns cred masks.
 func TestSettingsDNSKeys(t *testing.T) {
+	t.Parallel()
 	sealer, err := secret.New(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -476,6 +491,7 @@ func TestSettingsDNSKeys(t *testing.T) {
 // TestSettingsNotifyURLSealed mirrors TestSettingsSMTPPassSealed for
 // notify_url: 503 without a sealer; sealed at rest; GET masks to "(set)".
 func TestSettingsNotifyURLSealed(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -526,6 +542,7 @@ func TestSettingsNotifyURLSealed(t *testing.T) {
 // TestSettingsNotifyFormatAndEvents: notify_format enum enforced;
 // notify_events validated as a CSV subset of known event names.
 func TestSettingsNotifyFormatAndEvents(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 
@@ -587,6 +604,7 @@ func TestSettingsNotifyFormatAndEvents(t *testing.T) {
 // of addresses that each look like an email address; it is a plain
 // (non-sealed) setting, unlike notify_url.
 func TestSettingsNotifyEmailValidation(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 

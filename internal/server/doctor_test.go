@@ -65,6 +65,7 @@ func checkByName(t *testing.T, checks []doctorCheck, name string) doctorCheck {
 // no domains, and every setting configured. It asserts all 9 checks come
 // back "ok" in the fixed order the plan specifies, and server_version is set.
 func TestDoctorAllHealthy(t *testing.T) {
+	t.Parallel()
 	registryHost, _ := newFakeRegistryServer(t, map[string][]string{"proj/web": {"1"}})
 	st := newTestStore(t)
 	if err := st.SetSetting("smtp_host", "smtp.example.com"); err != nil {
@@ -110,6 +111,7 @@ func TestDoctorAllHealthy(t *testing.T) {
 // checks (each with the shared "not configured" phrasing) while every other
 // check still runs and reports.
 func TestDoctorNoKube(t *testing.T) {
+	t.Parallel()
 	registryHost, _ := newFakeRegistryServer(t, map[string][]string{})
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st, RegistryHost: registryHost})
@@ -134,6 +136,7 @@ func TestDoctorNoKube(t *testing.T) {
 // TestDoctorRegistryUnreachable points registryHost at a closed port so the
 // registry check fails while every other check is unaffected.
 func TestDoctorRegistryUnreachable(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st, RegistryHost: "127.0.0.1:1"})
 	admin := seedUserToken(t, st, "root@b.co", "admin")
@@ -154,6 +157,7 @@ func TestDoctorRegistryUnreachable(t *testing.T) {
 // TestDoctorStuckBuild seeds a deployment stuck in 'building' for over 30
 // minutes and asserts the builds check warns and names it.
 func TestDoctorStuckBuild(t *testing.T) {
+	t.Parallel()
 	registryHost, _ := newFakeRegistryServer(t, map[string][]string{})
 	st := newTestStore(t)
 	p, err := st.CreateProject("proj")
@@ -191,6 +195,7 @@ func TestDoctorStuckBuild(t *testing.T) {
 // hostname, but never leaks the cert_error text (which may contain internal
 // ACME/detail noise not meant for a one-shot health summary).
 func TestDoctorFailingCert(t *testing.T) {
+	t.Parallel()
 	registryHost, _ := newFakeRegistryServer(t, map[string][]string{})
 	st := newTestStore(t)
 	p, err := st.CreateProject("proj")
@@ -227,6 +232,7 @@ func TestDoctorFailingCert(t *testing.T) {
 // TestDoctorUnsetSettings asserts smtp/notifications/backups all warn when
 // their settings are unset.
 func TestDoctorUnsetSettings(t *testing.T) {
+	t.Parallel()
 	registryHost, _ := newFakeRegistryServer(t, map[string][]string{})
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st, RegistryHost: registryHost})
@@ -245,6 +251,7 @@ func TestDoctorUnsetSettings(t *testing.T) {
 
 // TestDoctorForbidsMember asserts a non-admin token gets 403.
 func TestDoctorForbidsMember(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st})
 	member := seedUserToken(t, st, "pleb@b.co", "member")

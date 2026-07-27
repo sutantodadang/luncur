@@ -6,6 +6,7 @@ import (
 )
 
 func TestProjectRoutes(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	member := seedUserToken(t, st, "m@b.co", "member")

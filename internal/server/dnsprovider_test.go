@@ -26,6 +26,7 @@ func dnsSettingsServer(t *testing.T) (*server, *httptest.Server) {
 }
 
 func TestDNSProviderFactory(t *testing.T) {
+	t.Parallel()
 	s, srv := dnsSettingsServer(t)
 	admin := seedUserToken(t, s.st, "root@b.co", "admin")
 

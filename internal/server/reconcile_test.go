@@ -41,6 +41,7 @@ func waitTerminal(t *testing.T, st *store.Store, id string) store.Deployment {
 // reconcileBuilding must mark the deployment failed synchronously, with no
 // goroutine to wait for.
 func TestReconcileBuildingNoJobMarksFailed(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	sealer, err := secret.New(make([]byte, 32))
 	if err != nil {
@@ -87,6 +88,7 @@ func TestReconcileBuildingNoJobMarksFailed(t *testing.T) {
 // re-attaches, waits, and finishes the deploy exactly like a fresh build
 // would.
 func TestReconcileBuildingJobStillRunningEndsLive(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := buildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -120,6 +122,7 @@ func TestReconcileBuildingJobStillRunningEndsLive(t *testing.T) {
 // 'deploying' — the build already succeeded and image_ref is set, so
 // reconcile only needs to re-run finishDeploy's apply-and-mark-live tail.
 func TestReconcileDeployingResumesLive(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := buildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -152,6 +155,7 @@ func TestReconcileDeployingResumesLive(t *testing.T) {
 // TestReconcileSkipsWithoutKube guards the s.kube == nil early return: no
 // panic, no deployment mutated.
 func TestReconcileSkipsWithoutKube(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st, DataDir: t.TempDir()})
 

@@ -9,6 +9,7 @@ import (
 )
 
 func TestGPUQuotaEndpoint(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p1"}`).Body.Close()
@@ -32,6 +33,7 @@ func TestGPUQuotaEndpoint(t *testing.T) {
 }
 
 func TestCreateAppOverGPUBudget(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p1"}`).Body.Close()
@@ -62,6 +64,7 @@ func TestCreateAppOverGPUBudget(t *testing.T) {
 // and the reloaded page then shows the control pre-filled with the new
 // value (mirrors TestUIScaleResourcesPersistAndPrefill's prefill check).
 func TestUIGPUQuota(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p1"}`).Body.Close()

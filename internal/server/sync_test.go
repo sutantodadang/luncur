@@ -10,6 +10,7 @@ import (
 // wildcard-only domain is skipped in favor of the sslip.io fallback, and no
 // domains at all falls back to the sslip.io host.
 func TestAppURL(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	s := newServer(Deps{Store: st, ExternalIP: "1.2.3.4"})
 
@@ -100,6 +101,7 @@ func TestAppURL(t *testing.T) {
 // keeps sslip as the primary host alongside the wildcard rule (appURL still
 // points at sslip in that case).
 func TestRenderAppIngressHosts(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	s := newServer(Deps{Store: st, ExternalIP: "1.2.3.4"})
 
@@ -182,6 +184,7 @@ func TestRenderAppIngressHosts(t *testing.T) {
 // environment gets an "-<env>" suffix on the app name so the same app name
 // can coexist across environments.
 func TestHostForEnv(t *testing.T) {
+	t.Parallel()
 	ip := "1.2.3.4"
 	if got := hostForEnv("api", "production", "production", ip); got != "api.1-2-3-4.sslip.io" {
 		t.Fatalf("default env host = %q", got)

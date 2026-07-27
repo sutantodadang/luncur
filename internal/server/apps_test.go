@@ -47,6 +47,7 @@ func kubeServer(t *testing.T) (*httptestServer, *store.Store, *[]string) {
 }
 
 func TestAppLifecycle(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -108,6 +109,7 @@ func TestAppLifecycle(t *testing.T) {
 }
 
 func TestCreateGitApp(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube needed for create-only
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -135,6 +137,7 @@ func TestCreateGitApp(t *testing.T) {
 // surfaced in the JSON response — mirroring how git_url isn't either), and
 // an invalid one is rejected with 400 before the app is created.
 func TestCreateAppWithBuildPath(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -171,6 +174,7 @@ func TestCreateAppWithBuildPath(t *testing.T) {
 // instead of "url" (its sslip.io hostname would resolve nowhere — no
 // Ingress was ever rendered for it).
 func TestCreateInternalWebApp(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -207,6 +211,7 @@ func TestCreateInternalWebApp(t *testing.T) {
 // means something for web apps (worker/cron already render no Service), so
 // it's rejected up front, before any app row is created.
 func TestCreateInternalWorkerRejected(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -237,6 +242,7 @@ func appID(t *testing.T, st *store.Store, project, app string) int64 {
 }
 
 func TestDeployWithoutKube503(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -249,6 +255,7 @@ func TestDeployWithoutKube503(t *testing.T) {
 }
 
 func TestScaleLiveAppWithoutKube503LeavesReplicasUnchanged(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -281,6 +288,7 @@ func TestScaleLiveAppWithoutKube503LeavesReplicasUnchanged(t *testing.T) {
 // a request touching only cpu leaves replicas untouched, and clearing via ""
 // resets to 0.
 func TestScaleResourcesPartialUpdate(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube; app never live, so no sync required
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -335,6 +343,7 @@ func TestScaleResourcesPartialUpdate(t *testing.T) {
 // 400 naming the offending field, and that an all-nil body ({}) is rejected
 // as "nothing to change" rather than silently scaling replicas to 0.
 func TestScaleInvalidQuantity400(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -380,6 +389,7 @@ func mustProjectID(t *testing.T, st *store.Store, project string) int64 {
 // web app with a CPU request enables autoscale, appJSON reports the
 // autoscale block, and disabling clears it (autoscale key absent).
 func TestAutoscaleHappyPathAndDisable(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube; app never live, so no sync required
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -423,6 +433,7 @@ func TestAutoscaleHappyPathAndDisable(t *testing.T) {
 // TestAutoscaleGuardNoResources checks enabling without a CPU request first
 // is rejected (the HPA needs a CPU request to compute utilization against).
 func TestAutoscaleGuardNoResources(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -443,6 +454,7 @@ func TestAutoscaleGuardNoResources(t *testing.T) {
 
 // TestAutoscaleGuardKindMismatch checks cron/model apps can't autoscale.
 func TestAutoscaleGuardKindMismatch(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -457,6 +469,7 @@ func TestAutoscaleGuardKindMismatch(t *testing.T) {
 
 // TestAutoscaleGuardGPU checks GPU apps can't autoscale.
 func TestAutoscaleGuardGPU(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -473,6 +486,7 @@ func TestAutoscaleGuardGPU(t *testing.T) {
 // TestAutoscaleGuardVolume checks apps with a volume can't autoscale (RWO
 // node-local storage, same constraint as >1 replica).
 func TestAutoscaleGuardVolume(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -491,6 +505,7 @@ func TestAutoscaleGuardVolume(t *testing.T) {
 // D-scale: once autoscale owns replica count, a plain replicas scale is
 // rejected until autoscale is disabled.
 func TestScaleReplicasRejectedWhileAutoscaleActive(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -512,6 +527,7 @@ func TestScaleReplicasRejectedWhileAutoscaleActive(t *testing.T) {
 }
 
 func TestMemberForbiddenOnForeignProject(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	member := seedUserToken(t, st, "m@b.co", "member")
@@ -531,6 +547,7 @@ func TestMemberForbiddenOnForeignProject(t *testing.T) {
 // deterministically still "building" by the time we assert, without racing
 // the async completion.
 func TestDeployMultipartBuildsAsync(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	scheme := runtime.NewScheme()
 	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
@@ -628,6 +645,7 @@ func TestDeployMultipartBuildsAsync(t *testing.T) {
 // whatever runBuild (or, here, the test directly) wrote to the deployment's
 // log path.
 func TestDeployLogsReturnsStoredBytes(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	dataDir := t.TempDir()
 	srv := newHTTPTest(t, Deps{Store: st, ExternalIP: "1.2.3.4", DataDir: dataDir})
@@ -705,6 +723,7 @@ func sealNotifyURL(t *testing.T, srv *server, url string) {
 // image deploy path and rollback (rollback.go's rollback calls the same
 // function), so this test doubles as coverage for both callers.
 func TestApplyImageDeployNotifies(t *testing.T) {
+	t.Parallel()
 	t.Run("success", func(t *testing.T) {
 		srv, st := applyImageDeployServer(t, false)
 		ch := make(chan []byte, 4)

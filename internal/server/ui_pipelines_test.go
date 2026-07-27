@@ -48,6 +48,7 @@ func seedPipelineProject(t *testing.T) (*httptestServer, *store.Store, *http.Cli
 // TestUIProjectPageShowsPipelinesCard: the project page lists the Pipelines
 // card with its create-form CLI-echo even with zero pipelines yet.
 func TestUIProjectPageShowsPipelinesCard(t *testing.T) {
+	t.Parallel()
 	srv, _, client, _, ck := seedPipelineProject(t)
 
 	status, body := getUIPage(t, client, srv.URL, "/ui/projects/ml", ck)
@@ -66,6 +67,7 @@ func TestUIProjectPageShowsPipelinesCard(t *testing.T) {
 // form end to end: submitting it creates a pipeline, and the reloaded
 // project page lists it in the Pipelines card table.
 func TestUIPipelineCreateFormListsPipelineOnProjectPage(t *testing.T) {
+	t.Parallel()
 	srv, st, client, csrfCk, ck := seedPipelineProject(t)
 
 	resp := uiPost(t, client, srv.URL+"/ui/projects/ml/pipelines", csrfCk, ck, pipelineCreateForm("build"))
@@ -98,6 +100,7 @@ func TestUIPipelineCreateFormListsPipelineOnProjectPage(t *testing.T) {
 // TestUIPipelineDetailPageRendersYAMLCronEngine: the detail page's editor
 // textarea, cron field, and engine select reflect the stored pipeline.
 func TestUIPipelineDetailPageRendersYAMLCronEngine(t *testing.T) {
+	t.Parallel()
 	srv, st, client, csrfCk, ck := seedPipelineProject(t)
 
 	form := pipelineCreateForm("build")
@@ -133,6 +136,7 @@ func TestUIPipelineDetailPageRendersYAMLCronEngine(t *testing.T) {
 // "running") plus the steps fragment's topo rows, chips, and 15s poll
 // attribute while running.
 func TestUIPipelineRunCreatesRunAndRedirectsWithPollingFragment(t *testing.T) {
+	t.Parallel()
 	srv, st, client, csrfCk, ck := seedPipelineProject(t)
 	uiPost(t, client, srv.URL+"/ui/projects/ml/pipelines", csrfCk, ck, pipelineCreateForm("build")).Body.Close()
 
@@ -201,6 +205,7 @@ func TestUIPipelineRunCreatesRunAndRedirectsWithPollingFragment(t *testing.T) {
 // run finishes it "stopped", and a second stop on the same run is a clean
 // no-op redirect (B2 stopSweep convention).
 func TestUIPipelineRunStopIdempotent(t *testing.T) {
+	t.Parallel()
 	srv, st, client, csrfCk, ck := seedPipelineProject(t)
 	uiPost(t, client, srv.URL+"/ui/projects/ml/pipelines", csrfCk, ck, pipelineCreateForm("build")).Body.Close()
 	uiPost(t, client, srv.URL+"/ui/projects/ml/pipelines/build/run", csrfCk, ck, url.Values{}).Body.Close()
@@ -245,6 +250,7 @@ func TestUIPipelineRunStopIdempotent(t *testing.T) {
 // carries the secret in its own response, but the reloaded detail page never
 // re-renders it.
 func TestUIPipelineWebhookRotateShowsSecretOnceOnly(t *testing.T) {
+	t.Parallel()
 	srv, _, client, csrfCk, ck := seedPipelineProject(t)
 	uiPost(t, client, srv.URL+"/ui/projects/ml/pipelines", csrfCk, ck, pipelineCreateForm("build")).Body.Close()
 
@@ -273,6 +279,7 @@ func TestUIPipelineWebhookRotateShowsSecretOnceOnly(t *testing.T) {
 // nonexistent project (uiProject's leak-nothing policy), same as every other
 // project-scoped UI page.
 func TestUIPipelineDetailNonMemberNotFound(t *testing.T) {
+	t.Parallel()
 	srv, st, client, csrfCk, ck := seedPipelineProject(t)
 	uiPost(t, client, srv.URL+"/ui/projects/ml/pipelines", csrfCk, ck, pipelineCreateForm("build")).Body.Close()
 

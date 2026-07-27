@@ -12,6 +12,7 @@ import (
 // for all three kinds: web (default), worker (no port), and cron (schedule
 // required).
 func TestUICreateAppFormPerKind(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -74,6 +75,7 @@ func TestUICreateAppFormPerKind(t *testing.T) {
 // domains/health/replicas appropriately per kind: worker keeps replicas but
 // loses health+domains; cron loses replicas+health+domains.
 func TestUIAppPageSectionVisibilityPerKind(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()

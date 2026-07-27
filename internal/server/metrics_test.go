@@ -91,6 +91,7 @@ func metricsTestServer(t *testing.T) (*httptestServer, *store.Store, store.Proje
 }
 
 func TestAppMetricsEndpoint(t *testing.T) {
+	t.Parallel()
 	srv, st, _, a := metricsTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	for i := 0; i < 3; i++ {
@@ -121,6 +122,7 @@ func TestAppMetricsEndpoint(t *testing.T) {
 }
 
 func TestAppMetricsWithoutKube(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()

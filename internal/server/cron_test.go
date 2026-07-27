@@ -15,6 +15,7 @@ import (
 // path: the flag persists in the store and (once the app has a live
 // deployment) re-applying re-patches the CronJob.
 func TestCronPauseResumeKindMismatch(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -95,6 +96,7 @@ func TestCronPauseResumeKindMismatch(t *testing.T) {
 // TestCronTriggerNotDeployed covers trigger's 409 not_deployed guard: no
 // live deployment yet, so there is no CronJob to build a manual run from.
 func TestCronTriggerNotDeployed(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -140,6 +142,7 @@ func nightlyCronJob(namespace string) *batchv1.CronJob {
 // CronJob: trigger creates a Job owned by the CronJob, and cron-runs lists
 // it back.
 func TestCronTriggerAndRuns(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServerWithPods(t, nightlyCronJob("luncur-ml"))
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()

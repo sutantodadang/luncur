@@ -5,23 +5,39 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 var ErrAuthFailed = errors.New("authentication failed")
 
+// BcryptCost is the work factor used for every password hash and compare in
+// this package. It must only ever be lowered, and only from _test.go files
+// (e.g. to bcrypt.MinCost) — production always runs at bcrypt.DefaultCost.
+var BcryptCost = bcrypt.DefaultCost
+
 // dummyHash is compared against on unknown-email logins so that the bcrypt
 // work factor is paid regardless of whether the email exists. This equalizes
 // timing between "unknown email" and "wrong password" responses so a caller
-// can't use response latency to enumerate valid emails.
-var dummyHash = func() []byte {
-	h, err := bcrypt.GenerateFromPassword([]byte("luncur-dummy-password"), bcrypt.DefaultCost)
-	if err != nil {
-		panic(err)
-	}
-	return h
-}()
+// can't use response latency to enumerate valid emails. Computed lazily
+// (rather than at package init) so tests that lower BcryptCost before their
+// first store call get a dummy hash at the lowered cost too.
+var (
+	dummyHashOnce sync.Once
+	dummyHashVal  []byte
+)
+
+func dummyHash() []byte {
+	dummyHashOnce.Do(func() {
+		h, err := bcrypt.GenerateFromPassword([]byte("luncur-dummy-password"), BcryptCost)
+		if err != nil {
+			panic(err)
+		}
+		dummyHashVal = h
+	})
+	return dummyHashVal
+}
 
 // ValidationError signals bad caller input (as opposed to a store/db
 // failure) so HTTP handlers can map it to a 400 with a clean message.
@@ -52,7 +68,7 @@ func (s *Store) CreateUser(email, password, role string) (User, error) {
 	if len(password) < 8 {
 		return User{}, validationErrorf("password must be at least 8 characters")
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
 	if err != nil {
 		return User{}, err
 	}
@@ -77,7 +93,7 @@ func (s *Store) Authenticate(email, password string) (User, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		// Burn the same bcrypt cost as a real comparison so unknown-email
 		// and wrong-password responses take equal time.
-		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+		_ = bcrypt.CompareHashAndPassword(dummyHash(), []byte(password))
 		return User{}, ErrAuthFailed
 	}
 	if err != nil {
@@ -125,7 +141,7 @@ func (s *Store) UpdatePassword(id int64, password string) error {
 	if len(password) < 8 {
 		return validationErrorf("password must be at least 8 characters")
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
 	if err != nil {
 		return err
 	}

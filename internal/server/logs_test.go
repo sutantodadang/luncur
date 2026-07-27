@@ -18,6 +18,7 @@ import (
 // params mean unbounded (zero values), valid params convert to line count /
 // seconds, and invalid params return an error.
 func TestLogBounds(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		query       string
@@ -58,6 +59,7 @@ func TestLogBounds(t *testing.T) {
 // TestRuntimeLogs streams a single pod's logs as SSE. The fake clientset
 // serves the canned string "fake logs" for any GetLogs request.
 func TestRuntimeLogs(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 
 	pod := &corev1.Pod{
@@ -95,6 +97,7 @@ func TestRuntimeLogs(t *testing.T) {
 // break the stream path. The fake clientset ignores PodLogOptions, so this
 // only proves the params are accepted and plumbed through without error.
 func TestRuntimeLogsWithBounds(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 
 	pod := &corev1.Pod{
@@ -127,6 +130,7 @@ func TestRuntimeLogsWithBounds(t *testing.T) {
 
 // TestRuntimeLogsBadTail checks an invalid ?tail= returns 400 bad_request.
 func TestRuntimeLogsBadTail(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st, Kube: kube.NewForTest(nil, k8sfake.NewSimpleClientset()), ExternalIP: "1.2.3.4"})
 
@@ -154,6 +158,7 @@ func TestRuntimeLogsBadTail(t *testing.T) {
 
 // TestRuntimeLogsNoPods checks the app-has-no-pods case returns 404 no_pods.
 func TestRuntimeLogsNoPods(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st, Kube: kube.NewForTest(nil, k8sfake.NewSimpleClientset()), ExternalIP: "1.2.3.4"})
 

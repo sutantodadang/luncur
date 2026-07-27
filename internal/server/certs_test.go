@@ -160,6 +160,7 @@ func pollDomain(t *testing.T, st *store.Store, appID int64, deadline time.Durati
 }
 
 func TestCertManagerIssuesAndRenews(t *testing.T) {
+	t.Parallel()
 	srv, st, patches, _ := certTestServer(t)
 	p, env, a, d := seedDomain(t, st, "www.example.com")
 
@@ -198,12 +199,14 @@ func TestCertManagerIssuesAndRenews(t *testing.T) {
 }
 
 func TestCertManagerFailureMarksDomain(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := certTestServer(t)
 	p, env, a, d := seedDomain(t, st, "www.example.com")
 
 	// Point the fake ACME's challenge validation at an unreachable host so
-	// HTTP-01 validation never succeeds — the authorization stays pending
-	// forever and issuance fails once its context deadline elapses.
+	// HTTP-01 validation never succeeds — the fake surfaces this as an
+	// "invalid" authorization, which WaitAuthorization reports immediately
+	// (no need to wait out a context deadline).
 	fakeDir := acmetest.New(t, "127.0.0.1:1")
 	srv.certs.directoryURL = fakeDir.DirectoryURL()
 
@@ -251,6 +254,7 @@ func selfSignedCertPEM(t *testing.T, hostname string, notAfter time.Time) []byte
 // path: sweep doesn't issue anything itself, it just reads the leaf cert
 // cert-manager already put in the TLS Secret and records its expiry.
 func TestCertSweepReadsBackCertManagerExpiry(t *testing.T) {
+	t.Parallel()
 	srv, st, _, cs := certTestServer(t)
 	p, _, a, d := seedDomain(t, st, "www.example.com")
 	if err := st.SetSetting("cert_provider", "cert-manager"); err != nil {
@@ -327,6 +331,7 @@ func (p *recordingServerProvider) txt(fqdn string) []string {
 // cert manager issues a wildcard via dns-01 — no challenge-Ingress writes,
 // TXT presented for the base domain, TLS secret stored.
 func TestIssueDNS01PickedForWildcard(t *testing.T) {
+	t.Parallel()
 	srv, st, patches, _ := certTestServer(t)
 	if err := st.SetSetting("dns_provider", "cloudflare"); err != nil {
 		t.Fatal(err)
@@ -390,6 +395,7 @@ func notifyCaptureServer(t *testing.T) (*httptest.Server, chan []byte) {
 // a notify_url receiver: a successful issuance must deliver a cert_issued
 // notification carrying the domain's hostname.
 func TestCertIssueNotifiesOnSuccess(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := certTestServer(t)
 	p, env, a, d := seedDomain(t, st, "www.example.com")
 
@@ -434,6 +440,7 @@ func TestCertIssueNotifiesOnSuccess(t *testing.T) {
 // with a notify_url receiver: a failed issuance must deliver a cert_failed
 // notification carrying the hostname and a non-empty error.
 func TestCertIssueNotifiesOnFailure(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := certTestServer(t)
 	p, env, a, d := seedDomain(t, st, "www.example.com")
 

@@ -6,8 +6,15 @@ on:
   pull_request:
 
 jobs:
+  # The server package dwarfs every other package combined, so the race run
+  # is sharded: wall-clock becomes max(shard) instead of sum. Build+vet ride
+  # the "rest" shard (test builds everything anyway; vet is cheap).
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [server, rest]
     steps:
       - uses: actions/checkout@v4
 
@@ -16,13 +23,20 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
+        if: matrix.shard == 'rest'
         run: go build ./...
 
       - name: Vet
+        if: matrix.shard == 'rest'
         run: go vet ./...
 
-      - name: Test
-        run: go test -race ./...
+      - name: Test (server)
+        if: matrix.shard == 'server'
+        run: go test -race ./internal/server/
+
+      - name: Test (rest)
+        if: matrix.shard == 'rest'
+        run: go test -race $(go list ./... | grep -v internal/server)
 
   lint:
     runs-on: ubuntu-latest

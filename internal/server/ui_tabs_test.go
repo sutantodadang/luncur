@@ -12,6 +12,7 @@ import (
 // cards — the status board and the literal deploy pipeline (DESIGN.md
 // UX Architecture v3).
 func TestUITabDefaultRendersOverview(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -52,6 +53,7 @@ func TestUITabDefaultRendersOverview(t *testing.T) {
 // contains the Environment card and the bottom "-- destructive --"
 // disclosure (Danger zone is not its own tab, DESIGN.md UX Architecture v3).
 func TestUITabWireShowsEnvAndDestructiveDisclosure(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -85,6 +87,7 @@ func TestUITabWireShowsEnvAndDestructiveDisclosure(t *testing.T) {
 // tab's fragment: it must contain that tab's content but never the sidebar
 // (`<aside`) or the other tabs' bar markup a full page carries.
 func TestUITabHXRequestReturnsFragmentWithoutSidebar(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -131,6 +134,7 @@ func TestUITabHXRequestReturnsFragmentWithoutSidebar(t *testing.T) {
 // the same content as the default (Overview) tab rather than erroring or
 // rendering nothing.
 func TestUITabInvalidFallsBackToOverview(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -165,6 +169,7 @@ func TestUITabInvalidFallsBackToOverview(t *testing.T) {
 // per DESIGN.md UX Architecture v3 ("Jobs ... hidden when the app kind has
 // none").
 func TestUIJobsTabVisibilityByKind(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()

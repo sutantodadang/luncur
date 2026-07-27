@@ -22,6 +22,7 @@ import (
 )
 
 func TestArgoWorkflowName(t *testing.T) {
+	t.Parallel()
 	if got, want := argoWorkflowName("abc123defghi"), "pl-abc123defghi"; got != want {
 		t.Fatalf("argoWorkflowName = %q, want %q", got, want)
 	}
@@ -91,6 +92,7 @@ func findByName(t *testing.T, items []any, name string) map[string]any {
 // GPU fields only when gpu>0, and app-kind envFrom secretRef vs.
 // image-kind plain env.
 func TestBuildWorkflowCRDiamond(t *testing.T) {
+	t.Parallel()
 	steps := []argoComputeStep{
 		{
 			Step: pipeline.Step{Name: "prep", Kind: "image"},
@@ -224,6 +226,7 @@ func TestBuildWorkflowCRDiamond(t *testing.T) {
 }
 
 func TestArgoPhaseToState(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"Pending":   "running",
 		"Running":   "running",
@@ -259,6 +262,7 @@ const argoStatusFixture = `{
 }`
 
 func TestArgoNodeStatesCollapsesRetries(t *testing.T) {
+	t.Parallel()
 	wf := decodeWorkflowCR(t, []byte(argoStatusFixture))
 	steps, wfPhase := argoNodeStates(wf)
 	if wfPhase != "Running" {
@@ -278,6 +282,7 @@ func TestArgoNodeStatesCollapsesRetries(t *testing.T) {
 }
 
 func TestArgoNodeStatesEmptyStatus(t *testing.T) {
+	t.Parallel()
 	steps, wfPhase := argoNodeStates(map[string]any{})
 	if wfPhase != "" {
 		t.Fatalf("wfPhase = %q, want empty", wfPhase)
@@ -288,6 +293,7 @@ func TestArgoNodeStatesEmptyStatus(t *testing.T) {
 }
 
 func TestArgoNodeStatesMissingNodes(t *testing.T) {
+	t.Parallel()
 	wf := decodeWorkflowCR(t, []byte(`{"status": {"phase": "Succeeded"}}`))
 	steps, wfPhase := argoNodeStates(wf)
 	if wfPhase != "Succeeded" {
@@ -377,6 +383,7 @@ func argoApplyingDyn(t *testing.T) *dynamicfake.FakeDynamicClient {
 // CRD absent, and startPipelineRun must 400 (errArgoNotInstalled) before
 // touching the store any further.
 func TestArgoStartRejectedWithoutCRD(t *testing.T) {
+	t.Parallel()
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	s := pipelineTestServer(t, dyn, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
@@ -395,6 +402,7 @@ func TestArgoStartRejectedWithoutCRD(t *testing.T) {
 // reactor reads as "CRD present" (kube.HasWorkflowCRD's nil-Get doc
 // comment), so this test reaches past the CRD gate to the DAG check.
 func TestArgoStartRejectsComputeAfterAction(t *testing.T) {
+	t.Parallel()
 	dyn := recordingDyn(t)
 	s := pipelineTestServer(t, dyn, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
@@ -415,6 +423,7 @@ func TestArgoStartRejectsComputeAfterAction(t *testing.T) {
 // check: an image step declaring more gpu than the project's quota must
 // 400, before any run/step state is created.
 func TestArgoStartRejectsOverBudget(t *testing.T) {
+	t.Parallel()
 	dyn := recordingDyn(t)
 	s := pipelineTestServer(t, dyn, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
@@ -439,6 +448,7 @@ func TestArgoStartRejectsOverBudget(t *testing.T) {
 // Workflow has no populated status yet (argoNodeStates reports nothing for
 // it, so the tick makes no transition).
 func TestArgoStartAppliesWorkflowAndMarksRunning(t *testing.T) {
+	t.Parallel()
 	dyn := argoApplyingDyn(t)
 	// HasWorkflowCRD preflights on a real Get for the CRD object — seed it
 	// directly into the tracker (kube_test.go's TestHasWorkflowCRDPresent
@@ -510,6 +520,7 @@ func argoWorkflowStatusObj(name, namespace, phase string, nodes map[string]map[s
 // Succeeded Pod node finishes its step done, a Failed one finishes it
 // failed, each with detail "argo node <state>".
 func TestArgoTickMapsNodeStatesToSteps(t *testing.T) {
+	t.Parallel()
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	s := pipelineTestServer(t, dyn, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
@@ -553,6 +564,7 @@ func TestArgoTickMapsNodeStatesToSteps(t *testing.T) {
 // Workflow branch: every running compute row fails with detail "argo node
 // missing", and the run gets a sticky one-time warning.
 func TestArgoTickWorkflowMissingFailsRunningRowsAndWarns(t *testing.T) {
+	t.Parallel()
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()) // nothing seeded
 	s := pipelineTestServer(t, dyn, nil)
 	p := pipelineSeedProject(t, s.st, "ml")
@@ -585,6 +597,7 @@ func TestArgoTickWorkflowMissingFailsRunningRowsAndWarns(t *testing.T) {
 // launch path: a notify step whose only need is an already-done compute
 // step fires (reusing the native action path) and finishes the step.
 func TestArgoTickNotifyActionFiresAfterComputeDone(t *testing.T) {
+	t.Parallel()
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	s := pipelineTestServer(t, dyn, nil)
 	ch := make(chan []byte, 4)
@@ -627,6 +640,7 @@ func TestArgoTickNotifyActionFiresAfterComputeDone(t *testing.T) {
 // TestArgoStopDeletesWorkflow covers stopPipelineRun's argo branch:
 // DeleteWorkflow fires alongside the existing running/pending state sweep.
 func TestArgoStopDeletesWorkflow(t *testing.T) {
+	t.Parallel()
 	scheme := runtime.NewScheme()
 	dyn := dynamicfake.NewSimpleDynamicClient(scheme)
 	var actions []string
@@ -705,6 +719,7 @@ metadata:
 // TestArgoSplitManifestDropsArgoServer is a pure unit test of the manifest
 // splitter: 3 docs in, 2 out (argo-server dropped), the rest untouched.
 func TestArgoSplitManifestDropsArgoServer(t *testing.T) {
+	t.Parallel()
 	docs, err := argoSplitManifest([]byte(argoInstallManifestFixture))
 	if err != nil {
 		t.Fatal(err)
@@ -813,6 +828,7 @@ func TestHandleArgoInstallDownloadErrorReturns502(t *testing.T) {
 
 // TestHandleArgoInstallNonAdminForbidden covers the adminOnly gate.
 func TestHandleArgoInstallNonAdminForbidden(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	member := seedUserToken(t, st, "member@b.co", "member")
 	resp := doAuthed(t, "POST", srv.URL+"/v1/system/argo-install", member, "")

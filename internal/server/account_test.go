@@ -11,6 +11,7 @@ import (
 )
 
 func TestChangePasswordAPI(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	tok := seedUserToken(t, st, "me@b.co", "member")
 
@@ -46,6 +47,7 @@ func TestChangePasswordAPI(t *testing.T) {
 }
 
 func TestChangeEmailAPI(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	tok := seedUserToken(t, st, "me2@b.co", "member")
 	seedUserToken(t, st, "taken@b.co", "member")
@@ -85,6 +87,7 @@ func TestChangeEmailAPI(t *testing.T) {
 }
 
 func TestAdminSetPasswordAPI(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	adminTok := seedUserToken(t, st, "admin3@b.co", "admin")
 	memberTok := seedUserToken(t, st, "member3@b.co", "member")
@@ -122,6 +125,7 @@ func TestAdminSetPasswordAPI(t *testing.T) {
 }
 
 func TestUIAccountPage(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	u, err := st.CreateUser("uiacct@b.co", "password123", "member")
 	if err != nil {
@@ -157,6 +161,7 @@ func TestUIAccountPage(t *testing.T) {
 }
 
 func TestUIAccountPasswordFlow(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	u, err := st.CreateUser("uiflow@b.co", "password123", "member")
 	if err != nil {
@@ -191,6 +196,7 @@ func TestUIAccountPasswordFlow(t *testing.T) {
 }
 
 func TestUIAdminResetPassword(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin, err := st.CreateUser("uiadmin@b.co", "password123", "admin")
 	if err != nil {

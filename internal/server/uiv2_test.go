@@ -35,6 +35,7 @@ func getUIPage(t *testing.T, client *http.Client, base, path string, ck *http.Co
 // a building deploy carries the hx-trigger poll, and a live (terminal)
 // deploy does not.
 func TestUIChipFragment(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -83,6 +84,7 @@ func TestUIChipFragment(t *testing.T) {
 // recent deployments and offers a rollback form per older row, matching
 // handleUIRollback's deploy_id contract.
 func TestUIDeployHistoryAndRollback(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -129,6 +131,7 @@ func TestUIDeployHistoryAndRollback(t *testing.T) {
 // TestUIAppsListStatusChip checks the project apps list shows a status chip
 // for an app with a deploy, and a "no deploys" chip for a fresh app.
 func TestUIAppsListStatusChip(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -162,6 +165,7 @@ func TestUIAppsListStatusChip(t *testing.T) {
 // TestUICreateAppFormFields checks the create-app form carries the kind and
 // schedule fields the handler parses.
 func TestUICreateAppFormFields(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -187,6 +191,7 @@ func TestUICreateAppFormFields(t *testing.T) {
 // TestUIEjectBanner checks the ejected-app banner text appears only for an
 // ejected app.
 func TestUIEjectBanner(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := ejectTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -231,6 +236,7 @@ func TestUIEjectBanner(t *testing.T) {
 // check — the old `latest > 0` never matched a nanoid id (string > 0 is
 // always false in JS), so the log pane stayed blind during builds.
 func TestUIAppPageBuildLogFollow(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()

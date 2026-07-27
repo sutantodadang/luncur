@@ -28,6 +28,7 @@ func rawStamp(t *testing.T, srv *httptestServer, admin, app string) string {
 // the user redeploys), while redeploy mints a new deployment id — changing the
 // stamp — and bounces the pods even with an unchanged image and env.
 func TestRedeployImageApp(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -74,6 +75,7 @@ func TestRedeployImageApp(t *testing.T) {
 }
 
 func TestRedeployNeverDeployed(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -90,6 +92,7 @@ func TestRedeployNeverDeployed(t *testing.T) {
 // unavailable — a 503 build_unavailable proves the git branch was taken (the
 // image branch would 409 no_deploy, since the app was never deployed).
 func TestRedeployGitAppTakesBuildPath(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()

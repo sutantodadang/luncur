@@ -87,6 +87,7 @@ func sweepStartForm() url.Values {
 // and the reloaded app page shows the sweep in the history table plus the
 // current sweep's trial table (state chips, compact params).
 func TestUISweepCreateFormStartsSweepAndShowsOnPage(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepUIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -145,6 +146,7 @@ func TestUISweepCreateFormStartsSweepAndShowsOnPage(t *testing.T) {
 // app page with ?err= (error banner) instead of a hard error, and no sweep
 // is created.
 func TestUISweepCreateBadParamsRedirectsWithErr(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepUIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -187,6 +189,7 @@ func TestUISweepCreateBadParamsRedirectsWithErr(t *testing.T) {
 // TestUISweepCreateOnEjectedAppConflict: an ejected app refuses new sweeps,
 // same as it refuses new runs (handleUIRunCreate's errAppEjected path).
 func TestUISweepCreateOnEjectedAppConflict(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepUIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -216,6 +219,7 @@ func TestUISweepCreateOnEjectedAppConflict(t *testing.T) {
 // redirects cleanly. A finished (done, with metric) trial is also seeded so
 // the reloaded page's best-trial highlight can be asserted in the same pass.
 func TestUISweepStopIdempotentAndHighlightsBest(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepUIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -324,6 +328,7 @@ func TestUISweepStopIdempotentAndHighlightsBest(t *testing.T) {
 // sweep is running, and drops it once stopped — htmx's self-terminating
 // poll idiom (same as "statuschip").
 func TestUISweepTrialsFragmentPollsOnlyWhileRunning(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepUIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -375,6 +380,7 @@ func TestUISweepTrialsFragmentPollsOnlyWhileRunning(t *testing.T) {
 // TestUISweepCardHiddenForNonJobApps: the Sweeps card is job-only, same
 // gating as the Runs card.
 func TestUISweepCardHiddenForNonJobApps(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := sweepUIServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()

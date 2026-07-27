@@ -9,6 +9,7 @@ import (
 // member (role "viewer") can read (GET) but any mutating route rejects them
 // with 403 read_only, per requireProjectWrite.
 func TestViewerIsReadOnly(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "admin@b.co", "admin")
 

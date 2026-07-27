@@ -22,6 +22,7 @@ import (
 // TestRequireEnv covers requireEnv's default-env fallback, explicit
 // resolution, and 404s on a missing environment or missing project.
 func TestRequireEnv(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st})
 	admin := store.User{Role: "admin"}
@@ -95,6 +96,7 @@ func TestRequireEnv(t *testing.T) {
 // TestRequireEnvWrite covers requireEnvWrite's write-role check: a viewer
 // is denied with 403 read_only, same as requireProjectWrite.
 func TestRequireEnvWrite(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st})
 
@@ -151,6 +153,7 @@ func decodeEnvs(t *testing.T, resp *http.Response) map[string]map[string]any {
 // refuse deleting an env with live apps unless ?force=1, and set-default
 // reassignment.
 func TestEnvCRUD(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
@@ -239,6 +242,7 @@ func TestEnvCRUD(t *testing.T) {
 // TestSetPreviewBase covers handleSetPreviewBase: it accepts an existing
 // env name and 404s on an unknown one.
 func TestSetPreviewBase(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
@@ -299,6 +303,7 @@ func deployedNamespaces(actions []string) map[string]bool {
 // default env reuses the project's own namespace), while /envs/develop/...
 // must land in luncur-p-develop, and never leak into the other namespace.
 func TestEnvScopedRoutesAlias(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := dynNSServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
@@ -364,6 +369,7 @@ func TestEnvScopedRoutesAlias(t *testing.T) {
 // luncur-p-develop, so a 200 vs 404 on the logs endpoint doubles as proof
 // of which namespace each env's request actually queried.
 func TestMultiEnvAppLifecycle(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	scheme := runtime.NewScheme()
 	dyn := dynamicfake.NewSimpleDynamicClient(scheme)

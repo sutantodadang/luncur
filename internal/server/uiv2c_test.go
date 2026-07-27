@@ -36,6 +36,7 @@ func settingsTestServer(t *testing.T) (*httptestServer, *store.Store) {
 // handleUIUsers' leak-nothing behavior) and 200s with a known key's form
 // for an admin.
 func TestUISettingsAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv, st := settingsTestServer(t)
 	admin, err := st.CreateUser("root@b.co", "password123", "admin")
 	if err != nil {
@@ -64,6 +65,7 @@ func TestUISettingsAdminOnly(t *testing.T) {
 // TestUISettingsSetValid POSTs a valid plain key and asserts the store was
 // updated and the redirect carries a saved banner.
 func TestUISettingsSetValid(t *testing.T) {
+	t.Parallel()
 	srv, st := settingsTestServer(t)
 	admin, err := st.CreateUser("root@b.co", "password123", "admin")
 	if err != nil {
@@ -92,6 +94,7 @@ func TestUISettingsSetValid(t *testing.T) {
 // stored value is sealed (never plaintext) and the page shows "(set)"
 // instead of echoing it.
 func TestUISettingsSealedKeyShowsSet(t *testing.T) {
+	t.Parallel()
 	srv, st := settingsTestServer(t)
 	admin, err := st.CreateUser("root@b.co", "password123", "admin")
 	if err != nil {
@@ -131,6 +134,7 @@ func TestUISettingsSealedKeyShowsSet(t *testing.T) {
 // TestUISettingsInvalidValue POSTs an invalid enum value and asserts the
 // store is left unchanged and an error is surfaced via redirect.
 func TestUISettingsInvalidValue(t *testing.T) {
+	t.Parallel()
 	srv, st := settingsTestServer(t)
 	admin, err := st.CreateUser("root@b.co", "password123", "admin")
 	if err != nil {
@@ -157,6 +161,7 @@ func TestUISettingsInvalidValue(t *testing.T) {
 
 // TestUISettingsUnknownKey POSTs an unrecognized key and asserts 400.
 func TestUISettingsUnknownKey(t *testing.T) {
+	t.Parallel()
 	srv, st := settingsTestServer(t)
 	admin, err := st.CreateUser("root@b.co", "password123", "admin")
 	if err != nil {
@@ -178,6 +183,7 @@ func TestUISettingsUnknownKey(t *testing.T) {
 // the running version, and that POSTing a version rolls luncur's own
 // Deployment via the same updateServerImage core the JSON API uses.
 func TestUISettingsUpdate(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	sealer, err := secret.New(make([]byte, 32))
 	if err != nil {
@@ -232,6 +238,7 @@ func TestUISettingsUpdate(t *testing.T) {
 // runs standalone; the exec/blob-reclaim phase just downgrades to a
 // warning per runRegistryGC's contract).
 func TestUIRegistryGCAdminGated(t *testing.T) {
+	t.Parallel()
 	registryHost, _ := newFakeRegistryServer(t, map[string][]string{})
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st, RegistryHost: registryHost})
@@ -265,6 +272,7 @@ func TestUIRegistryGCAdminGated(t *testing.T) {
 // TestUIBackupsPage seeds one backup row directly in the store and checks
 // the page lists it, and that create/prune are admin-gated.
 func TestUIBackupsPage(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	dataDir := t.TempDir()
 	keyPath := filepath.Join(t.TempDir(), "luncur.key")
@@ -327,6 +335,7 @@ func TestUIBackupsPage(t *testing.T) {
 // TestUISSHKeysAddAndDelete adds a key via the UI form, checks it's listed,
 // deletes it, checks it's gone, and checks the page requires login.
 func TestUISSHKeysAddAndDelete(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	client := noRedirectClient()
 
@@ -382,6 +391,7 @@ func TestUISSHKeysAddAndDelete(t *testing.T) {
 // TestUIDoctorPage checks the admin sees all 9 check names plus the server
 // version, and a member gets 404.
 func TestUIDoctorPage(t *testing.T) {
+	t.Parallel()
 	registryHost, _ := newFakeRegistryServer(t, map[string][]string{})
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st, RegistryHost: registryHost, Version: "v9.9.9"})
@@ -418,6 +428,7 @@ func TestUIDoctorPage(t *testing.T) {
 // TestUINavAdminLinks checks the sidebar shows /ui/settings for an admin but
 // not for a member.
 func TestUINavAdminLinks(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin, err := st.CreateUser("root@b.co", "password123", "admin")
 	if err != nil {

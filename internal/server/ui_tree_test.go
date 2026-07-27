@@ -9,6 +9,7 @@ import (
 // (DESIGN.md "UX Architecture (v3)"): a member sees their own project's
 // tree rendered project/ -> env/ -> app on the projects landing page.
 func TestUITreeShowsProjectEnvApp(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "admin@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"waku"}`).Body.Close()
@@ -51,6 +52,7 @@ func TestUITreeShowsProjectEnvApp(t *testing.T) {
 // project's rows in the sidebar, mirroring the same leak-nothing rule
 // uiProject already enforces for direct navigation.
 func TestUITreeHidesNonMemberProject(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "admin2@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"mine"}`).Body.Close()
@@ -85,6 +87,7 @@ func TestUITreeHidesNonMemberProject(t *testing.T) {
 // no deployment yet -> muted, a live deployment -> ok, a failed one -> fail.
 // Reuses the same status buckets as app.html's chip, not a parallel map.
 func TestUITreeDotClassMatchesStatus(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "admin3@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"waku"}`).Body.Close()
@@ -130,6 +133,7 @@ func TestUITreeDotClassMatchesStatus(t *testing.T) {
 // TestUITreeActiveAppRow covers the active app's 2px left-border: only the
 // app row matching the current page's URL carries the "active" class.
 func TestUITreeActiveAppRow(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "admin4@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"waku"}`).Body.Close()
@@ -172,6 +176,7 @@ func TestUITreeActiveAppRow(t *testing.T) {
 // uiTreeMaxAppsPerEnv apps collapses the rest into a "+N more" link instead
 // of listing every one, so a busy project can't blow up the sidebar.
 func TestUITreeCapsAppsPerEnv(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "admin5@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"busy"}`).Body.Close()

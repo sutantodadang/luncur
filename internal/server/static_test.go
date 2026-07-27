@@ -11,6 +11,7 @@ import (
 // names, and — crucially — no auth required (the login page needs the
 // stylesheet before any session cookie exists).
 func TestUIStaticAssets(t *testing.T) {
+	t.Parallel()
 	srv, _ := testServer(t)
 
 	css, err := http.Get(srv.URL + "/ui/static/app.css")

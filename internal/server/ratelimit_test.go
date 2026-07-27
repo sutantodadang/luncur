@@ -8,6 +8,7 @@ import (
 )
 
 func TestRateLimiterAllowsThenBlocks(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
 	l := newRateLimiter(func() time.Time { return now })
 	for i := 0; i < loginLimit; i++ {
@@ -28,6 +29,7 @@ func TestRateLimiterAllowsThenBlocks(t *testing.T) {
 }
 
 func TestLoginEndpointRateLimited(t *testing.T) {
+	t.Parallel()
 	srv, _ := testServer(t)
 	var last int
 	for i := 0; i < loginLimit+1; i++ {

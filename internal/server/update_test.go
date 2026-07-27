@@ -7,6 +7,7 @@ import (
 )
 
 func TestSystemUpdate(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 

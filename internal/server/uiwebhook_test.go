@@ -11,6 +11,7 @@ import (
 // TestUIWebhookRowGating checks the app page shows no Webhook section for a
 // tarball-source app, but does for a git-source app.
 func TestUIWebhookRowGating(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := ejectTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -60,6 +61,7 @@ func TestUIWebhookRowGating(t *testing.T) {
 // secret (shown once), a reload of the app page never shows it again, and
 // disable removes the webhook row's URL/disable-button state.
 func TestUIWebhookEnableShowsSecretOnceThenDisable(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := ejectTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()

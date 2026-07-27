@@ -11,6 +11,7 @@ import (
 // Transcript to translate, plus two routes that must stay unmapped (skipped
 // by the transcript, never rendered raw).
 func TestAuditToCLIMappings(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		method, pattern, target string
 		want                    string
@@ -61,6 +62,7 @@ func TestAuditToCLIMappings(t *testing.T) {
 // summarize via auditToCLI, unmapped routes fall back to a generic
 // last-segment verb, still folding in the app/project var when present.
 func TestTickerSummary(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		action, target, want string
 	}{
@@ -81,6 +83,7 @@ func TestTickerSummary(t *testing.T) {
 // user's action is more recent overall; an admin sees the true latest row
 // regardless of author.
 func TestUITickerScoping(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	seedUserToken(t, st, "ticker-member@b.co", "member")
 	seedUserToken(t, st, "ticker-admin@b.co", "admin")
@@ -127,6 +130,7 @@ func TestUITickerScoping(t *testing.T) {
 // transcript fragment: mapped rows render oldest-first (script order),
 // unmappable rows are skipped entirely rather than shown raw.
 func TestUITranscriptRendersChronologicalAndSkipsUnmappable(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	seedUserToken(t, st, "transcript-member@b.co", "member")
 	u, err := st.GetUserByEmail("transcript-member@b.co")
@@ -172,6 +176,7 @@ func TestUITranscriptRendersChronologicalAndSkipsUnmappable(t *testing.T) {
 // /ui/transcript: it must never surface another user's audit rows, admin or
 // not — the transcript is a personal runbook, not an admin audit view.
 func TestUITranscriptScopedToOwnEmail(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	seedUserToken(t, st, "transcript-member2@b.co", "member")
 	u, err := st.GetUserByEmail("transcript-member2@b.co")
@@ -203,6 +208,7 @@ func TestUITranscriptScopedToOwnEmail(t *testing.T) {
 // only renders on the app page (app.html), not on other authenticated pages
 // like the project's apps list.
 func TestUITranscriptAbsentFromNonAppPages(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "transcript-nonapp@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()

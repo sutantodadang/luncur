@@ -43,6 +43,7 @@ func seedRestoreAddon(t *testing.T, srv *server, st *store.Store, project, typ, 
 }
 
 func TestRestoreAddonPostgres(t *testing.T) {
+	t.Parallel()
 	exec := &fakeExecer{}
 	srv, st, _ := backupServer(t, exec)
 	a := seedRestoreAddon(t, srv, st, "proj", "postgres", "db1")
@@ -60,6 +61,7 @@ func TestRestoreAddonPostgres(t *testing.T) {
 }
 
 func TestRestoreAddonRedis(t *testing.T) {
+	t.Parallel()
 	exec := &fakeExecer{}
 	srv, st, _ := backupServer(t, exec)
 	a := seedRestoreAddon(t, srv, st, "proj", "redis", "cache1")
@@ -77,6 +79,7 @@ func TestRestoreAddonRedis(t *testing.T) {
 }
 
 func TestRestoreAddonUnsupportedType(t *testing.T) {
+	t.Parallel()
 	exec := &fakeExecer{}
 	srv, st, _ := backupServer(t, exec)
 	a := seedRestoreAddon(t, srv, st, "proj", "minio", "store1")
@@ -130,6 +133,7 @@ func doAuthedMultipart(t *testing.T, url, token string, data []byte) *http.Respo
 }
 
 func TestHandleRestoreAddon(t *testing.T) {
+	t.Parallel()
 	exec := &fakeExecer{}
 	s, srv, st := restoreTestServer(t, exec)
 	admin := seedUserToken(t, st, "root@b.co", "admin")

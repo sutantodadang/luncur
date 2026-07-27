@@ -7,6 +7,7 @@ import (
 )
 
 func TestFwdTokenRoundTrip(t *testing.T) {
+	t.Parallel()
 	key := []byte("0123456789abcdef0123456789abcdef")
 	now := time.Unix(1_700_000_000, 0)
 

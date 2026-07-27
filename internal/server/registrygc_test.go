@@ -113,6 +113,7 @@ func registryPod(namespace string) *corev1.Pod {
 // deleted, the live/newest image survives, and BytesReclaimed reflects
 // the fake exec's before/after du readings.
 func TestRunRegistryGC(t *testing.T) {
+	t.Parallel()
 	registryHost, deleted := newFakeRegistryServer(t, map[string][]string{
 		"proj/web":    {"1", "2", "3"},
 		"orphan/repo": {"a", "b"},
@@ -188,6 +189,7 @@ func TestRunRegistryGC(t *testing.T) {
 // cache repos to the keep-set, every cache manifest would be wiped on
 // every sweep since deployRefs only ever sees app image repos.
 func TestRunRegistryGCKeepsAppCacheAndSweepsGhostCache(t *testing.T) {
+	t.Parallel()
 	registryHost, deleted := newFakeRegistryServer(t, map[string][]string{
 		"proj/web":               {"1"},
 		"luncur-cache/proj-web":  {"buildcache"},
@@ -241,6 +243,7 @@ func TestRunRegistryGCKeepsAppCacheAndSweepsGhostCache(t *testing.T) {
 // forbidden; an admin gets 200 with the report fields even with no kube
 // configured (the manifest-delete phase still runs; the exec phase warns).
 func TestRegistryGCAPI(t *testing.T) {
+	t.Parallel()
 	registryHost, _ := newFakeRegistryServer(t, map[string][]string{})
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st, RegistryHost: registryHost})

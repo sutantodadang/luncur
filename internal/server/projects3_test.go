@@ -11,6 +11,7 @@ import (
 )
 
 func TestProjectS3API(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -60,6 +61,7 @@ func TestProjectS3API(t *testing.T) {
 // TestRenderS3EnvInjection drives renderApp directly: an opted-in app's env
 // Secret must carry LUNCUR_S3_* from the project config, and user env wins.
 func TestRenderS3EnvInjection(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	sealer, err := secret.New(make([]byte, 32))
 	if err != nil {

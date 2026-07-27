@@ -27,6 +27,7 @@ func testSSHPubKey(t *testing.T) string {
 }
 
 func TestSSHKeyEndpoints(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	tok := seedUserToken(t, st, "dev@b.co", "member")
 	pub := testSSHPubKey(t)

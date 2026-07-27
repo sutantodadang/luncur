@@ -37,8 +37,15 @@ type Server struct {
 	caCert    *x509.Certificate
 	chalHost  string // host:port serving the challenge (our Challenges store)
 	authzOK   bool
-	certDER   []byte
-	orderDone bool
+	// authzFailed marks a challenge validation that has definitively failed
+	// (e.g. the HTTP-01 fetch hit an unreachable host). Surfacing "invalid"
+	// on /authz/1 once this is set lets x/crypto/acme's WaitAuthorization
+	// return immediately with an error instead of polling "pending" until
+	// the caller's context deadline — same failure outcome, no manufactured
+	// wait.
+	authzFailed bool
+	certDER     []byte
+	orderDone   bool
 
 	txtLookup func(fqdn string) []string // non-nil => offer dns-01
 	domain    string                     // identifier from the order request
@@ -110,6 +117,8 @@ func New(t *testing.T, chalHost string) *Server {
 		status := "pending"
 		if f.authzOK {
 			status = "valid"
+		} else if f.authzFailed {
+			status = "invalid"
 		}
 		chalType := "http-01"
 		if f.txtLookup != nil {
@@ -129,6 +138,7 @@ func New(t *testing.T, chalHost string) *Server {
 			// presented for the challenge name.
 			fqdn := "_acme-challenge." + strings.TrimPrefix(f.domain, "*.")
 			if len(f.txtLookup(fqdn)) == 0 {
+				f.authzFailed = true
 				http.Error(w, `{"status":"invalid"}`, http.StatusOK)
 				return
 			}
@@ -140,6 +150,7 @@ func New(t *testing.T, chalHost string) *Server {
 		// challenge server.
 		resp, err := http.Get("http://" + f.chalHost + acme.ChallengePath + "tok-e2e")
 		if err != nil || resp.StatusCode != 200 {
+			f.authzFailed = true
 			http.Error(w, `{"status":"invalid"}`, http.StatusOK)
 			return
 		}

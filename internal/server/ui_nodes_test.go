@@ -19,6 +19,7 @@ import (
 // a member gets 404, and a nil kube client renders the "not configured"
 // message instead of erroring.
 func TestUINodesPage(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	cp := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -77,6 +78,7 @@ func TestUINodesPage(t *testing.T) {
 // property that matters most here — that submitting the Nebius creds form
 // never renders the raw PEM bytes back into the page.
 func TestUINodesPageGPUProviderSurface(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	sealer, err := secret.New(make([]byte, 32))
 	if err != nil {
@@ -161,6 +163,7 @@ func TestUINodesPageGPUProviderSurface(t *testing.T) {
 // TestUINodesPageNoKube asserts a nil kube client renders the "not
 // configured" message instead of erroring.
 func TestUINodesPageNoKube(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st})
 	admin, err := st.CreateUser("root@b.co", "password123", "admin")

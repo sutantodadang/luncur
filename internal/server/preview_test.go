@@ -26,6 +26,7 @@ import (
 // leading/trailing dashes trimmed, and an empty result falling back to a
 // non-empty placeholder.
 func TestSanitizeBranch(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ in, want string }{
 		{"main", "main"},
 		{"develop", "develop"},
@@ -47,6 +48,7 @@ func TestSanitizeBranch(t *testing.T) {
 // trailing dash), and actually accepted by store.CreateEnvironment — the
 // real acceptance test for "leaves room for the <app>-<env> host label".
 func TestSanitizeBranchTruncatesLongNames(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("feature-branch-", 5) // 75 chars
 	got := sanitizeBranch(long)
 	if len(got) > maxSanitizedBranch {
@@ -120,6 +122,7 @@ func previewTestServer(t *testing.T) (*server, *[]string) {
 // the stubbed teardownPreview) a matching preview and no-ops when there is
 // none.
 func TestRouteBranch(t *testing.T) {
+	t.Parallel()
 	srv, _ := previewTestServer(t)
 	st := srv.st
 
@@ -214,6 +217,7 @@ func TestRouteBranch(t *testing.T) {
 // branch, env vars copied) into luncur-<p>-<sanitized>, and a second call
 // for the same branch is idempotent — same environment, no duplicate app.
 func TestEnsurePreview(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st})
 
@@ -338,6 +342,7 @@ func seedPreviewAddon(t *testing.T, srv *server, st *store.Store, env store.Envi
 // logical dump so it's created empty with a warning, and an app attached to
 // the base addon gets its preview counterpart attached to the new addon too.
 func TestClonePreviewAddons(t *testing.T) {
+	t.Parallel()
 	srv, _ := previewTestServer(t)
 	exec := &fakeExecer{out: "PGDUMPDATA"}
 	srv.execer = exec
@@ -438,6 +443,7 @@ func TestClonePreviewAddons(t *testing.T) {
 // get created (empty) in the preview — the exec failure only turns into a
 // warning for that one addon, it never aborts the rest of the loop.
 func TestClonePreviewAddonsPerAddonFailureWarns(t *testing.T) {
+	t.Parallel()
 	srv, _ := previewTestServer(t)
 	srv.execer = &fakeExecer{err: fmt.Errorf("pod gone")}
 	st := srv.st
@@ -480,6 +486,7 @@ func TestClonePreviewAddonsPerAddonFailureWarns(t *testing.T) {
 // postgres addon is still created (empty) in the preview, with a warning
 // explaining exec was unavailable rather than a panic or hard failure.
 func TestClonePreviewAddonsNoExecerWarns(t *testing.T) {
+	t.Parallel()
 	srv, _ := previewTestServer(t) // execer left nil
 	st := srv.st
 
@@ -518,6 +525,7 @@ func TestClonePreviewAddonsNoExecerWarns(t *testing.T) {
 // TestTeardownPreview covers Task 15's core: tearing down a preview deletes
 // its addon rows, its app rows, and the environment row itself.
 func TestTeardownPreview(t *testing.T) {
+	t.Parallel()
 	srv, _ := previewTestServer(t)
 	st := srv.st
 
@@ -567,6 +575,7 @@ func TestTeardownPreview(t *testing.T) {
 // environment (even one explicitly passed in, as if a caller's kind filter
 // had a bug) is never torn down.
 func TestTeardownPreviewRefusesStanding(t *testing.T) {
+	t.Parallel()
 	srv, _ := previewTestServer(t)
 	st := srv.st
 
@@ -599,6 +608,7 @@ func TestTeardownPreviewRefusesStanding(t *testing.T) {
 // itself is left untouched, only asserting no error): the PR-close/
 // branch-delete path actually removes the preview's environment row.
 func TestRouteBranchPRCloseTearsDownPreviewForReal(t *testing.T) {
+	t.Parallel()
 	srv, _ := previewTestServer(t)
 	st := srv.st
 
@@ -635,6 +645,7 @@ func TestRouteBranchPRCloseTearsDownPreviewForReal(t *testing.T) {
 // backdated) standing environment both survive — the kind=='preview' filter
 // protects standing environments regardless of age.
 func TestReapPreviews(t *testing.T) {
+	t.Parallel()
 	srv, _ := previewTestServer(t)
 	st := srv.st
 
@@ -692,6 +703,7 @@ func TestReapPreviews(t *testing.T) {
 // TestReapPreviewsHonorsTTLSetting proves the preview_ttl_days setting
 // actually changes reapPreviews' cutoff, not just that some fixed TTL works.
 func TestReapPreviewsHonorsTTLSetting(t *testing.T) {
+	t.Parallel()
 	srv, _ := previewTestServer(t)
 	st := srv.st
 
@@ -791,6 +803,7 @@ func decodePreviews(t *testing.T, resp *http.Response) []map[string]any {
 // 404s (the kind=='preview' guard), and deleting the real preview tears it
 // down.
 func TestPreviewsEndpoints(t *testing.T) {
+	t.Parallel()
 	srv, st := previewHTTPServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
@@ -878,6 +891,7 @@ func stProjectID(t *testing.T, st *store.Store, name string) int64 {
 // override clones from that environment instead of the project's
 // configured preview base.
 func TestCreatePreviewFromOverride(t *testing.T) {
+	t.Parallel()
 	srv, st := previewHTTPServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
@@ -928,6 +942,7 @@ func TestCreatePreviewFromOverride(t *testing.T) {
 // redeploy) that standing environment: ensurePreview refuses instead, so a
 // webhook push can never trigger an unintended standing-env rollout.
 func TestEnsurePreviewRefusesStandingEnvName(t *testing.T) {
+	t.Parallel()
 	srv, _ := previewTestServer(t)
 	st := srv.st
 

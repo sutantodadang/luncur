@@ -23,6 +23,7 @@ func auditCount(t *testing.T, st *store.Store) int {
 // TestAuditRecordsSuccessfulMutation checks the base case: an authed POST
 // mutation gets one row whose action/target come from the matched route.
 func TestAuditRecordsSuccessfulMutation(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "audit-admin@b.co", "admin")
 
@@ -46,6 +47,7 @@ func TestAuditRecordsSuccessfulMutation(t *testing.T) {
 }
 
 func TestAuditSkipsGET(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "audit-get@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p1"}`).Body.Close()
@@ -62,6 +64,7 @@ func TestAuditSkipsGET(t *testing.T) {
 }
 
 func TestAuditSkipsUnauthenticatedMutation(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	before := auditCount(t, st)
 	resp := doAuthed(t, "POST", srv.URL+"/v1/projects", "", `{"name":"noauth"}`)
@@ -75,6 +78,7 @@ func TestAuditSkipsUnauthenticatedMutation(t *testing.T) {
 }
 
 func TestAuditSkipsFailedMutation(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	member := seedUserToken(t, st, "audit-member@b.co", "member")
 
@@ -93,6 +97,7 @@ func TestAuditSkipsFailedMutation(t *testing.T) {
 // TestAuditRecordsUIFormPost mirrors ui_test.go's session-cookie + CSRF
 // submission flow for a uiPage-wrapped POST.
 func TestAuditRecordsUIFormPost(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	seedUserToken(t, st, "audit-ui@b.co", "admin")
 	u, err := st.GetUserByEmail("audit-ui@b.co")
@@ -126,6 +131,7 @@ func TestAuditRecordsUIFormPost(t *testing.T) {
 // TestUIAuditPaginationAndFilter covers the audit page's pagination (one
 // extra row fetched to decide "has next") and its user/contains filters.
 func TestUIAuditPaginationAndFilter(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	seedUserToken(t, st, "audit-pg@b.co", "admin")
 	u, err := st.GetUserByEmail("audit-pg@b.co")
@@ -191,6 +197,7 @@ func TestUIAuditPaginationAndFilter(t *testing.T) {
 // TestAuditRecordsLogin checks the two API-login cases: success gets a row
 // with the fixed action name, failure gets none.
 func TestAuditRecordsLogin(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	if _, err := st.CreateUser("audit-login@b.co", "pw123456", "member"); err != nil {
 		t.Fatal(err)
@@ -227,6 +234,7 @@ func TestAuditRecordsLogin(t *testing.T) {
 // TestAuditRecordsWebhookTrigger reuses webhook_test.go's HMAC fixtures to
 // check a valid webhook push records a row under the "webhook" user.
 func TestAuditRecordsWebhookTrigger(t *testing.T) {
+	t.Parallel()
 	srv, st := webhookTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -257,6 +265,7 @@ func TestAuditRecordsWebhookTrigger(t *testing.T) {
 // secret: DELETE /v1/invites/{token}. The stored target must be the route
 // pattern, never the raw token, anywhere in the audit_log table.
 func TestAuditRedactsInviteToken(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "audit-invite@b.co", "admin")
 
@@ -307,6 +316,7 @@ func TestAuditRedactsInviteToken(t *testing.T) {
 // TestAuditRetentionZeroKeepsForever checks that audit_retention_days=0
 // disables the opportunistic prune the middleware runs after every append.
 func TestAuditRetentionZeroKeepsForever(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "audit-retain@b.co", "admin")
 
@@ -333,6 +343,7 @@ func TestAuditRetentionZeroKeepsForever(t *testing.T) {
 
 // TestAuditAPIAdminOnly checks GET /v1/audit's admin gate and the 200-row cap.
 func TestAuditAPIAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "audit-api-admin@b.co", "admin")
 	member := seedUserToken(t, st, "audit-api-member@b.co", "member")
@@ -369,6 +380,7 @@ func TestAuditAPIAdminOnly(t *testing.T) {
 }
 
 func TestAuditAPIEntriesNeverNull(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "audit-empty@b.co", "admin")
 	resp := doAuthed(t, "GET", srv.URL+"/v1/audit", admin, "")
@@ -385,6 +397,7 @@ func TestAuditAPIEntriesNeverNull(t *testing.T) {
 // TestUIAuditPageAdminOnly checks /ui/audit renders rows for an admin and
 // 404s a member, matching /ui/users's non-admin policy.
 func TestUIAuditPageAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	seedUserToken(t, st, "audit-uipage-admin@b.co", "admin")
 	seedUserToken(t, st, "audit-uipage-member@b.co", "member")

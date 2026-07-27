@@ -12,6 +12,7 @@ import (
 )
 
 func TestInviteEndpointsAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	adminTok := seedUserToken(t, st, "inv-admin@b.co", "admin")
 	memberTok := seedUserToken(t, st, "inv-member@b.co", "member")
@@ -74,6 +75,7 @@ func TestInviteEndpointsAdminOnly(t *testing.T) {
 }
 
 func TestUsersListAndDelete(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	adminTok := seedUserToken(t, st, "u-admin@b.co", "admin")
 	memberTok := seedUserToken(t, st, "u-member@b.co", "member")
@@ -164,6 +166,7 @@ func mailerServer(t *testing.T, m mail.Mailer, merr error) (*httptest.Server, *s
 }
 
 func TestInviteEmailSent(t *testing.T) {
+	t.Parallel()
 	fm := &fakeMailer{}
 	srv, st := mailerServer(t, fm, nil)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
@@ -192,6 +195,7 @@ func TestInviteEmailSent(t *testing.T) {
 }
 
 func TestInviteEmailSendFailure(t *testing.T) {
+	t.Parallel()
 	fm := &fakeMailer{err: fmt.Errorf("connection refused")}
 	srv, st := mailerServer(t, fm, nil)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
@@ -224,6 +228,7 @@ func TestInviteEmailSendFailure(t *testing.T) {
 }
 
 func TestInviteEmailUnconfigured(t *testing.T) {
+	t.Parallel()
 	// Real default mailer factory, no smtp_host setting -> ErrUnconfigured.
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
@@ -247,6 +252,7 @@ func TestInviteEmailUnconfigured(t *testing.T) {
 }
 
 func TestInviteNoEmailFieldNoEmailedKey(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 

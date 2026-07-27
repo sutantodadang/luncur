@@ -18,6 +18,7 @@ import (
 )
 
 func TestUILoginFlow(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	if _, err := st.CreateUser("u@example.com", "password123", "member"); err != nil {
 		t.Fatal(err)
@@ -110,6 +111,7 @@ func TestUILoginFlow(t *testing.T) {
 }
 
 func TestUILoginBadPassword(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	if _, err := st.CreateUser("u2@example.com", "password123", "member"); err != nil {
 		t.Fatal(err)
@@ -143,6 +145,7 @@ func TestUILoginBadPassword(t *testing.T) {
 }
 
 func TestRootRedirectsToUI(t *testing.T) {
+	t.Parallel()
 	srv, _ := testServer(t)
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -163,6 +166,7 @@ func TestRootRedirectsToUI(t *testing.T) {
 }
 
 func TestBearerWinsOverCookie(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	bearerTok := seedUserToken(t, st, "bearer@example.com", "member")
 	cookieTok := seedUserToken(t, st, "cookie@example.com", "member")
@@ -256,6 +260,7 @@ func uiPost(t *testing.T, client *http.Client, target string, csrfCk, sessionCk 
 }
 
 func TestUIProjectVisibleOnList(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -295,6 +300,7 @@ func TestUIProjectVisibleOnList(t *testing.T) {
 // before the app is created (mirroring handleUICreateApp's existing
 // pre-create validation style: http.Error, not a redirect).
 func TestUICreateAppBuildPath(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	doAuthed(t, "POST", srv.URL+"/v1/projects", seedUserToken(t, st, "root@b.co", "admin"), `{"name":"web"}`).Body.Close()
 
@@ -337,6 +343,7 @@ func TestUICreateAppBuildPath(t *testing.T) {
 // them present (e.g. postgres needs POSTGRES_PASSWORD on first start). Uses an
 // empty image so no deploy is triggered — this exercises just the env path.
 func TestUICreateAppEnv(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -370,6 +377,7 @@ func TestUICreateAppEnv(t *testing.T) {
 // TestUICreateAppBuildPath's style), and checked with kind=worker is
 // rejected with 400 before the app is created.
 func TestUICreateAppInternalCheckbox(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	doAuthed(t, "POST", srv.URL+"/v1/projects", seedUserToken(t, st, "root@b.co", "admin"), `{"name":"web"}`).Body.Close()
 
@@ -408,6 +416,7 @@ func TestUICreateAppInternalCheckbox(t *testing.T) {
 }
 
 func TestUIAppVisibleOnProjectPage(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -443,6 +452,7 @@ func TestUIAppVisibleOnProjectPage(t *testing.T) {
 }
 
 func TestUIAppDetailShowsStatus(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -492,6 +502,7 @@ func TestUIAppDetailShowsStatus(t *testing.T) {
 // need a live kube client: POST scale should succeed, persist, and redirect
 // with 303.
 func TestUIScalePersists(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -528,6 +539,7 @@ func TestUIScalePersists(t *testing.T) {
 // form, checks they persist, then loads the app page and checks the form
 // shows the new values back (value=, pre-filled) rather than a placeholder.
 func TestUIScaleResourcesPersistAndPrefill(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -582,6 +594,7 @@ func TestUIScaleResourcesPersistAndPrefill(t *testing.T) {
 // form, checks it persists, then loads the app page and checks the form
 // shows the new value back (value=, pre-filled).
 func TestUIHealthPersistsAndPrefill(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -633,6 +646,7 @@ func TestUIHealthPersistsAndPrefill(t *testing.T) {
 // TestRunsAPI's nodes/framework override: the run-now form's nodes/framework
 // fields flow through startRun into the created run row.
 func TestUIRunCreateNodesFramework(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -674,6 +688,7 @@ func TestUIRunCreateNodesFramework(t *testing.T) {
 // form redirects back to the app page with ?err= (error banner), same idiom
 // as handleUIGPUQuota's invalid-quota redirect — no run row is created.
 func TestUIRunCreateBadFramework(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := kubeServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -721,6 +736,7 @@ func TestUIRunCreateBadFramework(t *testing.T) {
 // the Runs card's training-defaults form (303 back to the app page), and the
 // reloaded page shows the controls pre-filled with the new values.
 func TestUITrainingDefaultsPersist(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube: SetAppTraining is store-only
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -776,6 +792,7 @@ func TestUITrainingDefaultsPersist(t *testing.T) {
 // the training-defaults form: an unknown framework redirects with ?err= and
 // leaves the app's stored defaults untouched.
 func TestUITrainingDefaultsBadFramework(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"ml"}`).Body.Close()
@@ -813,6 +830,7 @@ func TestUITrainingDefaultsBadFramework(t *testing.T) {
 // kubernetes_unavailable), NOT silently redirect, and must not create a
 // deployment row it could never build.
 func TestUIDeployGitAppWithoutKube503(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -838,6 +856,7 @@ func TestUIDeployGitAppWithoutKube503(t *testing.T) {
 }
 
 func TestUIMemberCannotSeeForeignProject(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -865,6 +884,7 @@ func TestUIMemberCannotSeeForeignProject(t *testing.T) {
 }
 
 func TestUIAppDetailContainsEventSourceScript(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -921,6 +941,7 @@ func TestUIAppDetailContainsEventSourceScript(t *testing.T) {
 // the app page then lists it, and removing it via the delete form makes it
 // disappear again.
 func TestUIDomainAddAndDelete(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -986,6 +1007,7 @@ func TestUIDomainAddAndDelete(t *testing.T) {
 // TestUIPostRequiresCSRF exercises the double-submit CSRF check on both a
 // uiPage-wrapped POST (scale) and the standalone login POST.
 func TestUIPostRequiresCSRF(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -1062,6 +1084,7 @@ func TestUIPostRequiresCSRF(t *testing.T) {
 // marker. Reuses rollback_test.go's fake-registry + kube-backed fixture,
 // adapted for the UI's session-cookie login flow.
 func TestUIRollback(t *testing.T) {
+	t.Parallel()
 	registryHost := fakeRegistry(t, "proj/web:1", "proj/web:2")
 	srv, st := rollbackServer(t, registryHost)
 
@@ -1125,6 +1148,7 @@ func TestUIRollback(t *testing.T) {
 // successful POST logs the new user straight in and burns the invite, and
 // the created user carries the invite's role.
 func TestUIRegisterFlow(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin, err := st.CreateUser("root@b.co", "password123", "admin")
 	if err != nil {
@@ -1230,6 +1254,7 @@ func TestUIRegisterFlow(t *testing.T) {
 // users, can create an invite (which then shows up as a registration link),
 // and can delete another user but not themselves.
 func TestUIUsersPageAdminOnly(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin, err := st.CreateUser("root@b.co", "password123", "admin")
 	if err != nil {
@@ -1349,6 +1374,7 @@ func extractTextarea(t *testing.T, body string) string {
 // the editor with the error and the user's text preserved, and an
 // unsupported kind 404s.
 func TestUIYAMLEditor(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
@@ -1448,6 +1474,7 @@ func TestUIYAMLEditor(t *testing.T) {
 // page, which then lists the new keys (values are never rendered, per the
 // sealed-at-rest UI contract).
 func TestUIEnvBulk(t *testing.T) {
+	t.Parallel()
 	_, srv, st, _ := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -1504,6 +1531,7 @@ func TestUIEnvBulk(t *testing.T) {
 // fake-kube fixture (addonTestServer) since these handlers need a kube
 // client to provision/delete cluster objects.
 func TestUIAddons(t *testing.T) {
+	t.Parallel()
 	_, srv, st, _ := addonTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -1607,6 +1635,7 @@ func TestUIAddons(t *testing.T) {
 // template guards: an "ejected" badge appears, and the scale form — a
 // stand-in for every mutation form the template hides — is gone.
 func TestUIAppPageShowsEjected(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"p"}`).Body.Close()
@@ -1650,6 +1679,7 @@ func TestUIAppPageShowsEjected(t *testing.T) {
 // TestUIInviteEmailNote: the invite form with an email posts, sends via
 // the mailer, and redirects to a page that shows the outcome note.
 func TestUIInviteEmailNote(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	s := newServer(Deps{Store: st})
 	fm := &fakeMailer{}
@@ -1718,6 +1748,7 @@ func TestUIInviteEmailNote(t *testing.T) {
 // TestUIAdoptButton: an ejected app's page shows the adopt form; posting it
 // clears the flag and the page returns to normal management UI.
 func TestUIAdoptButton(t *testing.T) {
+	t.Parallel()
 	srv, st, _, _ := ejectTestServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -1785,6 +1816,7 @@ func TestUIAdoptButton(t *testing.T) {
 // as "session"), revoking an API token removes it, and revoking the
 // session token logs the browser out.
 func TestUITokensPage(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	apiTok := seedUserToken(t, st, "u@b.co", "member")
 	_ = apiTok
@@ -1869,6 +1901,7 @@ func TestUITokensPage(t *testing.T) {
 // the UI form (303 back to the app page), listed on the page, removed via the
 // remove form (purge unchecked -> no kube needed).
 func TestUIVolumeAddAndRemove(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -1935,6 +1968,7 @@ func TestUIVolumeAddAndRemove(t *testing.T) {
 // TestUIVolumeSectionHiddenForCron verifies the Volumes section never renders
 // on a cron app's page.
 func TestUIVolumeSectionHiddenForCron(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t) // no kube
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
@@ -1973,6 +2007,7 @@ func TestUIVolumeSectionHiddenForCron(t *testing.T) {
 // card-grid summary line (app/live/building counts) and member count, and
 // gates the inline create-project form to admins only.
 func TestUIProjectsPageShowsCardSummary(t *testing.T) {
+	t.Parallel()
 	srv, st := testServer(t)
 	admin := seedUserToken(t, st, "root@b.co", "admin")
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
@@ -2065,6 +2100,7 @@ func TestUIProjectsPageShowsCardSummary(t *testing.T) {
 // "<kind>|<msg>" value escaped, root path, and a short expiry — the shape
 // base.html's foot script expects to read and clear on the next page load.
 func TestFlash(t *testing.T) {
+	t.Parallel()
 	w := httptest.NewRecorder()
 	flash(w, "ok", "app created")
 

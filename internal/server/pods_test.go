@@ -24,6 +24,7 @@ type podsResponse struct {
 }
 
 func TestAppPodsEndpoint(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	p, err := st.CreateProject("proj")
 	if err != nil {
@@ -121,6 +122,7 @@ func TestAppPodsEndpoint(t *testing.T) {
 // TestUIAppPodsCard asserts the app page's Pods card renders a running
 // pod's name.
 func TestUIAppPodsCard(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	p, err := st.CreateProject("proj")
 	if err != nil {
@@ -170,6 +172,7 @@ func TestUIAppPodsCard(t *testing.T) {
 // live table into the collapsed history disclosure with a plain-language
 // exit reason instead of the raw kube reason.
 func TestUIAppPodsSummaryAndHistory(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	p, err := st.CreateProject("proj")
 	if err != nil {
@@ -245,6 +248,7 @@ func TestUIAppPodsSummaryAndHistory(t *testing.T) {
 }
 
 func TestAppPodsNoKube(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st})
 	admin := seedUserToken(t, st, "root@b.co", "admin")

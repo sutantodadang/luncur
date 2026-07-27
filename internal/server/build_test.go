@@ -68,6 +68,7 @@ func buildServer(t *testing.T) (*server, *store.Store, *[]string) {
 }
 
 func TestRunBuildSuccess(t *testing.T) {
+	t.Parallel()
 	srv, st, actions := buildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -174,6 +175,7 @@ func jobJSONEnv(t *testing.T, jobJSON []byte) map[string]string {
 }
 
 func TestRunBuildIncludesCacheRefByDefault(t *testing.T) {
+	t.Parallel()
 	srv, st, jobJSON := captureBuildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -209,6 +211,7 @@ func TestRunBuildIncludesCacheRefByDefault(t *testing.T) {
 // Dockerfile's `ARG VITE_API_URL` see a real value instead of its baked-in
 // default.
 func TestRunBuildIncludesAppEnvAsBuildArgs(t *testing.T) {
+	t.Parallel()
 	srv, st, jobJSON := captureBuildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -244,6 +247,7 @@ func TestRunBuildIncludesAppEnvAsBuildArgs(t *testing.T) {
 // a Build Job with no LUNCUR_BUILDARG_* vars at all — build jobs for
 // env-less apps stay byte-identical to before this feature existed.
 func TestRunBuildOmitsBuildArgsWithNoEnv(t *testing.T) {
+	t.Parallel()
 	srv, st, jobJSON := captureBuildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -275,6 +279,7 @@ func TestRunBuildOmitsBuildArgsWithNoEnv(t *testing.T) {
 }
 
 func TestRunBuildOmitsCacheRefWhenDisabled(t *testing.T) {
+	t.Parallel()
 	srv, st, jobJSON := captureBuildServer(t)
 	if err := st.SetSetting("build_cache", "off"); err != nil {
 		t.Fatal(err)
@@ -352,6 +357,7 @@ func setSealedNotifyURLForTest(t *testing.T, srv *server, url string) {
 }
 
 func TestRunBuildNotifiesOnSuccess(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := buildServer(t)
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +411,7 @@ func TestRunBuildNotifiesOnSuccess(t *testing.T) {
 }
 
 func TestRunBuildNotifiesOnFailure(t *testing.T) {
+	t.Parallel()
 	srv, st := buildServerFailingJob(t)
 	ch := make(chan []byte, 4)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -461,6 +468,7 @@ func TestRunBuildNotifiesOnFailure(t *testing.T) {
 // isn't blind before the builder pod exists — the actual builder pod
 // entrypoint output is appended by a real cluster, not this fake-kube test.
 func TestRunBuildWritesMilestoneLog(t *testing.T) {
+	t.Parallel()
 	srv, st, _ := buildServer(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -498,6 +506,7 @@ func TestRunBuildWritesMilestoneLog(t *testing.T) {
 // TestRunBuildFailureLogsMilestone checks fail()'s "build failed: <err>"
 // milestone lands in the deploy log before the deployment flips to failed.
 func TestRunBuildFailureLogsMilestone(t *testing.T) {
+	t.Parallel()
 	srv, st := buildServerFailingJob(t)
 	p, err := st.CreateProject("web")
 	if err != nil {
@@ -532,6 +541,7 @@ func TestRunBuildFailureLogsMilestone(t *testing.T) {
 // TestBuildLogfNoopWithoutSource guards buildLogf's nil-src early return:
 // no data dir configured (s.src == nil) must never panic or create files.
 func TestBuildLogfNoopWithoutSource(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st})
 	srv.buildLogf(store.Deployment{ID: "1"}, "hello %s", "world")
@@ -663,6 +673,7 @@ func TestWatchBuildPodLogsWatcherErrorOnce(t *testing.T) {
 // TestBuildTimeoutDefaultAndSetting checks buildTimeout falls back to 15
 // minutes when build_timeout_minutes is unset, and honors it once set.
 func TestBuildTimeoutDefaultAndSetting(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newServer(Deps{Store: st})
 
@@ -683,6 +694,7 @@ func TestBuildTimeoutDefaultAndSetting(t *testing.T) {
 // order so, e.g., an OOM during "npm install" still reports OOM rather than
 // a dependency failure.
 func TestDeployFailureHint(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		logTail string

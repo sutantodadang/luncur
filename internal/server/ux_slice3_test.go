@@ -29,6 +29,7 @@ func writeDeployLog(t *testing.T, dataDir, deployID, content string) {
 // build log tail), and the next command plus a link into Ship's deploy
 // history row for that deploy's log.
 func TestUIOverviewErrorCardOnFailedDeploy(t *testing.T) {
+	t.Parallel()
 	dataDir := t.TempDir()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st, DataDir: dataDir})
@@ -75,6 +76,7 @@ func TestUIOverviewErrorCardOnFailedDeploy(t *testing.T) {
 // TestUIOverviewErrorCardAbsentOnLive checks the error card never renders
 // when the latest deploy is live.
 func TestUIOverviewErrorCardAbsentOnLive(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st})
 	admin := seedUserToken(t, st, "root@b.co", "admin")
@@ -106,6 +108,7 @@ func TestUIOverviewErrorCardAbsentOnLive(t *testing.T) {
 // env vars and no deploys lands on step 2 ("Set environment variables")
 // current, with the env form expanded inline.
 func TestUILaunchSequenceNeverDeployed(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st})
 	admin := seedUserToken(t, st, "root@b.co", "admin")
@@ -152,6 +155,7 @@ func TestUILaunchSequenceNeverDeployed(t *testing.T) {
 // for good the moment the app has any deployment row at all, replaced by
 // the normal status board + pipeline.
 func TestUILaunchSequenceAbsentOnceDeployed(t *testing.T) {
+	t.Parallel()
 	st := newTestStore(t)
 	srv := newHTTPTest(t, Deps{Store: st})
 	admin := seedUserToken(t, st, "root@b.co", "admin")
