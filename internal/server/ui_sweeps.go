@@ -215,7 +215,7 @@ func (s *server) handleUISweepCreate(w http.ResponseWriter, r *http.Request, u s
 
 	req, err := parseUISweepRequest(r)
 	if err != nil {
-		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error())+"&tab=jobs", http.StatusSeeOther)
 		return
 	}
 
@@ -225,7 +225,7 @@ func (s *server) handleUISweepCreate(w http.ResponseWriter, r *http.Request, u s
 	}
 	if _, _, _, err := s.startSweep(a, req, createdBy); err != nil {
 		if errors.Is(err, errNotDeployed) || errors.Is(err, errBadSweepRequest) {
-			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error())+"&tab=jobs", http.StatusSeeOther)
 			return
 		}
 		log.Printf("ui start sweep: %v", err)
@@ -233,7 +233,7 @@ func (s *server) handleUISweepCreate(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 	flash(w, "ok", "sweep started")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabJobs)
 }
 
 // parseUISweepRequest reads the start-sweep form into startSweep's request
@@ -307,7 +307,7 @@ func (s *server) handleUISweepStop(w http.ResponseWriter, r *http.Request, u sto
 		}
 	}
 	flash(w, "ok", "sweep stopped")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabJobs)
 }
 
 // handleUISweepTrials is the Sweeps card's polling fragment: the

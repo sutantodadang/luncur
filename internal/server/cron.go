@@ -172,7 +172,7 @@ func (s *server) handleUIPauseCron(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 	flash(w, "ok", "cron paused")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabJobs)
 }
 
 // handleUIResumeCron is handleResumeCron's UI twin.
@@ -205,7 +205,7 @@ func (s *server) handleUIResumeCron(w http.ResponseWriter, r *http.Request, u st
 		return
 	}
 	flash(w, "ok", "cron resumed")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabJobs)
 }
 
 // handleUITriggerCron is handleTriggerCron's UI twin.
@@ -234,7 +234,7 @@ func (s *server) handleUITriggerCron(w http.ResponseWriter, r *http.Request, u s
 	d, err := s.st.LatestDeployment(a.ID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && d.Status != "live") {
 		flash(w, "err", "app not deployed yet")
-		uiRedirect(w, r, p, a)
+		uiRedirect(w, r, p, a, tabJobs)
 		return
 	}
 	if err != nil {
@@ -252,9 +252,9 @@ func (s *server) handleUITriggerCron(w http.ResponseWriter, r *http.Request, u s
 	if _, err := s.kube.TriggerCronJob(r.Context(), env.Namespace, a.Name, time.Now().Unix()); err != nil {
 		log.Printf("ui trigger cron %s: %v", a.Name, err)
 		flash(w, "err", "could not start run")
-		uiRedirect(w, r, p, a)
+		uiRedirect(w, r, p, a, tabJobs)
 		return
 	}
 	flash(w, "ok", "run started")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabJobs)
 }

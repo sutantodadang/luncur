@@ -119,7 +119,7 @@ func TestUISweepCreateFormStartsSweepAndShowsOnPage(t *testing.T) {
 		t.Fatalf("sweeps = %+v, want 1 running", sweeps)
 	}
 
-	status, body := getUIPage(t, client, srv.URL, "/ui/projects/ml/apps/train", ck)
+	status, body := getUIPage(t, client, srv.URL, "/ui/projects/ml/apps/train?tab=jobs", ck)
 	if status != http.StatusOK {
 		t.Fatalf("GET app page: want 200, got %d", status)
 	}
@@ -307,7 +307,7 @@ func TestUISweepStopIdempotentAndHighlightsBest(t *testing.T) {
 		t.Fatalf("second stop: want 303, got %d", resp.StatusCode)
 	}
 
-	status, body := getUIPage(t, client, srv.URL, "/ui/projects/ml/apps/train", ck)
+	status, body := getUIPage(t, client, srv.URL, "/ui/projects/ml/apps/train?tab=jobs", ck)
 	if status != http.StatusOK {
 		t.Fatalf("GET app page: want 200, got %d", status)
 	}

@@ -88,6 +88,13 @@
   .card {
     @apply rounded-md border border-line bg-panel p-5;
   }
+  /* Error contract card (DESIGN.md "Error contract") — red 2px left
+     border, product-wide: what broke / why / next command. */
+  .err3 {
+    @apply rounded-md border border-line bg-panel p-5;
+    border-left-width: 2px;
+    border-left-color: var(--c-fail);
+  }
   .chip {
     @apply inline-flex items-center rounded-[4px] px-2 py-0.5 font-mono text-[11px] font-medium;
   }
@@ -126,6 +133,86 @@
 
   .seclabel {
     @apply font-mono text-[11px] font-semibold uppercase tracking-[.14em] text-mut;
+  }
+
+  /* Workspace tree (DESIGN.md "UX Architecture (v3)"): a literal indented
+     mono tree, project/ -> env/ -> app, one status dot per app. <details>/
+     <summary> gives free collapse with zero JS; the native marker is
+     hidden (engineered look, not a default disclosure triangle) since the
+     trailing "/" on the project row already reads as expandable. */
+  .tree {
+    @apply max-h-[50vh] overflow-y-auto;
+  }
+  .tree-row {
+    @apply block rounded px-3 py-1 font-mono text-[12px] text-mut no-underline hover:text-inkhi;
+  }
+  .tree-link {
+    @apply text-inherit no-underline hover:text-inkhi;
+  }
+  summary.tree-row {
+    @apply cursor-pointer list-none;
+  }
+  summary.tree-row::-webkit-details-marker {
+    display: none;
+  }
+  .tree-indent-1 {
+    @apply pl-6;
+  }
+  .tree-indent-2 {
+    @apply pl-9 flex items-center gap-1.5;
+  }
+  /* Active app row (DESIGN.md Layout: "Active item = 2px orange left-border"). */
+  .tree-app.active {
+    @apply border-l-2 border-signal pl-[calc(2.25rem-2px)] text-inkhi;
+  }
+  .tree-more {
+    @apply text-[11px];
+  }
+  .tree-badge {
+    @apply font-mono text-[9px] uppercase tracking-wider text-build;
+  }
+  .tree-dot {
+    @apply inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-mut;
+  }
+  .tree-dot-ok {
+    @apply bg-phosphor;
+  }
+  .tree-dot-build {
+    @apply bg-build animate-pulse;
+  }
+  .tree-dot-fail {
+    @apply bg-fail;
+  }
+  .tree-dot-muted {
+    @apply bg-mut;
+  }
+
+  /* Tab bar (DESIGN.md UX Architecture v3) — hybrid naming (verb + mono
+     noun-subtitle). Active tab gets a 2px signal-orange bottom border and
+     inkhi verb text; the accent-discipline rule ("orange only for primary
+     actions + active-nav") extends this to tabs as a nav indicator. */
+  .tab-link {
+    @apply flex flex-col gap-0.5 border-b-2 border-transparent px-3 py-2 text-mut no-underline hover:text-inkhi;
+  }
+  .tab-link.active {
+    @apply border-signal text-inkhi;
+  }
+
+  /* Deploy pipeline boxes (DESIGN.md "Deploy state machine rendered
+     literally") — bordered mono boxes, → separators. Completed stages green,
+     the in-flight stage signal orange, a dead stage fail red; everything
+     else stays the neutral/pending look. */
+  .pipe-stage {
+    @apply inline-flex items-center gap-1.5 rounded-[4px] border border-line px-2.5 py-1 font-mono text-[11px] text-mut;
+  }
+  .pipe-done {
+    @apply border-[rgba(61,220,132,.35)] text-phosphor;
+  }
+  .pipe-current {
+    @apply border-signal text-signal;
+  }
+  .pipe-fail {
+    @apply border-[rgba(255,77,79,.35)] text-fail;
   }
 
   .cli-echo {
@@ -181,28 +268,6 @@
     background-position: -1px -1px;
   }
 
-  /* Toasts (DESIGN.md §Motion) — bottom-right stack, panel-raised bg, 2px
-     left border. Green for success, fail red for error; never orange
-     (accent discipline). One line, no titles, no icons. */
-  .toast-wrap {
-    @apply fixed bottom-4 right-4 z-50 flex flex-col gap-2;
-  }
-  .toast {
-    @apply rounded-[5px] border border-line bg-panel2 px-4 py-2.5 text-[13px] text-ink shadow-lg;
-    border-left-width: 2px;
-    animation: toast-in 120ms ease-out;
-  }
-  .toast-ok {
-    border-left-color: var(--c-phosphor);
-  }
-  .toast-err {
-    border-left-color: var(--c-fail);
-  }
-  .toast.fade-out {
-    opacity: 0;
-    transition: opacity 120ms ease-in;
-  }
-
   /* Global request bar (DESIGN.md §Motion) — 2px, signal orange,
      indeterminate sweep, boosted navigations only (see base.html's
      htmx:beforeRequest handler — it checks e.detail.boosted so 15s
@@ -250,17 +315,6 @@
   .htmx-settling:not([hx-trigger*="every"]) {
     opacity: 1;
     transition: opacity 120ms ease-out;
-  }
-}
-
-@keyframes toast-in {
-  from {
-    transform: translateY(8px);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
   }
 }
 

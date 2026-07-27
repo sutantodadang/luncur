@@ -47,10 +47,10 @@ func TestUIWebhookRowGating(t *testing.T) {
 		return string(body)
 	}
 
-	if strings.Contains(getPage("/ui/projects/proj/apps/tb"), "<h2>Webhook</h2>") {
+	if strings.Contains(getPage("/ui/projects/proj/apps/tb?tab=ship"), "<h2>Webhook</h2>") {
 		t.Fatal("tarball app page should not show a Webhook section")
 	}
-	if !strings.Contains(getPage("/ui/projects/proj/apps/g"), "<h2>Webhook</h2>") {
+	if !strings.Contains(getPage("/ui/projects/proj/apps/g?tab=ship"), "<h2>Webhook</h2>") {
 		t.Fatal("git app page should show a Webhook section")
 	}
 }
@@ -91,7 +91,7 @@ func TestUIWebhookEnableShowsSecretOnceThenDisable(t *testing.T) {
 	}
 
 	// Reload: the secret is gone, but the URL + disable button remain.
-	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/g", nil)
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/g?tab=ship", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestUIWebhookEnableShowsSecretOnceThenDisable(t *testing.T) {
 		t.Fatalf("disable webhook: want 303, got %d", disResp.StatusCode)
 	}
 
-	req2, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/g", nil)
+	req2, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/g?tab=ship", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,62 @@
+{{/* app_overview is the Overview tab (DESIGN.md "Overview = status board"):
+     one status board card answering is-it-up / what's-deployed / what-
+     changed-last in one fixation, the deploy pipeline rendered literally,
+     the 3-line error contract when the latest deploy failed, and — for an
+     app that has never deployed — the Launch Sequence checklist in place
+     of the status board + pipeline entirely (DESIGN.md "Launch
+     Sequence"). */}}
+{{define "app_overview"}}
+{{if .LaunchSequence}}
+<div class="card mb-6">
+<h2 class="font-mono text-[11px] font-semibold uppercase tracking-[.14em] text-mut">LAUNCH SEQUENCE &mdash; {{.App.Name}}</h2>
+<table class="tbl mt-1">
+{{range $step := .LaunchSequence.Steps}}<tr>
+  <td class="w-6">{{if eq $step.State "done"}}<span class="text-phosphor">&#9679;</span>{{else if eq $step.State "skipped"}}<span class="text-mut">&check;</span>{{else if eq $step.State "current"}}<span class="text-signal">&#9678;</span>{{else}}<span class="text-mut">&#9675;</span>{{end}}</td>
+  <td>{{$step.Label}}</td>
+  <td class="text-right font-mono text-xs text-mut">{{$step.Hint}}</td>
+</tr>
+{{if eq $step.State "current"}}<tr><td></td><td colspan="2">
+{{if eq $step.Label "Set environment variables"}}
+  {{template "envSetForm" $}}
+  <div class="cli-echo mt-1">$ <b>luncur env set {{$.App.Name}} KEY=VALUE</b></div>
+{{else if eq $step.Label "First deploy"}}
+  {{if $.LaunchSequence.DeployCurrent}}
+  {{template "deployFromGitButton" $}}
+  <div class="cli-echo mt-1">$ <b>luncur deploy {{$.App.Name}}</b></div>
+  {{else}}
+  <div class="cli-echo mt-1">$ <b>luncur deploy {{$.App.Name}} --image &lt;ref&gt;</b></div>
+  {{end}}
+{{end}}
+</td></tr>{{end}}
+{{end}}
+</table>
+</div>
+{{else}}
+<div class="card mb-4">
+<h2>Status</h2>
+<p class="mb-2 flex flex-wrap items-center gap-2">
+  {{template "statuschip" .Chip}}
+  {{if .Deploys}}<span class="font-mono text-[13px] text-ink">deployed #{{.LatestSeq}} &middot; {{(index .Deploys 0).ImageTag}} &middot; {{(index .Deploys 0).CreatedAt}}</span>{{else}}<span class="text-sm text-mut">not deployed yet</span>{{end}}
+</p>
+{{if eq .App.Kind "web"}}<p class="mb-2 font-mono text-[11px] text-mut">{{if .App.Internal}}<code title="cluster-only — not reachable from a browser">{{.InternalURL}}</code> <a class="hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/open" target="_blank" rel="noopener">open</a> <code>luncur forward {{.Project.Name}}/{{.App.Name}} {{.App.Port}}</code>{{else}}<a class="hover:text-signal" href="{{.URL}}">{{.URL}}</a>{{end}}</p>{{end}}
+{{if .Deploys}}<p class="font-mono text-[11px] text-mut">last event: <span class="status-{{(index .Deploys 0).Status}}">{{(index .Deploys 0).Status}}</span> &middot; {{(index .Deploys 0).CreatedAt}}</p>{{end}}
+<p class="font-mono text-[11px] text-mut">wanted {{.PodsView.Wanted}} &middot; running {{.PodsView.Running}} &middot; restarts {{.PodsView.Restarts}}</p>
+</div>
+
+<div class="card mb-6">
+<h2>Deploy pipeline</h2>
+<div class="flex flex-wrap items-center gap-2">
+{{range $i, $st := .PipelineStages}}{{if $i}}<span class="text-mut">&rarr;</span>{{end}}<span class="pipe-stage {{$st.Class}}">{{if eq $st.Class "pipe-done"}}&check; {{else if eq $st.Class "pipe-fail"}}&cross; {{end}}{{$st.Name}}</span>{{end}}
+</div>
+<div class="cli-echo">$ <b>luncur status {{.App.Name}} --project {{.Project.Name}} --env {{.Env.Name}}</b></div>
+</div>
+
+{{if .ErrorCard}}
+<div class="err3 mb-6">
+<p class="mb-1 text-sm text-ink">Deploy #{{.ErrorCard.Seq}} failed while {{.ErrorCard.Stage}}.</p>
+<p class="mb-2 text-sm text-mut">{{.ErrorCard.Why}}</p>
+<div class="cli-echo">$ <b>luncur logs {{.App.Name}} --deploy {{.ErrorCard.Seq}} --project {{.Project.Name}}</b> &middot; <a class="hover:text-signal" href="?tab=ship#deploy-{{.ErrorCard.Seq}}">view log</a></div>
+</div>
+{{end}}
+{{end}}
+{{end}}

@@ -168,8 +168,8 @@ func TestUIEject(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("eject: want 303, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web" {
-		t.Fatalf("Location = %q, want the app page", loc)
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web?tab=wire" {
+		t.Fatalf("Location = %q, want the app page's Wire tab", loc)
 	}
 
 	p, err := st.GetProject("proj")
@@ -225,8 +225,8 @@ func TestUIDomainRetry(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("domain retry: want 303, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web" {
-		t.Fatalf("Location = %q, want the app page", loc)
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web?tab=wire" {
+		t.Fatalf("Location = %q, want the app page's Wire tab", loc)
 	}
 
 	list, err := st.ListDomains(id)
@@ -403,6 +403,14 @@ func TestUIInternalAppShowsOpenAndForwardHint(t *testing.T) {
 	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"web"}`).Body.Close()
 	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"api","port":3000,"internal":true}`).Body.Close()
 	doAuthed(t, "POST", srv.URL+"/v1/projects/web/apps", admin, `{"name":"pub","port":4000}`).Body.Close()
+	// Shipped apps: the never-deployed Launch Sequence checklist (DESIGN.md
+	// "Launch Sequence") replaces the status card this test asserts on.
+	if _, err := st.CreateDeployment(appID(t, st, "web", "api"), "live", "img:1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateDeployment(appID(t, st, "web", "pub"), "live", "img:1", 0); err != nil {
+		t.Fatal(err)
+	}
 
 	u, err := st.GetUserByEmail("root@b.co")
 	if err != nil {

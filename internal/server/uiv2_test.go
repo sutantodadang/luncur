@@ -105,7 +105,7 @@ func TestUIDeployHistoryAndRollback(t *testing.T) {
 	ck := uiSessionCookie(t, st, u.ID)
 	client := noRedirectClient()
 
-	status, body := getUIPage(t, client, srv.URL, "/ui/projects/proj/apps/web", ck)
+	status, body := getUIPage(t, client, srv.URL, "/ui/projects/proj/apps/web?tab=ship", ck)
 	if status != http.StatusOK {
 		t.Fatalf("app page: want 200, got %d", status)
 	}
@@ -208,7 +208,7 @@ func TestUIEjectBanner(t *testing.T) {
 
 	const bannerText = "no longer manages its manifests"
 
-	status, body := getUIPage(t, client, srv.URL, "/ui/projects/proj/apps/web", ck)
+	status, body := getUIPage(t, client, srv.URL, "/ui/projects/proj/apps/web?tab=ship", ck)
 	if status != http.StatusOK {
 		t.Fatalf("ejected app page: want 200, got %d", status)
 	}
@@ -216,7 +216,7 @@ func TestUIEjectBanner(t *testing.T) {
 		t.Fatalf("ejected app page should show the eject banner, got: %s", body)
 	}
 
-	status, body = getUIPage(t, client, srv.URL, "/ui/projects/proj/apps/web2", ck)
+	status, body = getUIPage(t, client, srv.URL, "/ui/projects/proj/apps/web2?tab=ship", ck)
 	if status != http.StatusOK {
 		t.Fatalf("non-ejected app page: want 200, got %d", status)
 	}
@@ -248,7 +248,7 @@ func TestUIAppPageBuildLogFollow(t *testing.T) {
 	}
 	ck := uiSessionCookie(t, st, u.ID)
 
-	status, body := getUIPage(t, noRedirectClient(), srv.URL, "/ui/projects/proj/apps/web", ck)
+	status, body := getUIPage(t, noRedirectClient(), srv.URL, "/ui/projects/proj/apps/web?tab=observe", ck)
 	if status != http.StatusOK {
 		t.Fatalf("app page: want 200, got %d", status)
 	}
