@@ -42,7 +42,7 @@ control teaches its CLI command back (see CLI-echo). A user should never be
 - **Scale:** 2xs(2) xs(4) sm(8) md(12) lg(16) xl(24) 2xl(32) 3xl(48)
 
 ## Layout
-- **Approach:** grid-disciplined. Fixed left sidebar (180–224px, bg `#0D0D0F`): brand `luncur_` (orange underscore), nav groups with mono uppercase group labels, active item = 2px orange left-border. Main column: mono breadcrumb (`project / app`), page title row with actions right-aligned, then stacked section cards.
+- **Approach:** grid-disciplined. Fixed left sidebar (180–224px, bg `#0D0D0F`): brand `luncur_` (orange underscore), then the workspace tree (see UX Architecture), then two collapsed groups max: "Server" (Nodes, Backups, Audit, Users, Settings, Doctor) and "You" (Tokens, SSH keys). Active item = 2px orange left-border. Main column: mono breadcrumb-address (see UX Architecture), page title row with actions right-aligned, then the tab bar and its content.
 - **Max content width:** 1152px (max-w-6xl), column centered in the main area (`mx-auto`). On ≥1536px viewports (2K+) the cap widens to 1600px (`2xl:max-w-[1600px]`) — dense operator screens should use the space, but forms/tables must never stretch edge-to-edge on ultrawide.
 - **Inline actions:** every resource row (deploy, domain, volume, addon, key, token) carries its actions in the rightmost cell — never navigate away for a single action. Destructive = `btn-danger` (outlined red) + `hx-confirm`.
 - **Border radius:** 4px (chips/inputs) · 5px (buttons) · 6px (cards/panels) · 8px (page-level mockups). Nothing rounder — engineered, not friendly.
@@ -50,9 +50,62 @@ control teaches its CLI command back (see CLI-echo). A user should never be
 
 ## Motion
 - **Approach:** minimal-functional. Motion exists to answer "did my click register?" and "is it still working?" — never decoration.
-- **Allowed:** htmx swap fade 120ms ease-out; `building` chip pulse (1.6s ease-in-out); log-cursor blink; global request bar (2px, signal orange, top of viewport, indeterminate sweep, boosted navigations only — never on background polls); button busy state (spinner rotation + 60% opacity + pointer-events none while `.htmx-request`); toast slide-in 120ms ease-out / fade-out 120ms ease-in, auto-dismiss 4s. Nothing else.
-- **Toasts:** bottom-right stack, panel-raised bg, 2px left border — phosphor green for success, fail red for error. Text 13px Plex Sans; never orange (accent discipline). One line, no titles, no icons.
+- **Allowed:** htmx swap fade 120ms ease-out; `building` chip pulse (1.6s ease-in-out); log-cursor blink; global request bar (2px, signal orange, top of viewport, indeterminate sweep, boosted navigations only — never on background polls); button busy state (spinner rotation + 60% opacity + pointer-events none while `.htmx-request`); event-ticker line swap (plain text replace, no animation). Nothing else.
+- **Event ticker (replaces toasts, v3):** one persistent single-row monospace strip fixed to the bottom of the viewport — terminal bg, phosphor-green text, muted timestamp. Shows the latest event (action results, deploy transitions), SSE/poll-fed; clicking it opens the audit log. Operators get a wire feed, not consumer toasts. Never orange (accent discipline).
 - **Easing:** enter(ease-out) exit(ease-in). **Duration:** micro(120ms) only; spinner/bar loops excepted.
+
+## UX Architecture (v3)
+The visual system above is LOCKED; this chapter governs structure. Root cause it
+fixes: the app page was ~17 stacked sections in one scroll on top of a flat
+sidebar — control-room skin on a filing-cabinet skeleton.
+
+- **Sidebar = workspace tree.** A literal indented mono tree, `project/ →
+  environment/ → app`, one status dot per app (green healthy / amber pulsing
+  building / muted idle). Projects collapse. The tree's job is orientation —
+  indentation teaches the hierarchy the way a file tree does. Active app = 2px
+  orange left-border.
+- **App page = 6 hybrid tabs** (verb + mono noun-subtitle), server-rendered
+  htmx partials with `hx-push-url`:
+  - **Overview** — status · activity (default landing)
+  - **Ship** — deploys · rollback · git (deploy-from-git, history, webhook, git token, raw YAML)
+  - **Observe** — logs · pods · metrics (logs, pods, live metrics, health check)
+  - **Wire** — env · domains · scale
+  - **Data** — volumes · addons (+ addon-data restore)
+  - **Jobs** — cron · runs · sweeps (hidden when the app kind has none)
+  Danger zone is NOT a tab: a `-- destructive --` mono disclosure at the bottom
+  of Wire. Tabs whose noun set changes must update their subtitle in the same PR.
+- **Breadcrumb = address, not trail.** `project / env ▾ / app @ deploy #N ▾` —
+  every segment a switcher. The deploy number makes deploys a visible fourth
+  level of the hierarchy.
+- **Overview = status board.** Answers three questions in one fixation, no
+  scroll: is it up (one status line) · what's deployed (deploy #, image/commit,
+  age, URL) · what changed last (latest event line). The plane is fine, and
+  you're the pilot.
+- **Deploy state machine rendered literally.** `queued → building → deploying →
+  live` as a horizontal pipeline; completed stages green with elapsed time,
+  current stage signal orange, failed stage red.
+- **Error contract (3 lines, product-wide).** Every error surface shows exactly:
+  what broke (one sentence) · most likely why (one sentence) · the next command
+  (copyable CLI-echo + a button that runs it). No bare status codes anywhere.
+- **Pods presentation.** Lead with `wanted N · running N · restarts N (24h)`.
+  Exited/Failed pods live in a collapsed `history (N exited)` disclosure with a
+  plain-language exit reason ("Evicted — node memory pressure", "OOM-killed —
+  512Mi limit hit"), backed by the hourly failed-pod GC.
+- **Launch Sequence (guided flows).** A new app's Overview shows a numbered
+  pre-flight checklist (connect repo → env vars → first deploy → domain). Steps
+  check REALITY, not click history — a step done via CLI shows done. The current
+  step expands its actual form inline (htmx swap); completed steps collapse to
+  one line + timestamp. Same observe-reality pattern for domain setup (DNS
+  record shown copyable, "Check DNS" polls, cert issuance as a mini state
+  machine) and rollback (confirmation shows the diff: image tag, env-hash, pods
+  that will cycle — not "are you sure?").
+- **Session Transcript.** Collapsible mono panel: every UI action this session
+  rendered as the CLI commands executed on the user's behalf, in order, copyable
+  as a shell script. CLI-echo inverted — the session becomes a runbook. Rendered
+  from the existing audit log.
+- **CLI-echo carries full coordinates** everywhere: `luncur deploy waku-backend
+  --project waku --env production` — users absorb the object model from commands
+  they were going to copy anyway.
 
 ## Parity Contract (functional design rule)
 The UI is incomplete while any CLI verb lacks a UI control. Known gaps to close
@@ -73,3 +126,9 @@ description must say why not.
 | 2026-07-05 | Light theme + toggle added | Owner request (field feedback); tokens moved to CSS variables |
 | 2026-07-06 | Content column centered + 1600px cap on 2xl | Owner field feedback: 2K monitor left content hugging the sidebar with a dead right half; was max-w-5xl left-aligned |
 | 2026-07-08 | Feedback motion added: toasts, request bar, button busy | Owner field feedback: no click feedback, no loading state anywhere; motion allowlist extended, still functional-only |
+| 2026-07-27 | UX Architecture v3: tree sidebar, 6 hybrid tabs, breadcrumb-address | /design-consultation; owner: app page (17 sections, 1 scroll) + flat sidebar were the confusion root; visual system kept LOCKED |
+| 2026-07-27 | Hybrid tab naming (verb + noun subtitle) | Verb nav = CLI-isomorphic differentiator; noun subtitle removes day-1 learning cost |
+| 2026-07-27 | Launch Sequence checklist observes real state | Guided flows answer "what next"; checking reality (not clicks) keeps CLI parity — CLI actions tick UI steps |
+| 2026-07-27 | Error contract: what / why / next command, product-wide | Owner pain: errors lacked next steps; CLI-echo makes the third line free |
+| 2026-07-27 | Event ticker REPLACES toasts (reverses 2026-07-08) | Owner chose knowingly: operators get a wire feed; ticker doubles as audit-log entry point |
+| 2026-07-27 | Session Transcript panel | CLI-echo inverted: session as copyable runbook; rendered from existing audit log — cheapest differentiator |
