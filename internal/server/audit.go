@@ -181,7 +181,7 @@ func (s *server) handleUIAudit(w http.ResponseWriter, r *http.Request, u store.U
 		entries = entries[:auditPageSize]
 	}
 
-	s.renderPage(w, "audit.html", map[string]any{
+	s.renderPage(w, r, "audit.html", map[string]any{
 		"User": u, "Entries": entries,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 		"FilterUser": user, "FilterContains": contains,

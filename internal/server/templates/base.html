@@ -17,18 +17,33 @@
 {{define "nav"}}
 <aside class="flex w-56 flex-col gap-1 border-r border-line bg-side p-4">
   <a href="/ui/" class="mb-4 text-lg font-semibold text-inkhi">luncur<span class="text-signal">_</span></a>
-  <a href="/ui/" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Projects</a>
-  <a href="/ui/tokens" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Tokens</a>
-  <a href="/ui/sshkeys" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">SSH keys</a>
+  <p class="seclabel mb-1 px-3">Workspace</p>
+  <div class="tree mb-2 flex flex-col gap-0.5 overflow-y-auto">
+    {{range .Tree}}
+    <details class="tree-project"{{if .Open}} open{{end}}>
+      <summary class="tree-row"><a href="{{.URL}}" class="tree-link">{{.Name}}/</a></summary>
+      {{range .Envs}}
+      <div class="tree-row tree-indent-1"><a href="{{.URL}}" class="tree-link">{{.Name}}{{if .Preview}} <span class="tree-badge">preview</span>{{end}}/</a></div>
+      {{range .Apps}}
+      <a href="{{.URL}}" class="tree-row tree-indent-2 tree-app{{if .Active}} active{{end}}"><span class="tree-dot {{.DotClass}}"></span>{{.Name}}</a>
+      {{end}}
+      {{if .MoreCount}}<a href="{{.MoreURL}}" class="tree-row tree-indent-2 tree-more">+{{.MoreCount}} more</a>{{end}}
+      {{end}}
+    </details>
+    {{end}}
+  </div>
   {{if .IsAdmin}}
-  <p class="seclabel mt-3 mb-1 px-3">Admin</p>
+  <p class="seclabel mt-2 mb-1 px-3">Server</p>
+  <a href="/ui/nodes" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Nodes</a>
+  <a href="/ui/backups" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Backups</a>
   <a href="/ui/audit" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Audit</a>
   <a href="/ui/users" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Users</a>
-  <a href="/ui/backups" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Backups</a>
   <a href="/ui/settings" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Settings</a>
-  <a href="/ui/nodes" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Nodes</a>
   <a href="/ui/doctor" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Doctor</a>
   {{end}}
+  <p class="seclabel mt-2 mb-1 px-3">You</p>
+  <a href="/ui/tokens" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">Tokens</a>
+  <a href="/ui/sshkeys" class="block rounded px-3 py-1.5 text-sm text-mut hover:text-inkhi">SSH keys</a>
   <div class="mt-auto flex flex-col gap-2">
     <a href="/ui/account" class="truncate text-xs text-mut hover:text-inkhi">{{.User.Email}}</a>
     <button type="button" id="theme-toggle" class="btn-ghost w-full font-mono text-[11px]"></button>

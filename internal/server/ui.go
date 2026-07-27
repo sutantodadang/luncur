@@ -218,15 +218,35 @@ func (s *server) checkCSRF(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func (s *server) renderPage(w http.ResponseWriter, page string, data any) {
+// renderPage is the single choke point every full-page UI render passes
+// through, which makes it the cheapest place to hang the workspace tree
+// (DESIGN.md's "UX Architecture (v3)" sidebar) on every authenticated page
+// without threading tree-building through two dozen handlers individually.
+// It only computes the tree for data shaped like the rest of the UI layer
+// always shapes it (map[string]any with a "User"), so login/register's
+// pre-auth, User-less renders stay tree-less automatically. Nothing here
+// runs for htmx tab-switch fragments — those never call renderPage at all
+// (see renderAppDetail's own ExecuteTemplate branch), so there's no
+// separate fragment check needed.
+func (s *server) renderPage(w http.ResponseWriter, r *http.Request, page string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if m, ok := data.(map[string]any); ok {
+		if u, ok := m["User"].(store.User); ok {
+			tree, err := s.uiTreeData(u, r.URL.Path)
+			if err != nil {
+				log.Printf("ui tree: %v", err)
+			} else {
+				m["Tree"] = tree
+			}
+		}
+	}
 	if err := s.tmpl.ExecuteTemplate(w, page, data); err != nil {
 		log.Printf("render %s: %v", page, err)
 	}
 }
 
 func (s *server) handleUILoginPage(w http.ResponseWriter, r *http.Request) {
-	s.renderPage(w, "login.html", map[string]any{"CSRF": s.csrf(w, r)})
+	s.renderPage(w, r, "login.html", map[string]any{"CSRF": s.csrf(w, r)})
 }
 
 func (s *server) handleUILogin(w http.ResponseWriter, r *http.Request) {
@@ -234,23 +254,23 @@ func (s *server) handleUILogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		s.renderPage(w, "login.html", map[string]any{"Error": "invalid form", "CSRF": s.csrf(w, r)})
+		s.renderPage(w, r, "login.html", map[string]any{"Error": "invalid form", "CSRF": s.csrf(w, r)})
 		return
 	}
 	u, err := s.st.Authenticate(r.PostFormValue("email"), r.PostFormValue("password"))
 	if errors.Is(err, store.ErrAuthFailed) {
-		s.renderPage(w, "login.html", map[string]any{"Error": "wrong email or password", "CSRF": s.csrf(w, r)})
+		s.renderPage(w, r, "login.html", map[string]any{"Error": "wrong email or password", "CSRF": s.csrf(w, r)})
 		return
 	}
 	if err != nil {
 		log.Printf("ui login: %v", err)
-		s.renderPage(w, "login.html", map[string]any{"Error": "internal error", "CSRF": s.csrf(w, r)})
+		s.renderPage(w, r, "login.html", map[string]any{"Error": "internal error", "CSRF": s.csrf(w, r)})
 		return
 	}
 	tok, err := s.st.CreateSessionToken(u.ID, "session")
 	if err != nil {
 		log.Printf("ui session token: %v", err)
-		s.renderPage(w, "login.html", map[string]any{"Error": "internal error", "CSRF": s.csrf(w, r)})
+		s.renderPage(w, r, "login.html", map[string]any{"Error": "internal error", "CSRF": s.csrf(w, r)})
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -576,7 +596,7 @@ func (s *server) handleUIProjects(w http.ResponseWriter, r *http.Request, u stor
 	if e := r.URL.Query().Get("err"); e != "" {
 		banner = "error: " + e
 	}
-	s.renderPage(w, "projects.html", map[string]any{
+	s.renderPage(w, r, "projects.html", map[string]any{
 		"User": u, "Projects": cards, "Banner": banner,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	})
@@ -866,7 +886,7 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 	case "nokube":
 		perrNote = "kubernetes unavailable — cannot destroy apps"
 	}
-	s.renderPage(w, "apps.html", map[string]any{
+	s.renderPage(w, r, "apps.html", map[string]any{
 		"User": u, "Project": p, "Apps": rows, "Addons": addons, "Members": members, "Banner": banner,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin", "PErrNote": perrNote,
 		"GPUQuota": p.GPUQuota, "Pipelines": pipelines, "Previews": previews,
@@ -1616,7 +1636,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		}
 		return
 	}
-	s.renderPage(w, "app.html", data)
+	s.renderPage(w, r, "app.html", data)
 }
 
 // handleUIWebhookEnable is enableWebhook's UI twin: same core, but renders
@@ -2772,7 +2792,7 @@ func (s *server) registerPageData(w http.ResponseWriter, r *http.Request, token 
 // handleUIRegisterPage is session-less: anyone with a valid invite link can
 // reach it without being logged in.
 func (s *server) handleUIRegisterPage(w http.ResponseWriter, r *http.Request) {
-	s.renderPage(w, "register.html", s.registerPageData(w, r, r.URL.Query().Get("token"), nil))
+	s.renderPage(w, r, "register.html", s.registerPageData(w, r, r.URL.Query().Get("token"), nil))
 }
 
 // handleUIRegister is session-less, like handleUIRegisterPage: checkCSRF
@@ -2787,7 +2807,7 @@ func (s *server) handleUIRegister(w http.ResponseWriter, r *http.Request) {
 	token := r.PostFormValue("token")
 	inv, err := s.st.GetValidInvite(token)
 	if err != nil {
-		s.renderPage(w, "register.html", s.registerPageData(w, r, token, nil))
+		s.renderPage(w, r, "register.html", s.registerPageData(w, r, token, nil))
 		return
 	}
 
@@ -2805,7 +2825,7 @@ func (s *server) handleUIRegister(w http.ResponseWriter, r *http.Request) {
 		}
 		// Invite stays unburned: re-render the same form the user just
 		// filled in, with an error, so the token is still usable.
-		s.renderPage(w, "register.html", s.registerPageData(w, r, token, map[string]any{"Error": errMsg}))
+		s.renderPage(w, r, "register.html", s.registerPageData(w, r, token, map[string]any{"Error": errMsg}))
 		return
 	}
 
@@ -2819,7 +2839,7 @@ func (s *server) handleUIRegister(w http.ResponseWriter, r *http.Request) {
 	tok, err := s.st.CreateSessionToken(u.ID, "session")
 	if err != nil {
 		log.Printf("ui register session token: %v", err)
-		s.renderPage(w, "register.html", s.registerPageData(w, r, token, map[string]any{"Error": "internal error"}))
+		s.renderPage(w, r, "register.html", s.registerPageData(w, r, token, map[string]any{"Error": "internal error"}))
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -2875,7 +2895,7 @@ func (s *server) handleUIUsers(w http.ResponseWriter, r *http.Request, u store.U
 	case "missing":
 		pwNote = "no such user"
 	}
-	s.renderPage(w, "users.html", map[string]any{
+	s.renderPage(w, r, "users.html", map[string]any{
 		"User": u, "Users": users, "Invites": rows, "Self": u.ID,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 		"MailNote": mailNote, "PwNote": pwNote,
@@ -2940,7 +2960,7 @@ func accountNote(r *http.Request) (note, errMsg string) {
 // not here).
 func (s *server) handleUIAccount(w http.ResponseWriter, r *http.Request, u store.User) {
 	note, errMsg := accountNote(r)
-	s.renderPage(w, "account.html", map[string]any{
+	s.renderPage(w, r, "account.html", map[string]any{
 		"User": u, "CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 		"Note": note, "Error": errMsg,
 	})
@@ -3018,7 +3038,7 @@ func (s *server) handleUITokens(w http.ResponseWriter, r *http.Request, u store.
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.renderPage(w, "tokens.html", map[string]any{
+	s.renderPage(w, r, "tokens.html", map[string]any{
 		"User": u, "Tokens": tokens,
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin",
 	})
@@ -3159,7 +3179,7 @@ func (s *server) renderEditPage(w http.ResponseWriter, r *http.Request, u store.
 	if errMsg != "" {
 		data["Error"] = errMsg
 	}
-	s.renderPage(w, "edit.html", data)
+	s.renderPage(w, r, "edit.html", data)
 }
 
 // editDoc renders the app (base or with overrides, per withOverrides) and

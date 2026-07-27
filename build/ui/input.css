@@ -128,6 +128,58 @@
     @apply font-mono text-[11px] font-semibold uppercase tracking-[.14em] text-mut;
   }
 
+  /* Workspace tree (DESIGN.md "UX Architecture (v3)"): a literal indented
+     mono tree, project/ -> env/ -> app, one status dot per app. <details>/
+     <summary> gives free collapse with zero JS; the native marker is
+     hidden (engineered look, not a default disclosure triangle) since the
+     trailing "/" on the project row already reads as expandable. */
+  .tree {
+    @apply max-h-[50vh] overflow-y-auto;
+  }
+  .tree-row {
+    @apply block rounded px-3 py-1 font-mono text-[12px] text-mut no-underline hover:text-inkhi;
+  }
+  .tree-link {
+    @apply text-inherit no-underline hover:text-inkhi;
+  }
+  summary.tree-row {
+    @apply cursor-pointer list-none;
+  }
+  summary.tree-row::-webkit-details-marker {
+    display: none;
+  }
+  .tree-indent-1 {
+    @apply pl-6;
+  }
+  .tree-indent-2 {
+    @apply pl-9 flex items-center gap-1.5;
+  }
+  /* Active app row (DESIGN.md Layout: "Active item = 2px orange left-border"). */
+  .tree-app.active {
+    @apply border-l-2 border-signal pl-[calc(2.25rem-2px)] text-inkhi;
+  }
+  .tree-more {
+    @apply text-[11px];
+  }
+  .tree-badge {
+    @apply font-mono text-[9px] uppercase tracking-wider text-build;
+  }
+  .tree-dot {
+    @apply inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-mut;
+  }
+  .tree-dot-ok {
+    @apply bg-phosphor;
+  }
+  .tree-dot-build {
+    @apply bg-build animate-pulse;
+  }
+  .tree-dot-fail {
+    @apply bg-fail;
+  }
+  .tree-dot-muted {
+    @apply bg-mut;
+  }
+
   /* Tab bar (DESIGN.md UX Architecture v3) — hybrid naming (verb + mono
      noun-subtitle). Active tab gets a 2px signal-orange bottom border and
      inkhi verb text; the accent-discipline rule ("orange only for primary

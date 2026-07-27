@@ -51,7 +51,7 @@ func (s *server) handleUIBackups(w http.ResponseWriter, r *http.Request, u store
 			Uploaded: b.Uploaded, CreatedAt: b.CreatedAt,
 		})
 	}
-	s.renderPage(w, "backups.html", map[string]any{
+	s.renderPage(w, r, "backups.html", map[string]any{
 		"User": u, "Backups": out, "CSRF": s.csrf(w, r), "IsAdmin": true,
 	})
 }
