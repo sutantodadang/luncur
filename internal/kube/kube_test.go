@@ -442,6 +442,13 @@ func TestAppPodsAndNodeIP(t *testing.T) {
 			Name: "other-1", Namespace: "proj",
 			Labels: map[string]string{"app.kubernetes.io/name": "other"},
 		}},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "web-dead", Namespace: "proj",
+				Labels: map[string]string{"app.kubernetes.io/name": "web"},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodFailed},
+		},
 		&corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{Name: "n1"},
 			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
@@ -466,6 +473,58 @@ func TestAppPodsAndNodeIP(t *testing.T) {
 	}
 	if ip != "203.0.113.9" {
 		t.Fatalf("ip = %q, want ExternalIP preferred", ip)
+	}
+}
+
+// TestDeleteFailedPods asserts only ReplicaSet-owned Failed pods (eviction
+// corpses) are removed: a Job-owned Failed pod keeps its history, and a
+// Running ReplicaSet-owned pod is untouched.
+func TestDeleteFailedPods(t *testing.T) {
+	rsFailed := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "rs-dead", Namespace: "proj",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "web-rs"}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodFailed},
+	}
+	jobFailed := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "job-dead", Namespace: "proj",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: "build-1"}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodFailed},
+	}
+	rsRunning := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "rs-alive", Namespace: "proj",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "web-rs"}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	cs := k8sfake.NewSimpleClientset(rsFailed, jobFailed, rsRunning)
+	c := NewForTest(nil, cs)
+
+	n, err := c.DeleteFailedPods(context.Background(), "proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("DeleteFailedPods deleted %d, want 1", n)
+	}
+
+	list, err := cs.CoreV1().Pods("proj").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, p := range list.Items {
+		names[p.Name] = true
+	}
+	if names["rs-dead"] {
+		t.Fatalf("rs-dead should have been deleted: %v", names)
+	}
+	if !names["job-dead"] || !names["rs-alive"] {
+		t.Fatalf("job-dead and rs-alive should remain: %v", names)
 	}
 }
 
