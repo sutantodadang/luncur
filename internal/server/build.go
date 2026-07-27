@@ -349,6 +349,13 @@ func (s *server) finishDeploy(ctx context.Context, p store.Project, env store.En
 	if err := s.st.TouchEnvironment(env.ID); err != nil {
 		log.Printf("touch environment %s after deploy: %v", env.Name, err)
 	}
+	// A successful rollout is the natural moment to clear eviction corpses:
+	// the old ReplicaSet's Failed pods are pure noise once the new one is up.
+	if n, err := s.kube.DeleteFailedPods(ctx, env.Namespace); err != nil {
+		log.Printf("gc failed pods after deploy %s: %v", d.ID, err)
+	} else if n > 0 {
+		log.Printf("deploy %s: deleted %d dead pod(s) in %s", d.ID, n, env.Namespace)
+	}
 	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: s.appURLForEnv(a, env.Name, p.DefaultEnv)})
 	return nil
 }

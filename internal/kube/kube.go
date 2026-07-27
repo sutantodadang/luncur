@@ -653,7 +653,9 @@ func (c *Client) JobEvents(ctx context.Context, namespace, jobName string) ([]st
 }
 
 // AppPods lists pod names carrying the app label Render stamps on
-// every workload (app.kubernetes.io/name=<app>).
+// every workload (app.kubernetes.io/name=<app>). Failed/Succeeded pods are
+// skipped: consumers (log streamer, exec) need an attachable container, and
+// dead pods only produce "container not available" noise.
 func (c *Client) AppPods(ctx context.Context, namespace, app string) ([]string, error) {
 	list, err := c.cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/name=" + app,
@@ -663,9 +665,52 @@ func (c *Client) AppPods(ctx context.Context, namespace, app string) ([]string, 
 	}
 	names := make([]string, 0, len(list.Items))
 	for _, p := range list.Items {
+		if p.Status.Phase == corev1.PodFailed || p.Status.Phase == corev1.PodSucceeded {
+			continue
+		}
 		names = append(names, p.Name)
 	}
 	return names, nil
+}
+
+// DeleteFailedPods removes dead Failed-phase pods left behind by node
+// pressure: kubelet evicts, the Deployment replaces, and Kubernetes never
+// garbage-collects the corpse objects (the default GC threshold is 12500),
+// so they pile up in pod listings forever. Only ReplicaSet-owned pods are
+// deleted — Job/CronJob pods keep their Failed history as debugging
+// evidence, and Job history limits already bound those. Returns how many
+// pods were deleted; a per-pod delete failure is skipped, not fatal.
+func (c *Client) DeleteFailedPods(ctx context.Context, namespace string) (int, error) {
+	if c.cs == nil {
+		return 0, nil
+	}
+	// No status.phase field selector: the fake clientset used in tests
+	// ignores it, and app namespaces are small enough to filter here.
+	list, err := c.cs.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("list pods: %w", err)
+	}
+	deleted := 0
+	for _, p := range list.Items {
+		if p.Status.Phase != corev1.PodFailed {
+			continue
+		}
+		owned := false
+		for _, ref := range p.OwnerReferences {
+			if ref.Kind == "ReplicaSet" {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			continue
+		}
+		if err := c.cs.CoreV1().Pods(namespace).Delete(ctx, p.Name, metav1.DeleteOptions{}); err != nil {
+			continue
+		}
+		deleted++
+	}
+	return deleted, nil
 }
 
 // PodInfo is one pod's live status plus its metrics.k8s.io usage for the
