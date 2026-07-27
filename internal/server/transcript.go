@@ -157,9 +157,9 @@ func tickerSummary(action, target string) string {
 // same shape, which is what keeps the self-perpetuating hx-get/hx-trigger
 // contract alive across outerHTML swaps (same idiom as "statuschip").
 type tickerData struct {
-	Ts       string // "HH:MM:SS"
+	TS       string // "HH:MM:SS"
 	Text     string
-	TsMillis int64
+	TSMillis int64
 	Kind     string // "err" colors Text fail-red; anything else is terminal phosphor
 }
 
@@ -184,11 +184,11 @@ func (s *server) handleUITicker(w http.ResponseWriter, r *http.Request, u store.
 	if len(entries) > 0 {
 		e := entries[0]
 		if len(e.CreatedAt) >= 19 {
-			data.Ts = e.CreatedAt[11:19]
+			data.TS = e.CreatedAt[11:19]
 		}
 		data.Text = tickerSummary(e.Action, e.Target)
 		if t, err := time.Parse("2006-01-02 15:04:05", e.CreatedAt); err == nil {
-			data.TsMillis = t.UnixMilli()
+			data.TSMillis = t.UnixMilli()
 		}
 	} else {
 		data.Text = "no activity yet"
@@ -212,7 +212,7 @@ const transcriptMaxRows = 50
 // "# HH:MM" comment timestamp shown above it, so the whole <pre> stays a
 // valid, copyable shell script.
 type transcriptLine struct {
-	Ts      string
+	TS      string
 	Command string
 }
 
@@ -246,7 +246,7 @@ func (s *server) handleUITranscript(w http.ResponseWriter, r *http.Request, u st
 		if len(ts) >= 16 {
 			ts = ts[11:16]
 		}
-		lines = append(lines, transcriptLine{Ts: ts, Command: cmd})
+		lines = append(lines, transcriptLine{TS: ts, Command: cmd})
 		if len(lines) == transcriptMaxRows {
 			break
 		}

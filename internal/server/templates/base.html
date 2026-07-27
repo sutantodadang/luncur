@@ -208,4 +208,4 @@ if(!window.__luncurUX){
      whole span — carrying its own hx-get/hx-trigger/id forward — so polling
      never stops (same idiom as "statuschip" in app.html). Kind "err" colors
      Text fail-red; anything else stays terminal phosphor. */}}
-{{define "ticker-msg"}}<span id="ticker-msg" data-ts="{{.TsMillis}}" hx-get="/ui/ticker" hx-trigger="load, every 15s" hx-swap="outerHTML"><span class="text-termts">{{.Ts}}</span> <span class="{{if eq .Kind "err"}}text-fail{{else}}text-termtext{{end}}">{{.Text}}</span></span>{{end}}
+{{define "ticker-msg"}}<span id="ticker-msg" data-ts="{{.TSMillis}}" hx-get="/ui/ticker" hx-trigger="load, every 15s" hx-swap="outerHTML"><span class="text-termts">{{.TS}}</span> <span class="{{if eq .Kind "err"}}text-fail{{else}}text-termtext{{end}}">{{.Text}}</span></span>{{end}}

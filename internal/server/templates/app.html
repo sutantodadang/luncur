@@ -109,7 +109,7 @@ function luncurCopyTranscript(btn){
      terminal-pane phosphor-on-dark styling; values the audit log doesn't
      record (form fields) show up as <placeholder> tokens in .Command
      already, so the footnote just explains why. */}}
-{{define "transcript-body"}}{{if .Lines}}<pre id="transcript-pre" class="term overflow-x-auto whitespace-pre">{{range .Lines}}# {{.Ts}}
+{{define "transcript-body"}}{{if .Lines}}<pre id="transcript-pre" class="term overflow-x-auto whitespace-pre">{{range .Lines}}# {{.TS}}
 {{.Command}}
 {{end}}</pre>{{else}}<p id="transcript-pre" class="text-xs text-mut">no mapped actions in the last 4 hours.</p>{{end}}
 <p class="mt-2 text-[11px] text-mut">values elided &mdash; the audit log records which action ran, not the form values it carried (counts, keys, hostnames, ...); placeholders like &lt;n&gt; mark what a real run would fill in.</p>

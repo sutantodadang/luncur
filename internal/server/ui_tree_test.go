@@ -17,7 +17,7 @@ func TestUITreeShowsProjectEnvApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, env := seedDefaultEnv(t, st, p)
+	_, env := seedDefaultEnv(t, st, p)
 	if _, err := st.CreateAppInEnv(env.ID, "backend", 8080, "web", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestUITreeDotClassMatchesStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, env := seedDefaultEnv(t, st, p)
+	_, env := seedDefaultEnv(t, st, p)
 	a, err := st.CreateAppInEnv(env.ID, "api", 8080, "web", "")
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestUITreeActiveAppRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, env := seedDefaultEnv(t, st, p)
+	_, env := seedDefaultEnv(t, st, p)
 	if _, err := st.CreateAppInEnv(env.ID, "backend", 8080, "web", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestUITreeCapsAppsPerEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, env := seedDefaultEnv(t, st, p)
+	_, env := seedDefaultEnv(t, st, p)
 	names := []string{"a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"}
 	for _, n := range names {
 		if _, err := st.CreateAppInEnv(env.ID, n, 8080, "web", ""); err != nil {
