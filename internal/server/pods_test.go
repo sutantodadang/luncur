@@ -152,7 +152,7 @@ func TestUIAppPodsCard(t *testing.T) {
 	}
 	client := noRedirectClient()
 
-	status, body := getUIPage(t, client, srv.URL, "/ui/projects/proj/apps/web", uiSessionCookie(t, st, admin.ID))
+	status, body := getUIPage(t, client, srv.URL, "/ui/projects/proj/apps/web?tab=observe", uiSessionCookie(t, st, admin.ID))
 	if status != http.StatusOK {
 		t.Fatalf("GET app page: want 200, got %d", status)
 	}

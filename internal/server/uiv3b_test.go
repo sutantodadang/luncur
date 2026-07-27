@@ -34,8 +34,8 @@ func TestUICreateAppWithImageDeploys(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("POST create with image: want 303, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web" {
-		t.Fatalf("POST create with image: want Location /ui/projects/proj/apps/web, got %q", loc)
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web?tab=ship" {
+		t.Fatalf("POST create with image: want Location /ui/projects/proj/apps/web?tab=ship, got %q", loc)
 	}
 
 	id := appID(t, st, "proj", "web")

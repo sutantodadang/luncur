@@ -1076,7 +1076,7 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 	if envText := strings.TrimSpace(r.PostFormValue("env")); envText != "" {
 		vars, err := parseDotenv(envText)
 		if err != nil {
-			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("env: "+err.Error()), http.StatusSeeOther)
+			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("env: "+err.Error())+"&tab=ship", http.StatusSeeOther)
 			return
 		}
 		if err := s.setAppEnvBulk(r.Context(), p, env, a, vars); err != nil {
@@ -1090,7 +1090,7 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 			default:
 				log.Printf("ui create app: set env: %v", err)
 			}
-			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(msg), http.StatusSeeOther)
+			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(msg)+"&tab=ship", http.StatusSeeOther)
 			return
 		}
 	}
@@ -1112,21 +1112,21 @@ func (s *server) handleUICreateApp(w http.ResponseWriter, r *http.Request, u sto
 	// the app created — only the deploy itself failed — so we redirect to
 	// the app page with ?err= instead of erroring the whole create.
 	if s.kube == nil {
-		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: kubernetes is not configured"), http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: kubernetes is not configured")+"&tab=ship", http.StatusSeeOther)
 		return
 	}
 	d, err := s.st.CreateDeployment(a.ID, "deploying", image, 0)
 	if err != nil {
 		log.Printf("ui create app: create deployment: %v", err)
-		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: internal error"), http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: internal error")+"&tab=ship", http.StatusSeeOther)
 		return
 	}
 	if err := s.applyImageDeploy(r.Context(), p, env, a, d, image); err != nil {
-		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: "+err.Error()), http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("deploy failed: "+err.Error())+"&tab=ship", http.StatusSeeOther)
 		return
 	}
 	flash(w, "ok", "app created")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabShip)
 }
 
 func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -1138,7 +1138,7 @@ func (s *server) handleUIApp(w http.ResponseWriter, r *http.Request, u store.Use
 	if !ok {
 		return
 	}
-	s.renderAppDetail(w, r, u, p, a, nil)
+	s.renderAppDetail(w, r, u, p, a, uiResolveTab(r, a.Kind), nil)
 }
 
 // uiChipData is the "statuschip" fragment's view model: enough to render
@@ -1305,12 +1305,127 @@ func uiDeployRows(history []store.Deployment, limit int) []uiDeployRow {
 	return rows
 }
 
-// renderAppDetail assembles app.html's full view model and renders it.
-// extra is merged in last (overriding nothing app.html itself sets) — its
-// only current use is handleUIWebhookEnable riding the freshly generated
-// secret along on the same response, instead of a redirect (a redirect
-// would have to carry the secret in the URL, which must never happen).
-func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store.User, p store.Project, a store.App, extra map[string]any) {
+// uiTab enumerates app.html's tab query values (UX Architecture v3, see
+// DESIGN.md). Each is backed by its own "app_<tab>" define block — see
+// internal/server/templates/app_overview.html etc. — rendered standalone as
+// an htmx fragment or embedded in the full page shell.
+type uiTab string
+
+const (
+	tabOverview uiTab = "overview"
+	tabShip     uiTab = "ship"
+	tabObserve  uiTab = "observe"
+	tabWire     uiTab = "wire"
+	tabData     uiTab = "data"
+	tabJobs     uiTab = "jobs"
+)
+
+// uiResolveTab reads r's ?tab= query param, falling back to tabOverview for
+// anything invalid: an absent/unknown value, or "jobs" on an app kind that
+// has no Jobs tab (only job/cron apps show cron/runs/sweeps controls).
+func uiResolveTab(r *http.Request, kind string) uiTab {
+	switch tab := uiTab(r.URL.Query().Get("tab")); tab {
+	case tabOverview, tabShip, tabObserve, tabWire, tabData:
+		return tab
+	case tabJobs:
+		if kind == "job" || kind == "cron" {
+			return tabJobs
+		}
+	}
+	return tabOverview
+}
+
+// uiTabURL builds the app page URL for p/a on the given tab — the shared
+// suffix every POST action handler redirects back to (see uiRedirect), so
+// each control lands on the tab that owns it instead of always bouncing to
+// Overview.
+func uiTabURL(p store.Project, a store.App, tab uiTab) string {
+	return "/ui/projects/" + p.Name + "/apps/" + a.Name + "?tab=" + string(tab)
+}
+
+// uiTabItem is one link in app.html's tab bar: hybrid naming (verb +
+// mono noun-subtitle, DESIGN.md UX Architecture v3).
+type uiTabItem struct {
+	Key      string
+	Verb     string
+	Subtitle string
+	Active   bool
+}
+
+// uiTabItems builds the six-tab bar, Jobs present only for kinds that carry
+// cron/runs/sweeps controls (job, cron).
+func uiTabItems(kind string, active uiTab) []uiTabItem {
+	items := []uiTabItem{
+		{Key: "overview", Verb: "Overview", Subtitle: "status · activity"},
+		{Key: "ship", Verb: "Ship", Subtitle: "deploys · rollback · git"},
+		{Key: "observe", Verb: "Observe", Subtitle: "logs · pods · metrics"},
+		{Key: "wire", Verb: "Wire", Subtitle: "env · domains · scale"},
+		{Key: "data", Verb: "Data", Subtitle: "volumes · addons"},
+	}
+	if kind == "job" || kind == "cron" {
+		items = append(items, uiTabItem{Key: "jobs", Verb: "Jobs", Subtitle: "cron · runs · sweeps"})
+	}
+	for i := range items {
+		items[i].Active = uiTab(items[i].Key) == active
+	}
+	return items
+}
+
+// uiPipelineStage is one box in Overview's literal deploy-state-machine
+// render (DESIGN.md "Deploy state machine rendered literally").
+type uiPipelineStage struct {
+	Name  string
+	Class string // "pipe-done" | "pipe-current" | "pipe-fail" | "pipe-pending"
+}
+
+// uiPipelineStages classifies the latest deployment's status into the four
+// pipeline boxes: queued -> building -> deploying -> live. A failed deploy's
+// dead stage is "deploying" unless no image was ever resolved (still empty
+// at failure), in which case it died in "building" — the two points
+// applyImageDeploy/deployGitApp can fail at.
+func uiPipelineStages(status, latestImageRef string) []uiPipelineStage {
+	names := []string{"queued", "building", "deploying", "live"}
+	order := map[string]int{"queued": 0, "building": 1, "deploying": 2, "live": 3}
+	failedAt := "deploying"
+	if latestImageRef == "" {
+		failedAt = "building"
+	}
+	current := -1
+	switch status {
+	case "building", "deploying", "live":
+		current = order[status]
+	case "failed":
+		current = order[failedAt]
+	}
+	stages := make([]uiPipelineStage, len(names))
+	for i, n := range names {
+		class := "pipe-pending"
+		switch {
+		case status == "failed" && i == current:
+			class = "pipe-fail"
+		case i < current, n == "live" && status == "live":
+			class = "pipe-done"
+		case i == current:
+			class = "pipe-current"
+		}
+		stages[i] = uiPipelineStage{Name: n, Class: class}
+	}
+	return stages
+}
+
+// renderAppDetail assembles app.html's view model for tab and renders it —
+// either the full page shell (nav/breadcrumb/tab bar/content) or, for an
+// htmx tab-switch request (HX-Request set, HX-Boosted not — a boosted nav
+// still needs the full page), just that tab's own "app_<tab>" fragment. Only
+// the data the active tab needs is assembled: kube pod listing + metrics
+// history for overview/observe, runs/sweeps store queries + the cronRuns
+// kube call for jobs — domains/volumes/addons/env/history stay cheap SQLite
+// loaded on every tab. extra is merged in last (overriding nothing app.html
+// itself sets) — its only current use is handleUIWebhookEnable riding the
+// freshly generated secret along on the same response, instead of a
+// redirect (a redirect would have to carry the secret in the URL, which
+// must never happen).
+func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store.User, p store.Project, a store.App, tab uiTab, extra map[string]any) {
 	env, err := s.st.GetEnvironmentByID(a.EnvironmentID)
 	if err != nil {
 		log.Printf("ui app detail: get environment: %v", err)
@@ -1320,9 +1435,13 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 
 	status := "never_deployed"
 	latestID := ""
+	var latestSeq int64
+	var latestImageRef string
 	if d, err := s.st.LatestDeployment(a.ID); err == nil {
 		status = d.Status
 		latestID = d.ID
+		latestSeq = d.Seq
+		latestImageRef = d.ImageRef
 	} else if !errors.Is(err, store.ErrNotFound) {
 		log.Printf("ui app latest deployment: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1376,68 +1495,71 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	metrics, err := s.appMetricsData(r.Context(), p, env, a)
-	if err != nil {
-		log.Printf("ui app metrics: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
+	// Kube pod listing + metrics history are Overview/Observe-only: they're
+	// the expensive calls this tab split exists to gate (see renderAppDetail's
+	// doc comment).
+	var metrics appMetricsView
 	var pods []kube.PodInfo
-	if s.kube != nil {
-		if list, err := s.kube.AppPodInfos(r.Context(), env.Namespace, a.Name); err == nil {
-			pods = list
-		}
-	}
-
-	// Runs card is only meaningful for kind=job apps; nil for every other
-	// kind (app.html gates the whole card on .App.Kind).
-	var runRows []uiRunRow
-	if a.Kind == "job" {
-		runs, err := s.st.ListJobRuns(a.ID)
+	if tab == tabOverview || tab == tabObserve {
+		metrics, err = s.appMetricsData(r.Context(), p, env, a)
 		if err != nil {
-			log.Printf("ui app runs: %v", err)
+			log.Printf("ui app metrics: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		runRows = uiRunRows(runs)
-	}
-
-	// Cron runs card is only meaningful for kind=cron apps; nil (empty table)
-	// for every other kind, and also when the cluster listing errs — same
-	// tolerance as the pods block above.
-	var cronRuns []uiCronRunRow
-	if a.Kind == "cron" && s.kube != nil {
-		if list, err := s.kube.CronRuns(r.Context(), env.Namespace, a.Name); err == nil {
-			cronRuns = list
+		if s.kube != nil {
+			if list, err := s.kube.AppPodInfos(r.Context(), env.Namespace, a.Name); err == nil {
+				pods = list
+			}
 		}
 	}
 
-	// Sweeps card, likewise job-only: sweepRows is the history table (newest
-	// first); sweep is the most recent sweep's live detail (nil when the app
-	// has none yet) — the card only ever shows one sweep's trial table, not
-	// every past sweep's.
+	// Runs/CronRuns/Sweeps cards are Jobs-tab-only (also kind-gated, same as
+	// before) — the store queries and the cronRuns kube call are the other
+	// expensive calls this split gates.
+	var runRows []uiRunRow
+	var cronRuns []uiCronRunRow
 	var sweepRows []uiSweepRow
 	var sweep *uiSweepData
-	if a.Kind == "job" {
-		sweeps, err := s.st.ListSweeps(a.ID)
-		if err != nil {
-			log.Printf("ui app sweeps: %v", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		sweepRows = make([]uiSweepRow, 0, len(sweeps))
-		for _, sw := range sweeps {
-			trials, err := s.st.ListTrials(sw.ID)
+	if tab == tabJobs {
+		if a.Kind == "job" {
+			runs, err := s.st.ListJobRuns(a.ID)
 			if err != nil {
-				log.Printf("ui app sweep %s trials: %v", sw.ID, err)
+				log.Printf("ui app runs: %v", err)
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
-			sweepRows = append(sweepRows, uiSweepRowFrom(sw, trials))
-			if sweep == nil {
-				d := uiSweepDataFrom(sw, trials)
-				sweep = &d
+			runRows = uiRunRows(runs)
+		}
+		if a.Kind == "cron" && s.kube != nil {
+			if list, err := s.kube.CronRuns(r.Context(), env.Namespace, a.Name); err == nil {
+				cronRuns = list
+			}
+		}
+		// Sweeps card, likewise job-only: sweepRows is the history table
+		// (newest first); sweep is the most recent sweep's live detail (nil
+		// when the app has none yet) — the card only ever shows one sweep's
+		// trial table, not every past sweep's.
+		if a.Kind == "job" {
+			sweeps, err := s.st.ListSweeps(a.ID)
+			if err != nil {
+				log.Printf("ui app sweeps: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			sweepRows = make([]uiSweepRow, 0, len(sweeps))
+			for _, sw := range sweeps {
+				trials, err := s.st.ListTrials(sw.ID)
+				if err != nil {
+					log.Printf("ui app sweep %s trials: %v", sw.ID, err)
+					http.Error(w, "internal error", http.StatusInternalServerError)
+					return
+				}
+				sweepRows = append(sweepRows, uiSweepRowFrom(sw, trials))
+				if sweep == nil {
+					d := uiSweepDataFrom(sw, trials)
+					sweep = &d
+				}
 			}
 		}
 	}
@@ -1461,7 +1583,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 	}
 	data := map[string]any{
 		"User": u, "Project": p, "App": a,
-		"Status": status, "LatestID": latestID, "URL": url, "InternalURL": internalURL,
+		"Status": status, "LatestID": latestID, "LatestSeq": latestSeq, "URL": url, "InternalURL": internalURL,
 		"Chip": chip, "Building": chip.Building,
 		"Deploys": uiDeployRows(history, 10), "EnvKeys": envKeys,
 		"IsGit":          a.SourceType == "git",
@@ -1474,9 +1596,25 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"Sweeps":   sweepRows, "Sweep": sweep,
 		"CSRF": csrf, "IsAdmin": u.Role == "admin",
 		"Env": uiEnvChipFrom(env), "Envs": envs,
+		"Tab": string(tab), "TabItems": uiTabItems(a.Kind, tab),
+		"PipelineStages": uiPipelineStages(status, latestImageRef),
 	}
 	for k, v := range extra {
 		data[k] = v
+	}
+
+	// A tab-switch click (hx-get on the tab bar, see app.html's "app_shell")
+	// only needs the swapped-in tab's own fragment — HX-Request is set, and
+	// HX-Boosted is NOT (the tab links carry their own explicit hx-get/
+	// hx-target, which htmx honors over the body's hx-boost). A boosted nav
+	// (e.g. clicking a sidebar link) also sets HX-Request, but needs the
+	// full page, so it's excluded here.
+	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Boosted") != "true" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := s.tmpl.ExecuteTemplate(w, "app_"+string(tab), data); err != nil {
+			log.Printf("render app_%s: %v", tab, err)
+		}
+		return
 	}
 	s.renderPage(w, "app.html", data)
 }
@@ -1514,7 +1652,7 @@ func (s *server) handleUIWebhookEnable(w http.ResponseWriter, r *http.Request, u
 	}
 	a.WebhookSecret = []byte("x") // renderAppDetail only checks non-nil-ness
 
-	s.renderAppDetail(w, r, u, p, a, map[string]any{"WebhookSecretOnce": secretHex})
+	s.renderAppDetail(w, r, u, p, a, tabShip, map[string]any{"WebhookSecretOnce": secretHex})
 }
 
 // handleUIWebhookDisable is disableWebhook's UI twin: clear the secret,
@@ -1539,13 +1677,14 @@ func (s *server) handleUIWebhookDisable(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	flash(w, "ok", "webhook disabled")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabShip)
 }
 
 // uiRedirect sends the browser back to the app detail page an action
-// (scale/env/deploy) was posted from.
-func uiRedirect(w http.ResponseWriter, r *http.Request, p store.Project, a store.App) {
-	http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name, http.StatusSeeOther)
+// (scale/env/deploy) was posted from, landing on the tab that owns the
+// control that was just used (see uiTabURL).
+func uiRedirect(w http.ResponseWriter, r *http.Request, p store.Project, a store.App, tab uiTab) {
+	http.Redirect(w, r, uiTabURL(p, a, tab), http.StatusSeeOther)
 }
 
 // flash queues a one-shot toast shown by base.html's foot script on the
@@ -1627,7 +1766,7 @@ func (s *server) handleUIScale(w http.ResponseWriter, r *http.Request, u store.U
 		return
 	}
 	flash(w, "ok", "scaled")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabWire)
 }
 
 // handleUIAutoscale is autoscaleApp's UI twin: an "off=1" field disables
@@ -1697,7 +1836,7 @@ func (s *server) handleUIAutoscale(w http.ResponseWriter, r *http.Request, u sto
 	} else {
 		flash(w, "ok", "autoscale off")
 	}
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabWire)
 }
 
 // handleUIRunCreate is startRun's UI twin: same shared core, redirect
@@ -1732,7 +1871,7 @@ func (s *server) handleUIRunCreate(w http.ResponseWriter, r *http.Request, u sto
 	}
 	opts, err := parseUIRunOpts(r)
 	if err != nil {
-		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error())+"&tab=jobs", http.StatusSeeOther)
 		return
 	}
 
@@ -1742,7 +1881,7 @@ func (s *server) handleUIRunCreate(w http.ResponseWriter, r *http.Request, u sto
 	}
 	if _, err := s.startRun(r.Context(), p, env, a, opts); err != nil {
 		if errors.Is(err, errNotDeployed) || errors.Is(err, errRunOverBudget) {
-			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error())+"&tab=jobs", http.StatusSeeOther)
 			return
 		}
 		log.Printf("ui start run: %v", err)
@@ -1750,7 +1889,7 @@ func (s *server) handleUIRunCreate(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 	flash(w, "ok", "run started")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabJobs)
 }
 
 // parseUIRunOpts reads the run-now form's optional nodes/framework
@@ -1797,16 +1936,16 @@ func (s *server) handleUITraining(w http.ResponseWriter, r *http.Request, u stor
 	}
 	nodes, err := strconv.Atoi(r.PostFormValue("nodes"))
 	if err != nil {
-		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("invalid nodes"), http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape("invalid nodes")+"&tab=jobs", http.StatusSeeOther)
 		return
 	}
 	framework := r.PostFormValue("framework")
 	if err := s.setAppTraining(p, a, nodes, framework); err != nil {
-		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?err="+url.QueryEscape(err.Error())+"&tab=jobs", http.StatusSeeOther)
 		return
 	}
 	flash(w, "ok", "training defaults saved")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabJobs)
 }
 
 func (s *server) handleUIHealth(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -1837,7 +1976,7 @@ func (s *server) handleUIHealth(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 	flash(w, "ok", "health check saved")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabObserve)
 }
 
 func (s *server) handleUIEnvSet(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -1874,7 +2013,7 @@ func (s *server) handleUIEnvSet(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 	flash(w, "ok", "env saved")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabWire)
 }
 
 // handleUIGitTokenSet is handleSetGitToken's UI twin: seal+store a
@@ -1902,7 +2041,7 @@ func (s *server) handleUIGitTokenSet(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 	flash(w, "ok", "git token saved")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabShip)
 }
 
 // handleUIGitTokenClear is handleDeleteGitToken's UI twin.
@@ -1920,7 +2059,7 @@ func (s *server) handleUIGitTokenClear(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 	flash(w, "ok", "git token cleared")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabShip)
 }
 
 func (s *server) uiGitTokenError(w http.ResponseWriter, err error) {
@@ -1983,7 +2122,7 @@ func (s *server) handleUIEnvBulk(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 	flash(w, "ok", "env vars saved")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabWire)
 }
 
 func (s *server) handleUIEnvUnset(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -2017,7 +2156,7 @@ func (s *server) handleUIEnvUnset(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 	flash(w, "ok", "env var removed")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabWire)
 }
 
 // handleUIDomainAdd is handleAddDomain's UI twin: same shared addDomain
@@ -2053,11 +2192,11 @@ func (s *server) handleUIDomainAdd(w http.ResponseWriter, r *http.Request, u sto
 	}
 	if warning != "" {
 		flash(w, "ok", "domain added")
-		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?warn="+url.QueryEscape(warning), http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?warn="+url.QueryEscape(warning)+"&tab=wire", http.StatusSeeOther)
 		return
 	}
 	flash(w, "ok", "domain added")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabWire)
 }
 
 // handleUIDomainDelete is handleDeleteDomain's UI twin: same store+sync
@@ -2095,7 +2234,7 @@ func (s *server) handleUIDomainDelete(w http.ResponseWriter, r *http.Request, u 
 	}
 	s.syncIfLive(r.Context(), p, env, a)
 	flash(w, "ok", "domain removed")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabWire)
 }
 
 // handleUIVolumeAdd is handleAddVolume's UI twin: same shared addVolume
@@ -2143,7 +2282,7 @@ func (s *server) handleUIVolumeAdd(w http.ResponseWriter, r *http.Request, u sto
 		return
 	}
 	flash(w, "ok", "volume added")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabData)
 }
 
 // handleUIVolumeRemove is handleDeleteVolume's UI twin: same shared
@@ -2182,7 +2321,7 @@ func (s *server) handleUIVolumeRemove(w http.ResponseWriter, r *http.Request, u 
 		return
 	}
 	flash(w, "ok", "volume removed")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabData)
 }
 
 // handleUIAddonCreate is handleCreateAddon's UI twin: same shared
@@ -2337,11 +2476,11 @@ func (s *server) handleUIAddonAttach(w http.ResponseWriter, r *http.Request, u s
 	}
 	if warning != "" {
 		flash(w, "ok", "addon attached")
-		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?warn="+url.QueryEscape(warning), http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/projects/"+p.Name+"/apps/"+a.Name+"?warn="+url.QueryEscape(warning)+"&tab=data", http.StatusSeeOther)
 		return
 	}
 	flash(w, "ok", "addon attached")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabData)
 }
 
 // handleUIAddonDetach is handleDetachAddon's UI twin: same store+sync
@@ -2379,7 +2518,7 @@ func (s *server) handleUIAddonDetach(w http.ResponseWriter, r *http.Request, u s
 	}
 	s.syncIfLive(r.Context(), p, env, a)
 	flash(w, "ok", "addon detached")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabData)
 }
 
 // handleUIDeploy starts a git build for git-source apps via the same
@@ -2398,7 +2537,7 @@ func (s *server) handleUIDeploy(w http.ResponseWriter, r *http.Request, u store.
 	}
 
 	if a.SourceType != "git" {
-		uiRedirect(w, r, p, a)
+		uiRedirect(w, r, p, a, tabShip)
 		return
 	}
 
@@ -2419,7 +2558,7 @@ func (s *server) handleUIDeploy(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 	flash(w, "ok", "deploy started")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabShip)
 }
 
 // handleUIRollback is handleRollback's UI twin: same shared s.rollback
@@ -2479,7 +2618,7 @@ func (s *server) handleUIRollback(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 	flash(w, "ok", "rollback started")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabShip)
 }
 
 // handleUIAppDestroy is handleDeleteApp's UI twin: same destroyApp core,
@@ -2535,7 +2674,7 @@ func (s *server) handleUIEject(w http.ResponseWriter, r *http.Request, u store.U
 		return
 	}
 	flash(w, "ok", "app ejected")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabWire)
 }
 
 // handleUIDomainRetry is handleRetryDomain's UI twin: same retryDomain core,
@@ -2574,7 +2713,7 @@ func (s *server) handleUIDomainRetry(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 	flash(w, "ok", "domain retry started")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabWire)
 }
 
 // handleUIAddonUpgrade is handleUpgradeAddon's UI twin: same upgradeAddon
@@ -2963,7 +3102,7 @@ func (s *server) handleUIAdopt(w http.ResponseWriter, r *http.Request, u store.U
 	}
 	s.syncIfLive(r.Context(), p, env, a)
 	flash(w, "ok", "app adopted")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabShip)
 }
 
 func (s *server) handleUIInviteRevoke(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -3115,7 +3254,7 @@ func (s *server) handleUIEditPost(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 	if patch == "{}" {
-		uiRedirect(w, r, p, a)
+		uiRedirect(w, r, p, a, tabShip)
 		return
 	}
 
@@ -3135,5 +3274,5 @@ func (s *server) handleUIEditPost(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 	flash(w, "ok", "override saved")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabShip)
 }

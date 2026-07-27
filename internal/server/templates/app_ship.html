@@ -1,0 +1,81 @@
+{{/* app_ship is the Ship tab: deploys, rollback, git (deploy-from-git lives
+     in the shell's title row — see app.html's "app_shell" — since it's a
+     primary action shown regardless of tab). */}}
+{{define "app_ship"}}
+{{if .App.Ejected}}
+<div class="card mb-6 border-[rgba(255,178,36,.4)] bg-[rgba(255,178,36,.1)]">
+<p class="mb-3 text-sm text-build">This app is ejected — luncur no longer manages its manifests. Adopt to resume management.</p>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/adopt">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn">adopt — luncur manages it again</button>
+</form>
+</div>
+{{end}}
+
+<div class="card mb-6">
+<h2>Deploy history</h2>
+<table class="tbl"><tr><th>#</th><th>Status</th><th>Image</th><th>Actor</th><th>When</th><th></th></tr>
+{{range .Deploys}}<tr>
+  <td>{{.Seq}}</td><td><span class="status-{{.Status}}">{{.Status}}</span></td>
+  <td><code class="font-mono text-xs" title="{{.ImageRef}}">{{.ImageTag}}</code>{{if .RolledBackFromSeq}} <em>(rollback of #{{.RolledBackFromSeq}})</em>{{end}}</td>
+  <td class="text-xs text-mut">{{.Actor}}</td>
+  <td class="text-xs text-mut">{{.CreatedAt}}</td>
+  <td>{{if and .ImageRef (ne .ID $.LatestID) (not $.App.Ejected)}}
+    <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollback">
+      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="deploy_id" value="{{.ID}}">
+      <button type="submit" class="btn-ghost" hx-confirm="Rollback {{$.App.Name}} to deploy #{{.Seq}}?">rollback</button>
+    </form>
+  {{end}}</td>
+</tr>{{end}}
+</table>
+<div class="cli-echo">$ <b>luncur status {{.App.Name}}</b> &middot; $ <b>luncur rollback {{.App.Name}}</b></div>
+</div>
+
+{{if .IsGit}}
+<div class="card mb-6">
+<h2>Webhook</h2>
+{{if .WebhookSecretOnce}}
+<p class="mb-2 text-sm text-mut">secret shown once — store it now (GitHub/Gitea: "Secret" field; GitLab: "Secret token" field):</p>
+<p class="mb-3"><input class="input font-mono text-xs" readonly size="64" value="{{.WebhookSecretOnce}}"></p>
+{{end}}
+{{if .WebhookEnabled}}
+<p class="mb-3"><input class="input font-mono text-xs" readonly size="64" value="{{.WebhookURL}}"></p>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/webhook/disable">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn-danger" hx-confirm="Disable webhook for {{.App.Name}}? This cannot be undone.">disable webhook</button>
+</form>
+{{else}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/webhook">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn">enable webhook</button>
+</form>
+<div class="cli-echo">$ <b>luncur webhook enable {{.App.Name}}</b></div>
+{{end}}
+</div>
+
+<div class="card mb-6">
+<h2>Git token</h2>
+<p class="mb-2 text-sm text-mut">Access token to clone a private repo (e.g. a GitHub PAT). Write-only — sealed at rest, never shown back.</p>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/git-token" class="mb-2 flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input class="input w-auto flex-1 font-mono text-xs" type="password" name="token" placeholder="paste token" autocomplete="off" required>
+  <button type="submit" class="btn">save token</button>
+</form>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/git-token/clear">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn-ghost" hx-confirm="Clear the git token for {{.App.Name}}?">clear token</button>
+</form>
+<div class="cli-echo">$ <b>luncur app git-token set {{.App.Name}} --project {{.Project.Name}} --token &lt;pat&gt;</b></div>
+</div>
+{{end}}
+
+<div class="card">
+<h2>Raw manifests</h2>
+<p class="font-mono text-[11px] text-mut">
+   <a class="text-inkhi hover:text-signal" href="/v1/projects/{{.Project.Name}}/apps/{{.App.Name}}/raw">raw YAML</a>{{if not .App.Ejected}} &middot;
+   edit: {{if eq .App.Kind "web"}}<a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a> &middot;
+   <a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Service">Service</a> &middot;
+   <a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Ingress">Ingress</a>{{else if eq .App.Kind "worker"}}<a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/Deployment">Deployment</a>{{else if eq .App.Kind "cron"}}<a class="text-inkhi hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/edit/CronJob">CronJob</a>{{end}}{{end}}</p>
+</div>
+{{end}}

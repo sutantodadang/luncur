@@ -1,0 +1,23 @@
+{{/* app_overview is the Overview tab (DESIGN.md "Overview = status board"):
+     one status board card answering is-it-up / what's-deployed / what-
+     changed-last in one fixation, plus the deploy pipeline rendered
+     literally. Nothing else lives here this slice. */}}
+{{define "app_overview"}}
+<div class="card mb-4">
+<h2>Status</h2>
+<p class="mb-2 flex flex-wrap items-center gap-2">
+  {{template "statuschip" .Chip}}
+  {{if .Deploys}}<span class="font-mono text-[13px] text-ink">deployed #{{.LatestSeq}} &middot; {{(index .Deploys 0).ImageTag}} &middot; {{(index .Deploys 0).CreatedAt}}</span>{{else}}<span class="text-sm text-mut">not deployed yet</span>{{end}}
+</p>
+{{if eq .App.Kind "web"}}<p class="mb-2 font-mono text-[11px] text-mut">{{if .App.Internal}}<code title="cluster-only — not reachable from a browser">{{.InternalURL}}</code> <a class="hover:text-signal" href="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/open" target="_blank" rel="noopener">open</a> <code>luncur forward {{.Project.Name}}/{{.App.Name}} {{.App.Port}}</code>{{else}}<a class="hover:text-signal" href="{{.URL}}">{{.URL}}</a>{{end}}</p>{{end}}
+{{if .Deploys}}<p class="font-mono text-[11px] text-mut">last event: <span class="status-{{(index .Deploys 0).Status}}">{{(index .Deploys 0).Status}}</span> &middot; {{(index .Deploys 0).CreatedAt}}</p>{{end}}
+</div>
+
+<div class="card mb-6">
+<h2>Deploy pipeline</h2>
+<div class="flex flex-wrap items-center gap-2">
+{{range $i, $st := .PipelineStages}}{{if $i}}<span class="text-mut">&rarr;</span>{{end}}<span class="pipe-stage {{$st.Class}}">{{if eq $st.Class "pipe-done"}}&check; {{else if eq $st.Class "pipe-fail"}}&cross; {{end}}{{$st.Name}}</span>{{end}}
+</div>
+<div class="cli-echo">$ <b>luncur status {{.App.Name}} --project {{.Project.Name}} --env {{.Env.Name}}</b></div>
+</div>
+{{end}}

@@ -132,5 +132,5 @@ func (s *server) handleUIRedeploy(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 	flash(w, "ok", "redeploy started")
-	uiRedirect(w, r, p, a)
+	uiRedirect(w, r, p, a, tabShip)
 }

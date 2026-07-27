@@ -511,8 +511,8 @@ func TestUIScalePersists(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("POST scale: want 303, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/ui/projects/web/apps/api" {
-		t.Fatalf("POST scale: want Location /ui/projects/web/apps/api, got %q", loc)
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/web/apps/api?tab=wire" {
+		t.Fatalf("POST scale: want Location /ui/projects/web/apps/api?tab=wire, got %q", loc)
 	}
 
 	a, err := st.GetApp(mustProjectID(t, st, "web"), "api")
@@ -556,7 +556,7 @@ func TestUIScaleResourcesPersistAndPrefill(t *testing.T) {
 		t.Fatalf("resources not persisted: %+v", a)
 	}
 
-	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web/apps/api", nil)
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web/apps/api?tab=wire", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,7 +610,7 @@ func TestUIHealthPersistsAndPrefill(t *testing.T) {
 		t.Fatalf("health path not persisted: %+v", a)
 	}
 
-	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web/apps/api", nil)
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web/apps/api?tab=observe", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -749,7 +749,7 @@ func TestUITrainingDefaultsPersist(t *testing.T) {
 		t.Fatalf("training defaults not persisted: %+v", a)
 	}
 
-	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/ml/apps/train", nil)
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/ml/apps/train?tab=jobs", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -881,7 +881,7 @@ func TestUIAppDetailContainsEventSourceScript(t *testing.T) {
 	ck := uiSessionCookie(t, st, u.ID)
 
 	client := noRedirectClient()
-	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web/apps/api", nil)
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/web/apps/api?tab=observe", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -943,7 +943,7 @@ func TestUIDomainAddAndDelete(t *testing.T) {
 
 	appPage := func(t *testing.T) string {
 		t.Helper()
-		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web?tab=wire", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1092,11 +1092,11 @@ func TestUIRollback(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("POST rollback: want 303, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web" {
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web?tab=ship" {
 		t.Fatalf("POST rollback: want Location /ui/projects/proj/apps/web, got %q", loc)
 	}
 
-	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+	req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web?tab=ship", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1396,7 +1396,7 @@ func TestUIYAMLEditor(t *testing.T) {
 	if resp2.StatusCode != http.StatusSeeOther {
 		t.Fatalf("POST edit/Deployment: want 303, got %d", resp2.StatusCode)
 	}
-	if loc := resp2.Header.Get("Location"); loc != "/ui/projects/p/apps/web" {
+	if loc := resp2.Header.Get("Location"); loc != "/ui/projects/p/apps/web?tab=ship" {
 		t.Fatalf("POST edit/Deployment: want Location /ui/projects/p/apps/web, got %q", loc)
 	}
 	id := appID(t, st, "p", "web")
@@ -1463,7 +1463,7 @@ func TestUIEnvBulk(t *testing.T) {
 
 	appPage := func(t *testing.T) string {
 		t.Helper()
-		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web?tab=wire", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1540,7 +1540,7 @@ func TestUIAddons(t *testing.T) {
 	}
 	appPage := func(t *testing.T) string {
 		t.Helper()
-		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web?tab=data", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1731,9 +1731,9 @@ func TestUIAdoptButton(t *testing.T) {
 	client := noRedirectClient()
 	ck := uiSessionCookie(t, st, u.ID)
 
-	appPage := func(t *testing.T) string {
+	appPage := func(t *testing.T, tab string) string {
 		t.Helper()
-		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web?tab="+tab, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1753,7 +1753,7 @@ func TestUIAdoptButton(t *testing.T) {
 		return string(body)
 	}
 
-	body := appPage(t)
+	body := appPage(t, "ship")
 	if !strings.Contains(body, `action="/ui/projects/proj/apps/web/adopt"`) {
 		t.Fatalf("ejected page missing adopt form:\n%s", body)
 	}
@@ -1765,11 +1765,11 @@ func TestUIAdoptButton(t *testing.T) {
 		t.Fatalf("adopt post: want 303, got %d", resp.StatusCode)
 	}
 
-	body = appPage(t)
+	body = appPage(t, "ship")
 	if strings.Contains(body, "This app is ejected") {
 		t.Fatalf("page still shows ejected note after adopt:\n%s", body)
 	}
-	if !strings.Contains(body, `action="/ui/projects/proj/apps/web/scale"`) {
+	if !strings.Contains(appPage(t, "wire"), `action="/ui/projects/proj/apps/web/scale"`) {
 		t.Fatalf("management UI (scale form) not back after adopt:\n%s", body)
 	}
 
@@ -1884,7 +1884,7 @@ func TestUIVolumeAddAndRemove(t *testing.T) {
 
 	appPage := func(t *testing.T) string {
 		t.Helper()
-		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web", nil)
+		req, err := http.NewRequest("GET", srv.URL+"/ui/projects/proj/apps/web?tab=data", nil)
 		if err != nil {
 			t.Fatal(err)
 		}

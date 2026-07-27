@@ -168,8 +168,8 @@ func TestUIEject(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("eject: want 303, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web" {
-		t.Fatalf("Location = %q, want the app page", loc)
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web?tab=wire" {
+		t.Fatalf("Location = %q, want the app page's Wire tab", loc)
 	}
 
 	p, err := st.GetProject("proj")
@@ -225,8 +225,8 @@ func TestUIDomainRetry(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("domain retry: want 303, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web" {
-		t.Fatalf("Location = %q, want the app page", loc)
+	if loc := resp.Header.Get("Location"); loc != "/ui/projects/proj/apps/web?tab=wire" {
+		t.Fatalf("Location = %q, want the app page's Wire tab", loc)
 	}
 
 	list, err := st.ListDomains(id)
