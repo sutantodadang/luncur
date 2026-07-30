@@ -1,0 +1,1765 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Empty VPS → running PaaS in under 2 minutes. One Go binary, SQLite, real Kubernetes underneath.">
+      
+      
+      
+        <link rel="canonical" href="https://sutantodadang.github.io/luncur/guides/deploying/">
+      
+      
+        <link rel="prev" href="../../support/">
+      
+      
+        <link rel="next" href="../apps-and-projects/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Deploying - luncur</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#deploying" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="luncur" class="md-header__button md-logo" aria-label="luncur" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            luncur
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Deploying
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/sutantodadang/luncur" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    sutantodadang/luncur
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="luncur" class="md-nav__button md-logo" aria-label="luncur" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    luncur
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/sutantodadang/luncur" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    sutantodadang/luncur
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support luncur
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploying
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploying
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-from-source-most-common-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy from source (most common path)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-a-pre-built-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy a pre-built image
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-with-git-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy with git push
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#auto-deploy-from-a-webhook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auto-deploy from a webhook
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#monorepo-builds-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monorepo builds (--path)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scale-and-set-resource-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scale and set resource limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#add-health-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add health checks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#roll-back-a-bad-deploy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roll back a bad deploy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#destroy-an-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Destroy an app
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#set-and-edit-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Set and edit environment variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bake-env-vars-into-the-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bake env vars into the build
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#check-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check status
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apps-and-projects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apps & projects
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../domains-and-tls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Domains & TLS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../addons/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Addons
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../volumes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Volumes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../backups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backups & restore
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machine learning
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Machine learning
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ml/gpu-cloud/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GPU cloud
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ml/training/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ml/sweeps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sweeps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ml/pipelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ml/model-serving/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model serving
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Audit log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/disaster-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Disaster recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/registry-gc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry GC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/raspberry-pi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Raspberry Pi & ARM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/eject-adopt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Eject & adopt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/uninstall/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uninstall
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/build-pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/design-notes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../nebius-smoke-test/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nebius smoke test
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-from-source-most-common-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy from source (most common path)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-a-pre-built-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy a pre-built image
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-with-git-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy with git push
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#auto-deploy-from-a-webhook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Auto-deploy from a webhook
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#monorepo-builds-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monorepo builds (--path)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scale-and-set-resource-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scale and set resource limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#add-health-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add health checks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#roll-back-a-bad-deploy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roll back a bad deploy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#destroy-an-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Destroy an app
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#set-and-edit-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Set and edit environment variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bake-env-vars-into-the-build" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bake env vars into the build
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#check-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check status
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="deploying">Deploying<a class="headerlink" href="#deploying" title="Permanent link">&para;</a></h1>
+<p>Get your code running as a live app — from source, from a pre-built image,
+or via <code>git push</code> — then scale it, watch its logs, and roll back when a
+deploy goes wrong.</p>
+<h2 id="deploy-from-source-most-common-path">Deploy from source (most common path)<a class="headerlink" href="#deploy-from-source-most-common-path" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># Initialize an app config in the current directory</span>
+luncur<span class="w"> </span>init
+
+<span class="c1"># Deploy from local source (tars cwd, uploads, builds in cluster, streams to completion)</span>
+luncur<span class="w"> </span>deploy<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj
+
+<span class="c1"># Deploy from git repository (registering a git-source app)</span>
+luncur<span class="w"> </span>app<span class="w"> </span>create<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--git-url<span class="w"> </span>https://github.com/user/repo.git<span class="w"> </span>--branch<span class="w"> </span>main
+luncur<span class="w"> </span>deploy<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj
+
+<span class="c1"># Follow build logs for a specific deploy</span>
+luncur<span class="w"> </span>logs<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--deploy<span class="w"> </span><span class="m">1</span><span class="w"> </span>-f
+
+<span class="c1"># Stream runtime (pod) logs — omit --deploy</span>
+luncur<span class="w"> </span>logs<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>-f
+
+<span class="c1"># Bound runtime logs to the last 200 lines, or the last 15 minutes</span>
+luncur<span class="w"> </span>logs<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>-f<span class="w"> </span>--tail<span class="w"> </span><span class="m">200</span>
+luncur<span class="w"> </span>logs<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>-f<span class="w"> </span>--since<span class="w"> </span>15m
+</code></pre></div>
+<h2 id="deploy-a-pre-built-image">Deploy a pre-built image<a class="headerlink" href="#deploy-a-pre-built-image" title="Permanent link">&para;</a></h2>
+<p>Already build and push images elsewhere? Point <code>deploy</code> straight at the
+image instead of building in-cluster:</p>
+<div class="highlight"><pre><span></span><code>luncur<span class="w"> </span>deploy<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--image<span class="w"> </span>my.registry/my/image:tag
+</code></pre></div>
+<h2 id="deploy-with-git-push">Deploy with <code>git push</code><a class="headerlink" href="#deploy-with-git-push" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># Once per machine: register your SSH public key</span>
+luncur<span class="w"> </span>ssh-key<span class="w"> </span>add<span class="w">            </span><span class="c1"># picks up ~/.ssh/id_*.pub; or pass a path</span>
+luncur<span class="w"> </span>ssh-key<span class="w"> </span>list
+luncur<span class="w"> </span>ssh-key<span class="w"> </span>remove<span class="w"> </span>&lt;id&gt;
+
+<span class="c1"># Once per repo: add the luncur remote</span>
+git<span class="w"> </span>remote<span class="w"> </span>add<span class="w"> </span>luncur<span class="w"> </span>ssh://git@&lt;ip&gt;:30022/myproj/myapp.git
+
+<span class="c1"># Deploy</span>
+git<span class="w"> </span>push<span class="w"> </span>luncur<span class="w"> </span>main
+</code></pre></div>
+<p>The push streams the whole build into your <code>git push</code> output (as
+<code>remote:</code> lines) and prints the app URL when it goes live. Only a push to
+the app's configured branch (default <code>main</code>) triggers a deploy; the
+receiver is push-only (<code>git pull</code>/<code>clone</code> from luncur is rejected) and no
+repository is stored server-side — each push is archived straight into the
+same build pipeline <code>luncur deploy</code> uses.</p>
+<h2 id="auto-deploy-from-a-webhook">Auto-deploy from a webhook<a class="headerlink" href="#auto-deploy-from-a-webhook" title="Permanent link">&para;</a></h2>
+<p>For git-source apps hosted elsewhere (GitHub/GitLab/Gitea), skip pushing to
+luncur directly and let a webhook trigger the build instead:</p>
+<div class="highlight"><pre><span></span><code>luncur<span class="w"> </span>webhook<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj
+<span class="c1"># paste the printed URL + secret into GitHub/GitLab/Gitea&#39;s webhook settings (push events)</span>
+</code></pre></div>
+<p>A push to the app's configured branch (default <code>main</code>) triggers the same
+build pipeline as <code>luncur deploy</code>; pushes to other refs are ignored. GitHub's
+"ping" event (sent when a webhook is first saved) is answered without
+deploying, so saving the hook doesn't kick off a spurious build.
+<code>luncur webhook enable</code> re-run rotates the secret — update it at the
+provider or deploys will stop authenticating. <code>luncur webhook show</code> and
+<code>luncur webhook disable</code> round out the command.</p>
+<h2 id="monorepo-builds-path">Monorepo builds (<code>--path</code>)<a class="headerlink" href="#monorepo-builds-path" title="Permanent link">&para;</a></h2>
+<p>One git repo can back several apps by pointing each at a different
+subdirectory as its build context/detection dir — e.g. a <code>dashboard/</code> React
+app, a <code>backend/</code> FastAPI service, and an <code>ai/</code> FastAPI service all living
+in the same repo. <code>dashboard</code> and <code>backend</code> are public; <code>ai</code> is only ever
+called by <code>backend</code>, so it's created <code>--internal</code> — no public URL,
+cluster-only:</p>
+<div class="highlight"><pre><span></span><code>luncur<span class="w"> </span>app<span class="w"> </span>create<span class="w"> </span>dashboard<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--port<span class="w"> </span><span class="m">3000</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--git-url<span class="w"> </span>https://github.com/user/monorepo.git<span class="w"> </span>--path<span class="w"> </span>dashboard
+luncur<span class="w"> </span>app<span class="w"> </span>create<span class="w"> </span>backend<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--git-url<span class="w"> </span>https://github.com/user/monorepo.git<span class="w"> </span>--path<span class="w"> </span>backend
+luncur<span class="w"> </span>app<span class="w"> </span>create<span class="w"> </span>ai<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--port<span class="w"> </span><span class="m">8001</span><span class="w"> </span>--internal<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--git-url<span class="w"> </span>https://github.com/user/monorepo.git<span class="w"> </span>--path<span class="w"> </span>ai
+</code></pre></div>
+<p><code>backend</code> reaches <code>ai</code> at <code>http://ai.luncur-myproj:80</code> (in-cluster DNS —
+see <a href="../apps-and-projects/">Apps &amp; projects</a> for internal web apps). A single
+webhook push (or <code>luncur deploy</code>/<code>git push luncur</code>) to the shared repo
+redeploys all three — each app's build only looks inside its own <code>--path</code>: a
+<code>Dockerfile</code> there is used as-is, and nixpacks detection/output also run
+inside that subdirectory instead of the repo root. <code>--path</code> is validated
+(relative, no <code>..</code>, no leading <code>/</code>, <code>[a-zA-Z0-9._/-]</code> only) and is
+<strong>immutable after creation</strong> — recreate the app to change it. Omitting
+<code>--path</code> keeps the previous behavior: the whole repo root is the build
+context.</p>
+<h2 id="scale-and-set-resource-limits">Scale and set resource limits<a class="headerlink" href="#scale-and-set-resource-limits" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>luncur<span class="w"> </span>scale<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--replicas<span class="w"> </span><span class="m">3</span>
+luncur<span class="w"> </span>scale<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--cpu<span class="w"> </span>250m<span class="w"> </span>--memory<span class="w"> </span>256Mi<span class="w">   </span><span class="c1"># requests==limits</span>
+luncur<span class="w"> </span>scale<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--cpu<span class="w"> </span><span class="s2">&quot;&quot;</span><span class="w"> </span>--memory<span class="w"> </span><span class="s2">&quot;&quot;</span><span class="w">        </span><span class="c1"># clear</span>
+</code></pre></div>
+<h2 id="add-health-checks">Add health checks<a class="headerlink" href="#add-health-checks" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>luncur<span class="w"> </span>health<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--path<span class="w"> </span>/healthz<span class="w">   </span><span class="c1"># readiness+liveness probes</span>
+luncur<span class="w"> </span>health<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--off
+</code></pre></div>
+<p>Readiness gates rollouts and Service endpoints (zero-downtime deploys), while
+liveness restarts a wedged container.</p>
+<h2 id="roll-back-a-bad-deploy">Roll back a bad deploy<a class="headerlink" href="#roll-back-a-bad-deploy" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>luncur<span class="w"> </span>rollback<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w">               </span><span class="c1"># back to the previous live deploy</span>
+luncur<span class="w"> </span>rollback<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj<span class="w"> </span>--deploy<span class="w"> </span><span class="m">12</span><span class="w">   </span><span class="c1"># back to deploy #12 (as shown by `luncur status`/the web UI)</span>
+</code></pre></div>
+<p>Rolling back redeploys an earlier deployment's image directly — no rebuild —
+and records the new deployment row's lineage, shown in the web UI's Deploys
+table as "(rollback of #N)" (N is the source deploy's seq, not its internal
+id). The app page also has a <code>rollback</code> button on
+every history row except the newest and any row with no image. Only images
+hosted in luncur's embedded registry are HEAD-checked before rolling back
+(a 409 naming the image if it's gone); externally-hosted image refs (e.g.
+<code>docker.io/...</code>) are assumed present since luncur has no credentials to
+verify them.</p>
+<h2 id="destroy-an-app">Destroy an app<a class="headerlink" href="#destroy-an-app" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>luncur<span class="w"> </span>destroy<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj
+</code></pre></div>
+<h2 id="set-and-edit-environment-variables">Set and edit environment variables<a class="headerlink" href="#set-and-edit-environment-variables" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>luncur<span class="w"> </span>env<span class="w"> </span><span class="nb">set</span><span class="w"> </span>myapp<span class="w"> </span><span class="nv">KEY</span><span class="o">=</span>value<span class="w"> </span>--project<span class="w"> </span>myproj
+luncur<span class="w"> </span>env<span class="w"> </span><span class="nb">unset</span><span class="w"> </span>myapp<span class="w"> </span>KEY<span class="w"> </span>--project<span class="w"> </span>myproj
+luncur<span class="w"> </span>env<span class="w"> </span>list<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj
+luncur<span class="w"> </span>edit<span class="w"> </span>myapp<span class="w"> </span>Deployment<span class="w"> </span>--project<span class="w"> </span>myproj
+</code></pre></div>
+<h2 id="bake-env-vars-into-the-build">Bake env vars into the build<a class="headerlink" href="#bake-env-vars-into-the-build" title="Permanent link">&para;</a></h2>
+<p>The same values set with <code>luncur env set</code> also reach the build itself, not
+just the running container: each var is passed to the builder as a Docker
+build-arg (Dockerfile path) or a nixpacks <code>--env</code> (nixpacks path). This
+matters for frontend frameworks that bake env into the bundle at build time
+instead of reading it at runtime — e.g. Vite:</p>
+<div class="highlight"><pre><span></span><code><span class="k">ARG</span><span class="w"> </span><span class="nv">VITE_API_URL</span><span class="o">=</span>http://localhost:8000
+<span class="k">ENV</span><span class="w"> </span><span class="nv">VITE_API_URL</span><span class="o">=</span><span class="nv">$VITE_API_URL</span>
+<span class="k">RUN</span><span class="w"> </span>npm<span class="w"> </span>run<span class="w"> </span>build
+</code></pre></div>
+<p><code>luncur env set myapp VITE_API_URL=https://api.myapp.example --project myproj</code>
+then makes the next build inline the real URL instead of the Dockerfile's
+localhost default. The Dockerfile must declare <code>ARG &lt;KEY&gt;</code> for a var to be
+picked up; unreferenced vars are simply ignored by <code>docker build</code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Build-args are not a safe place for high-grade secrets — they can leak
+into build cache metadata and image history. Keep secrets runtime-only
+(don't reference them from any <code>ARG</code>); use build-time env only for
+values that are fine to be visible in a built image.</p>
+</div>
+<h2 id="check-status">Check status<a class="headerlink" href="#check-status" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># List apps in a project (name + URL)</span>
+luncur<span class="w"> </span>status<span class="w"> </span>--project<span class="w"> </span>myproj
+
+<span class="c1"># Show one app&#39;s status (replicas, image, URL, live cpu/memory, deploy count)</span>
+luncur<span class="w"> </span>status<span class="w"> </span>myapp<span class="w"> </span>--project<span class="w"> </span>myproj
+</code></pre></div>
+<p>Live cpu/memory come from the cluster's <code>metrics-server</code> (K3s bundles it by
+default); if it's not installed or unreachable, <code>status</code> prints <code>metrics:
+unavailable</code> instead — the deploy count is always shown regardless.</p>
+<p><strong>Related:</strong> <a href="../apps-and-projects/">Apps &amp; projects</a> ·
+<a href="../domains-and-tls/">Domains &amp; TLS</a> · <a href="../volumes/">Volumes</a> ·
+<a href="../backups/">Backups &amp; restore</a></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

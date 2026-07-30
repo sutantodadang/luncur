@@ -1,0 +1,1838 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Empty VPS → running PaaS in under 2 minutes. One Go binary, SQLite, real Kubernetes underneath.">
+      
+      
+      
+        <link rel="canonical" href="https://sutantodadang.github.io/luncur/nebius-smoke-test/">
+      
+      
+        <link rel="prev" href="../reference/settings/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Nebius smoke test - luncur</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#nebius-smoke-test-verify-gate-checklist" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="luncur" class="md-header__button md-logo" aria-label="luncur" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            luncur
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Nebius smoke test
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/sutantodadang/luncur" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    sutantodadang/luncur
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="luncur" class="md-nav__button md-logo" aria-label="luncur" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    luncur
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/sutantodadang/luncur" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    sutantodadang/luncur
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support luncur
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/deploying/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploying
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/apps-and-projects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apps & projects
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/domains-and-tls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Domains & TLS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/addons/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Addons
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/volumes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Volumes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/backups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backups & restore
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machine learning
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Machine learning
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ml/gpu-cloud/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GPU cloud
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ml/training/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ml/sweeps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sweeps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ml/pipelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipelines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ml/model-serving/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model serving
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Audit log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doctor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/disaster-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Disaster recovery
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/registry-gc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Registry GC
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/raspberry-pi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Raspberry Pi & ARM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/eject-adopt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Eject & adopt
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/uninstall/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Uninstall
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/build-pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/design-notes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nebius smoke test
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nebius smoke test
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this exists
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Why this exists">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#current-gates-from-internalgpucloud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current gates (from internal/gpucloud/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Steps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Steps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-create-a-service-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        a. Create a service account
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#b-generate-an-authorized-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        b. Generate an authorized key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#c-build-the-jwt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        c. Build the JWT
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d-token-exchange-confirms-gate-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        d. Token exchange (confirms gate #1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#e-create-the-smallest-vm-confirms-gates-2-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        e. Create the smallest VM (confirms gates #2, #3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#f-poll-the-operation-confirms-gates-4-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        f. Poll the operation (confirms gates #4, #5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#g-list-instances-confirms-gate-6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        g. List instances (confirms gate #6)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#h-delete-the-instance-confirms-gate-7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        h. Delete the instance (confirms gate #7)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#closeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Closeout
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this exists
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Why this exists">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#current-gates-from-internalgpucloud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current gates (from internal/gpucloud/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Steps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Steps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-create-a-service-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        a. Create a service account
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#b-generate-an-authorized-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        b. Generate an authorized key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#c-build-the-jwt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        c. Build the JWT
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d-token-exchange-confirms-gate-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        d. Token exchange (confirms gate #1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#e-create-the-smallest-vm-confirms-gates-2-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        e. Create the smallest VM (confirms gates #2, #3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#f-poll-the-operation-confirms-gates-4-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        f. Poll the operation (confirms gates #4, #5)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#g-list-instances-confirms-gate-6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        g. List instances (confirms gate #6)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#h-delete-the-instance-confirms-gate-7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        h. Delete the instance (confirms gate #7)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#closeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Closeout
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="nebius-smoke-test-verify-gate-checklist">Nebius smoke test — VERIFY gate checklist<a class="headerlink" href="#nebius-smoke-test-verify-gate-checklist" title="Permanent link">&para;</a></h1>
+<p>What this documents: a manual checklist to confirm luncur's Nebius GPU-cloud
+API assumptions against a real account, before Nebius support is called
+production-ready.</p>
+<h2 id="why-this-exists">Why this exists<a class="headerlink" href="#why-this-exists" title="Permanent link">&para;</a></h2>
+<p><code>internal/gpucloud/nebius.go</code> and <code>internal/gpucloud/nebiusauth.go</code> implement
+the Nebius AI Cloud IAM token-exchange and Compute API against <strong>shapes
+derived from public docs</strong> (docs.nebius.com, as read 2026-07-07) — not against
+a live account. Every request/response shape and REST path that couldn't be
+confirmed against a real Nebius tenant is marked in the source with a
+<code>// VERIFY(nebius-smoke): &lt;what it asserts&gt;</code> comment.</p>
+<p>This checklist walks a real account through the same calls luncur's Nebius
+provider makes, so each marker can be confirmed (or fixed) before Nebius is
+announced as production-ready. Until every gate below is checked off, treat
+Nebius support as <strong>docs-derived, not field-verified</strong>.</p>
+<h3 id="current-gates-from-internalgpucloud">Current gates (from <code>internal/gpucloud/</code>)<a class="headerlink" href="#current-gates-from-internalgpucloud" title="Permanent link">&para;</a></h3>
+<p>Reproduce with:</p>
+<div class="highlight"><pre><span></span><code>grep<span class="w"> </span>-rn<span class="w"> </span><span class="s2">&quot;VERIFY(nebius-smoke)&quot;</span><span class="w"> </span>internal/gpucloud/
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>internal/gpucloud/nebius.go:199:              // VERIFY(nebius-smoke): CreateInstance JSON body shape
+internal/gpucloud/nebius.go:204:      // VERIFY(nebius-smoke): CreateInstance REST path
+internal/gpucloud/nebius.go:218:              // VERIFY(nebius-smoke): operation poll path
+internal/gpucloud/nebius.go:219:      // VERIFY(nebius-smoke): operation response shape
+internal/gpucloud/nebius.go:248:      // VERIFY(nebius-smoke): List instances path
+internal/gpucloud/nebius.go:266:      // VERIFY(nebius-smoke): Destroy instance path
+internal/gpucloud/nebiusauth.go:173:  // VERIFY(nebius-smoke): token-exchange endpoint path
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>File:line</th>
+<th>Asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>nebiusauth.go:173</code></td>
+<td>Token-exchange endpoint is <code>POST {endpoint}/iam/v1/tokens:exchange</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>nebius.go:199</code></td>
+<td><code>CreateInstance</code> JSON body shape (<code>parent_id</code>, <code>name</code>, <code>resources.platform</code>/<code>preset</code>, <code>boot_disk</code>, <code>network_interfaces</code>, <code>cloud_init_user_data</code>)</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>nebius.go:204</code></td>
+<td><code>CreateInstance</code> REST path is <code>POST {endpoint}/compute/v1/instances</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>nebius.go:218</code></td>
+<td>Operation poll path is <code>GET {endpoint}/compute/v1/operations/{id}</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>nebius.go:219</code></td>
+<td>Operation response shape (<code>id</code>, <code>resource_id</code>, <code>done</code>)</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>nebius.go:248</code></td>
+<td>List path is <code>GET {endpoint}/compute/v1/instances?parent_id=...</code>, response <code>items[].{id,name,status}</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>nebius.go:266</code></td>
+<td>Destroy path is <code>DELETE {endpoint}/compute/v1/instances/{id}</code></td>
+</tr>
+</tbody>
+</table>
+<p>Run the grep yourself before starting — if the line numbers or marker text
+have drifted from the table above, trust the live grep output, not this doc.</p>
+<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A Nebius account with an active tenant + project (folder), and permission
+  to create service accounts, authorized keys, and compute instances.</li>
+<li><code>openssl</code>, <code>curl</code>, <code>jq</code> on your machine.</li>
+<li>Placeholders used below — replace with your real values:
+  <code>$TENANT_ID</code>, <code>$PROJECT_ID</code> (this is <code>parent_id</code>), <code>$SUBNET_ID</code>, <code>$SA_ID</code>,
+  <code>$PUBKEY_ID</code>.</li>
+</ul>
+<h2 id="steps">Steps<a class="headerlink" href="#steps" title="Permanent link">&para;</a></h2>
+<h3 id="a-create-a-service-account">a. Create a service account<a class="headerlink" href="#a-create-a-service-account" title="Permanent link">&para;</a></h3>
+<p>In the Nebius console, create a service account scoped to the project you'll
+rent instances in. Note its id as <code>$SA_ID</code>.</p>
+<h3 id="b-generate-an-authorized-key">b. Generate an authorized key<a class="headerlink" href="#b-generate-an-authorized-key" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>openssl<span class="w"> </span>genrsa<span class="w"> </span>-out<span class="w"> </span>nebius-sa.pem<span class="w"> </span><span class="m">4096</span>
+openssl<span class="w"> </span>rsa<span class="w"> </span>-in<span class="w"> </span>nebius-sa.pem<span class="w"> </span>-pubout<span class="w"> </span>-out<span class="w"> </span>nebius-sa.pub
+</code></pre></div>
+<p>Upload <code>nebius-sa.pub</code> to the service account in the console as an
+"authorized key" / "access key". Note the key id it's assigned as
+<code>$PUBKEY_ID</code>.</p>
+<h3 id="c-build-the-jwt">c. Build the JWT<a class="headerlink" href="#c-build-the-jwt" title="Permanent link">&para;</a></h3>
+<p>luncur builds this internally (<code>internal/gpucloud/nebiusauth.go</code>, <code>nebiusJWT</code>)
+as an RS256-signed JWT:</p>
+<ul>
+<li>Header: <code>{"alg":"RS256","kid":"$PUBKEY_ID","typ":"JWT"}</code></li>
+<li>Claims: <code>{"iss":"$SA_ID","sub":"$SA_ID","iat":&lt;now&gt;,"exp":&lt;now+3600&gt;}</code></li>
+</ul>
+<p>For a one-off manual test, use any small script or JWT CLI that can sign
+those exact header/claims with <code>nebius-sa.pem</code> (RS256, unencoded base64url
+segments joined by <code>.</code>, final <code>.</code> + base64url signature). The point of this
+step is just to produce <code>$JWT</code> for step (d) — don't over-engineer it.</p>
+<h3 id="d-token-exchange-confirms-gate-1">d. Token exchange (confirms gate #1)<a class="headerlink" href="#d-token-exchange-confirms-gate-1" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">&quot;https://api.nebius.cloud/iam/v1/tokens:exchange&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<span class="s1">    &quot;grant_type&quot;: &quot;urn:ietf:params:oauth:grant-type:token-exchange&quot;,</span>
+<span class="s1">    &quot;requested_token_type&quot;: &quot;urn:ietf:params:oauth:token-type:access_token&quot;,</span>
+<span class="s1">    &quot;subject_token_type&quot;: &quot;urn:ietf:params:oauth:token-type:jwt&quot;,</span>
+<span class="s1">    &quot;subject_token&quot;: &quot;&#39;</span><span class="s2">&quot;</span><span class="nv">$JWT</span><span class="s2">&quot;</span><span class="s1">&#39;&quot;</span>
+<span class="s1">  }&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tee<span class="w"> </span>token-response.json<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>.
+
+<span class="nb">export</span><span class="w"> </span><span class="nv">IAM_TOKEN</span><span class="o">=</span><span class="k">$(</span>jq<span class="w"> </span>-r<span class="w"> </span>.access_token<span class="w"> </span>token-response.json<span class="k">)</span>
+</code></pre></div>
+<p>Confirm the response has <code>access_token</code> (string) and <code>expires_in</code> (seconds,
+number) — that's the exact shape <code>nebiusTokenSource.Token</code> decodes.</p>
+<h3 id="e-create-the-smallest-vm-confirms-gates-2-3">e. Create the smallest VM (confirms gates #2, #3)<a class="headerlink" href="#e-create-the-smallest-vm-confirms-gates-2-3" title="Permanent link">&para;</a></h3>
+<p>Use the cheapest CPU-only platform/preset your account has access to — this
+is just testing the plumbing, not renting a GPU.</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">&quot;https://api.nebius.cloud/compute/v1/instances&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$IAM_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<span class="s1">    &quot;parent_id&quot;: &quot;&#39;</span><span class="s2">&quot;</span><span class="nv">$PROJECT_ID</span><span class="s2">&quot;</span><span class="s1">&#39;&quot;,</span>
+<span class="s1">    &quot;name&quot;: &quot;luncur-smoke-test&quot;,</span>
+<span class="s1">    &quot;resources&quot;: {</span>
+<span class="s1">      &quot;platform&quot;: &quot;cpu-e2&quot;,</span>
+<span class="s1">      &quot;preset&quot;: &quot;2vcpu-8gb&quot;</span>
+<span class="s1">    },</span>
+<span class="s1">    &quot;boot_disk&quot;: {</span>
+<span class="s1">      &quot;size_gibibytes&quot;: 20,</span>
+<span class="s1">      &quot;source_image_family&quot;: {</span>
+<span class="s1">        &quot;image_family&quot;: &quot;ubuntu22.04-driverless&quot;</span>
+<span class="s1">      }</span>
+<span class="s1">    },</span>
+<span class="s1">    &quot;network_interfaces&quot;: [</span>
+<span class="s1">      { &quot;subnet_id&quot;: &quot;&#39;</span><span class="s2">&quot;</span><span class="nv">$SUBNET_ID</span><span class="s2">&quot;</span><span class="s1">&#39;&quot; }</span>
+<span class="s1">    ],</span>
+<span class="s1">    &quot;cloud_init_user_data&quot;: &quot;#cloud-config\nruncmd:\n  - [sh, -c, \&quot;echo smoke &gt; /tmp/ok\&quot;]&quot;</span>
+<span class="s1">  }&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>tee<span class="w"> </span>create-response.json<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>.
+
+<span class="nb">export</span><span class="w"> </span><span class="nv">OP_ID</span><span class="o">=</span><span class="k">$(</span>jq<span class="w"> </span>-r<span class="w"> </span>.id<span class="w"> </span>create-response.json<span class="k">)</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">INSTANCE_ID</span><span class="o">=</span><span class="k">$(</span>jq<span class="w"> </span>-r<span class="w"> </span>.resource_id<span class="w"> </span>create-response.json<span class="k">)</span>
+</code></pre></div>
+<p>Confirm: HTTP 2xx, and the response is an operation envelope (<code>id</code>,
+<code>resource_id</code>, <code>done</code>) — matching <code>nebiusOperation</code> in <code>nebius.go</code>. Adjust
+<code>platform</code>/<code>preset</code> to whatever the cheapest CPU shape is in your account;
+the field names (<code>platform</code>, <code>preset</code>) are what's under VERIFY, not these
+specific values.</p>
+<h3 id="f-poll-the-operation-confirms-gates-4-5">f. Poll the operation (confirms gates #4, #5)<a class="headerlink" href="#f-poll-the-operation-confirms-gates-4-5" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span><span class="s2">&quot;https://api.nebius.cloud/compute/v1/operations/</span><span class="nv">$OP_ID</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$IAM_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>.
+</code></pre></div>
+<p>Repeat until <code>.done == true</code>. Confirm the polled response has the same
+<code>id</code>/<code>resource_id</code>/<code>done</code> shape as the create response.</p>
+<h3 id="g-list-instances-confirms-gate-6">g. List instances (confirms gate #6)<a class="headerlink" href="#g-list-instances-confirms-gate-6" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span><span class="s2">&quot;https://api.nebius.cloud/compute/v1/instances?parent_id=</span><span class="nv">$PROJECT_ID</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$IAM_TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>.
+</code></pre></div>
+<p>Confirm the response has <code>items: [...]</code>, each item with <code>id</code>, <code>name</code>,
+<code>status</code> fields.</p>
+<h3 id="h-delete-the-instance-confirms-gate-7">h. Delete the instance (confirms gate #7)<a class="headerlink" href="#h-delete-the-instance-confirms-gate-7" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span><span class="s2">&quot;https://api.nebius.cloud/compute/v1/instances/</span><span class="nv">$INSTANCE_ID</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$IAM_TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p>Confirm 2xx and that the console shows the instance gone/deleting.</p>
+<h2 id="closeout">Closeout<a class="headerlink" href="#closeout" title="Permanent link">&para;</a></h2>
+<p>All gates confirmed → open a follow-up commit that removes every
+<code>// VERIFY(nebius-smoke):</code> marker in <code>internal/gpucloud/nebius.go</code> and
+<code>nebiusauth.go</code> (they're now verified truth, not assumptions) and updates
+this doc's status line.</p>
+<p>Any mismatch → <strong>fix the shape in <code>nebius.go</code>/<code>nebiusauth.go</code> first</strong>, re-run
+the affected step, then remove that marker. Do not remove a marker without a
+passing run against a real account.</p>
+<p>Until this checklist is fully run and closed out, Nebius support in luncur is
+<strong>docs-derived</strong> — functional against the documented API shape, unconfirmed
+against a live account.</p>
+<p><strong>Related:</strong> <a href="../ml/gpu-cloud/">GPU cloud</a></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
