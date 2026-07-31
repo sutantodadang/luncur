@@ -59,7 +59,7 @@ jobs:
       # QEMU + Buildx let the amd64 runner emit multi-arch (amd64 + arm64)
       # images, so a Raspberry Pi / arm64 node can pull the same tag.
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
