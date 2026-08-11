@@ -132,6 +132,22 @@ if(!window.__luncurUX){
     var current = parseInt(e.detail.target.dataset.ts || "0", 10);
     if(incoming <= current){ e.detail.shouldSwap = false; }
   });
+  // Ticker timezone: server fragments render the audit row's UTC clock,
+  // but window.toast() writes local time — the same event's stamp would
+  // jump hours when the next poll replaced a local write. Reformat the
+  // swapped-in stamp from data-ts (epoch ms) to local time.
+  document.body.addEventListener("htmx:afterSwap", function(){
+    var el = document.getElementById("ticker-msg");
+    if(!el) return;
+    var ms = parseInt(el.dataset.ts || "0", 10);
+    if(!ms) return;
+    var span = el.querySelector(".text-termts");
+    if(!span || span.dataset.local) return;
+    var d = new Date(ms);
+    var pad = function(n){ return (n < 10 ? "0" : "") + n; };
+    span.textContent = pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+    span.dataset.local = "1";
+  });
   // Tab underline: a tab-switch hx-get swaps only #tab-content — the tab
   // bar lives in app_shell, which is NOT re-rendered — so the .active
   // class would stay on the old tab. Move it optimistically when the
