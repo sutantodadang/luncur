@@ -160,19 +160,25 @@ if(!window.__luncurUX){
     window.toast("network error", "err");
   });
 
-  // Global request bar: an indeterminate sweep shown only for hx-boosted
-  // navigations (never background polls — those set hx-trigger="every ..."
-  // and are never boosted), so the 15s chart/table refreshes stay silent.
+  // Global request bar: an indeterminate sweep shown for navigations —
+  // hx-boosted page loads AND tab switches (hx-push-url on .tab-link makes
+  // them navigations too). Never background polls: those set
+  // hx-trigger="every ..." and are neither boosted nor tab-links, so the
+  // 15s chart/table refreshes stay silent.
+  var isNavReq = function(e){
+    return e.detail.boosted ||
+      (e.detail.elt && e.detail.elt.classList && e.detail.elt.classList.contains("tab-link"));
+  };
   var setBar = function(on){
     var bar = document.getElementById("hx-bar");
     if(bar) bar.classList.toggle("on", on);
   };
   document.body.addEventListener("htmx:beforeRequest", function(e){
-    if(e.detail.boosted) setBar(true);
+    if(isNavReq(e)) setBar(true);
   });
   ["htmx:afterRequest", "htmx:responseError", "htmx:sendError"].forEach(function(ev){
     document.body.addEventListener(ev, function(e){
-      if(e.detail.boosted) setBar(false);
+      if(isNavReq(e)) setBar(false);
     });
   });
 
