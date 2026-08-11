@@ -37,6 +37,12 @@ module.exports = {
         sans: ['"IBM Plex Sans"', "sans-serif"],
         mono: ['"IBM Plex Mono"', "monospace"],
       },
+      // DESIGN.md §Motion: "building chip pulse (1.6s ease-in-out)" —
+      // Tailwind's default animate-pulse is 2s cubic-bezier; override so
+      // every pulse (status chips, tree build-dots) matches the spec.
+      animation: {
+        pulse: "pulse 1.6s ease-in-out infinite",
+      },
     },
   },
   plugins: [],
