@@ -11,11 +11,11 @@
 </head>
 <body hx-boost="true" class="bg-bg text-ink min-h-screen antialiased font-sans">
 <div id="hx-bar"></div>
-<div class="flex min-h-screen">
+<div class="flex min-h-screen flex-col md:flex-row">
 {{end}}
 
 {{define "nav"}}
-<aside class="flex w-56 flex-col gap-1 border-r border-line bg-side p-4">
+<aside class="flex w-full flex-col gap-1 border-b border-line bg-side p-4 md:w-56 md:border-b-0 md:border-r">
   <a href="/ui/" class="mb-4 text-lg font-semibold text-inkhi">luncur<span class="text-signal">_</span></a>
   <p class="seclabel mb-1 px-3">Workspace</p>
   <div class="tree mb-2 flex flex-col gap-0.5 overflow-y-auto">
@@ -69,7 +69,7 @@
   });
 })();
 </script>
-<main class="min-w-0 flex-1 p-8">
+<main class="min-w-0 flex-1 p-4 md:p-8">
 <div class="mx-auto w-full max-w-6xl 2xl:max-w-[1600px]">
 <div id="hx-err" hidden class="card mb-4 border-fail text-[13px]"></div>
 {{end}}
@@ -79,7 +79,7 @@
 </main>
 </div>
 {{if .User}}
-<div class="fixed inset-x-0 bottom-0 left-56 z-40 border-t border-line bg-termbg">
+<div class="fixed inset-x-0 bottom-0 left-0 z-40 border-t border-line bg-termbg md:left-56">
 {{if eq .User.Role "admin"}}<a href="/ui/audit" class="block truncate px-4 py-1.5 font-mono text-[12px] no-underline hover:bg-[rgba(255,255,255,.04)]">{{else}}<div class="block truncate px-4 py-1.5 font-mono text-[12px]">{{end}}
   <span id="ticker-msg" data-ts="0" hx-get="/ui/ticker" hx-trigger="load, every 15s" hx-swap="outerHTML"><span class="text-termts">&nbsp;</span> <span class="text-termtext">waiting for activity&hellip;</span></span>
 {{if eq .User.Role "admin"}}</a>{{else}}</div>{{end}}
