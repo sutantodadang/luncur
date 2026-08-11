@@ -132,6 +132,20 @@ if(!window.__luncurUX){
     var current = parseInt(e.detail.target.dataset.ts || "0", 10);
     if(incoming <= current){ e.detail.shouldSwap = false; }
   });
+  // Tab underline: a tab-switch hx-get swaps only #tab-content — the tab
+  // bar lives in app_shell, which is NOT re-rendered — so the .active
+  // class would stay on the old tab. Move it optimistically when the
+  // request starts: instant feedback, and the content lands right after.
+  document.body.addEventListener("htmx:beforeRequest", function(e){
+    var elt = e.detail.elt;
+    if(elt && elt.classList && elt.classList.contains("tab-link")){
+      var nav = elt.closest("nav");
+      if(nav){
+        nav.querySelectorAll(".tab-link.active").forEach(function(t){ t.classList.remove("active"); });
+        elt.classList.add("active");
+      }
+    }
+  });
   document.body.addEventListener("htmx:responseError", function(e){
     var el = document.getElementById("hx-err");
     if(el){
