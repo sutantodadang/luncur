@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/store"
@@ -412,10 +413,13 @@ func uiRedirect(w http.ResponseWriter, r *http.Request, p store.Project, a store
 }
 
 // flash queues a one-shot toast shown by base.html's foot script on the
-// next page load: cookie value "<kind>|<msg>", read+cleared by JS.
+// next page load: cookie value "<kind>|<msg>", read+cleared by JS. The JS
+// side decodes with decodeURIComponent, which does NOT turn "+" back into
+// a space (that's form encoding), so percent-encode spaces explicitly or
+// "project created" renders as "project+created" in the ticker.
 func flash(w http.ResponseWriter, kind, msg string) {
 	http.SetCookie(w, &http.Cookie{
-		Name: "luncur_flash", Value: url.QueryEscape(kind + "|" + msg),
+		Name: "luncur_flash", Value: strings.ReplaceAll(url.QueryEscape(kind+"|"+msg), "+", "%20"),
 		Path: "/", MaxAge: 15, SameSite: http.SameSiteLaxMode,
 	})
 }
