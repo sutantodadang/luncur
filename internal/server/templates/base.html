@@ -11,11 +11,11 @@
 </head>
 <body hx-boost="true" class="bg-bg text-ink min-h-screen antialiased font-sans">
 <div id="hx-bar"></div>
-<div class="flex min-h-screen">
+<div class="flex min-h-screen flex-col md:flex-row">
 {{end}}
 
 {{define "nav"}}
-<aside class="flex w-56 flex-col gap-1 border-r border-line bg-side p-4">
+<aside class="flex w-full flex-col gap-1 border-b border-line bg-side p-4 md:w-56 md:border-b-0 md:border-r">
   <a href="/ui/" class="mb-4 text-lg font-semibold text-inkhi">luncur<span class="text-signal">_</span></a>
   <p class="seclabel mb-1 px-3">Workspace</p>
   <div class="tree mb-2 flex flex-col gap-0.5 overflow-y-auto">
@@ -69,7 +69,7 @@
   });
 })();
 </script>
-<main class="min-w-0 flex-1 p-8">
+<main class="min-w-0 flex-1 p-4 md:p-8">
 <div class="mx-auto w-full max-w-6xl 2xl:max-w-[1600px]">
 <div id="hx-err" hidden class="card mb-4 border-fail text-[13px]"></div>
 {{end}}
@@ -79,7 +79,7 @@
 </main>
 </div>
 {{if .User}}
-<div class="fixed inset-x-0 bottom-0 left-56 z-40 border-t border-line bg-termbg">
+<div class="fixed inset-x-0 bottom-0 left-0 z-40 border-t border-line bg-termbg md:left-56">
 {{if eq .User.Role "admin"}}<a href="/ui/audit" class="block truncate px-4 py-1.5 font-mono text-[12px] no-underline hover:bg-[rgba(255,255,255,.04)]">{{else}}<div class="block truncate px-4 py-1.5 font-mono text-[12px]">{{end}}
   <span id="ticker-msg" data-ts="0" hx-get="/ui/ticker" hx-trigger="load, every 15s" hx-swap="outerHTML"><span class="text-termts">&nbsp;</span> <span class="text-termtext">waiting for activity&hellip;</span></span>
 {{if eq .User.Role "admin"}}</a>{{else}}</div>{{end}}
@@ -132,6 +132,36 @@ if(!window.__luncurUX){
     var current = parseInt(e.detail.target.dataset.ts || "0", 10);
     if(incoming <= current){ e.detail.shouldSwap = false; }
   });
+  // Ticker timezone: server fragments render the audit row's UTC clock,
+  // but window.toast() writes local time — the same event's stamp would
+  // jump hours when the next poll replaced a local write. Reformat the
+  // swapped-in stamp from data-ts (epoch ms) to local time.
+  document.body.addEventListener("htmx:afterSwap", function(){
+    var el = document.getElementById("ticker-msg");
+    if(!el) return;
+    var ms = parseInt(el.dataset.ts || "0", 10);
+    if(!ms) return;
+    var span = el.querySelector(".text-termts");
+    if(!span || span.dataset.local) return;
+    var d = new Date(ms);
+    var pad = function(n){ return (n < 10 ? "0" : "") + n; };
+    span.textContent = pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+    span.dataset.local = "1";
+  });
+  // Tab underline: a tab-switch hx-get swaps only #tab-content — the tab
+  // bar lives in app_shell, which is NOT re-rendered — so the .active
+  // class would stay on the old tab. Move it optimistically when the
+  // request starts: instant feedback, and the content lands right after.
+  document.body.addEventListener("htmx:beforeRequest", function(e){
+    var elt = e.detail.elt;
+    if(elt && elt.classList && elt.classList.contains("tab-link")){
+      var nav = elt.closest("nav");
+      if(nav){
+        nav.querySelectorAll(".tab-link.active").forEach(function(t){ t.classList.remove("active"); });
+        elt.classList.add("active");
+      }
+    }
+  });
   document.body.addEventListener("htmx:responseError", function(e){
     var el = document.getElementById("hx-err");
     if(el){
@@ -146,19 +176,25 @@ if(!window.__luncurUX){
     window.toast("network error", "err");
   });
 
-  // Global request bar: an indeterminate sweep shown only for hx-boosted
-  // navigations (never background polls — those set hx-trigger="every ..."
-  // and are never boosted), so the 15s chart/table refreshes stay silent.
+  // Global request bar: an indeterminate sweep shown for navigations —
+  // hx-boosted page loads AND tab switches (hx-push-url on .tab-link makes
+  // them navigations too). Never background polls: those set
+  // hx-trigger="every ..." and are neither boosted nor tab-links, so the
+  // 15s chart/table refreshes stay silent.
+  var isNavReq = function(e){
+    return e.detail.boosted ||
+      (e.detail.elt && e.detail.elt.classList && e.detail.elt.classList.contains("tab-link"));
+  };
   var setBar = function(on){
     var bar = document.getElementById("hx-bar");
     if(bar) bar.classList.toggle("on", on);
   };
   document.body.addEventListener("htmx:beforeRequest", function(e){
-    if(e.detail.boosted) setBar(true);
+    if(isNavReq(e)) setBar(true);
   });
   ["htmx:afterRequest", "htmx:responseError", "htmx:sendError"].forEach(function(ev){
     document.body.addEventListener(ev, function(e){
-      if(e.detail.boosted) setBar(false);
+      if(isNavReq(e)) setBar(false);
     });
   });
 

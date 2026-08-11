@@ -2114,7 +2114,11 @@ func TestFlash(t *testing.T) {
 	if ck == nil {
 		t.Fatal("flash: expected Set-Cookie luncur_flash")
 	}
-	want := url.QueryEscape("ok|app created")
+	// Regression: ISSUE-004 — spaces must be %20, not "+": the JS reader
+	// uses decodeURIComponent, which leaves "+" literal, so QueryEscape's
+	// form encoding rendered "app created" as "app+created" in the ticker.
+	// Found by /qa on 2026-08-11.
+	want := "ok%7Capp%20created"
 	if ck.Value != want {
 		t.Fatalf("flash: cookie value = %q, want %q", ck.Value, want)
 	}
