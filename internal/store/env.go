@@ -31,6 +31,35 @@ func (s *Store) UnsetEnv(appID int64, key string) error {
 	return nil
 }
 
+// ReplaceEnv swaps an app's entire env-var set for vars in one transaction:
+// every existing row is deleted, then each entry inserted. Values are
+// sealed bytes — same contract as SetEnv. Keys are validated up front so an
+// invalid key rejects the whole call without touching the existing set.
+func (s *Store) ReplaceEnv(appID int64, vars map[string][]byte) error {
+	for k := range vars {
+		if !envKeyRe.MatchString(k) {
+			return validationErrorf("invalid env key %q (must match [A-Z_][A-Z0-9_]*)", k)
+		}
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM env_vars WHERE app_id = ?`, appID); err != nil {
+		return err
+	}
+	for k, v := range vars {
+		if _, err := tx.Exec(
+			`INSERT INTO env_vars (app_id, key, value_enc) VALUES (?, ?, ?)`,
+			appID, k, v,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) ListEnv(appID int64) (map[string][]byte, error) {
 	rows, err := s.db.Query(`SELECT key, value_enc FROM env_vars WHERE app_id = ?`, appID)
 	if err != nil {
