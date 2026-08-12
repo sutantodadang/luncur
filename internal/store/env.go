@@ -45,7 +45,7 @@ func (s *Store) ReplaceEnv(appID int64, vars map[string][]byte) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // no-op after a successful Commit
 	if _, err := tx.Exec(`DELETE FROM env_vars WHERE app_id = ?`, appID); err != nil {
 		return err
 	}
