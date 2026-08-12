@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -172,5 +175,43 @@ func TestCopyEnvSetupSkipsExistingAddonTypes(t *testing.T) {
 	}
 	if types["postgres"] != 1 || types["redis"] != 1 {
 		t.Fatalf("staging addons after copy: %v", types)
+	}
+}
+
+// TestHandleCopyEnvSetupValidation covers the handler's reject paths:
+// same source/target → 400, unknown env → 404.
+func TestHandleCopyEnvSetupValidation(t *testing.T) {
+	s, _ := previewTestServer(t)
+	u, err := s.st.CreateUser("a@b.co", "pw123456", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.AddMember(p.ID, u.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	do := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/v1/projects/proj/envs/copy", strings.NewReader(body))
+		r.SetPathValue("project", "proj")
+		w := httptest.NewRecorder()
+		s.handleCopyEnvSetup(w, r, u)
+		return w
+	}
+
+	if w := do(`{"source":"production","target":"production"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("same env: want 400, got %d", w.Code)
+	}
+	if w := do(`{"source":"production","target":"nope"}`); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown target: want 404, got %d", w.Code)
+	}
+	if w := do(`{"source":"production","target":"staging"}`); w.Code != http.StatusOK {
+		t.Fatalf("valid copy: want 200, got %d: %s", w.Code, w.Body)
 	}
 }

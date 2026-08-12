@@ -1649,6 +1649,25 @@ func (c *Client) SetPreviewBase(project, env string) error {
 		map[string]string{"env": env}, nil)
 }
 
+// EnvCopySummary reports what CopyEnvSetup changed in the target
+// environment.
+type EnvCopySummary struct {
+	AppsCreated  int      `json:"apps_created"`
+	AppsUpdated  int      `json:"apps_updated"`
+	AddonsCloned int      `json:"addons_cloned"`
+	Warnings     []string `json:"warnings"`
+}
+
+// CopyEnvSetup copies source's setup (apps' config, sealed env vars,
+// missing addon types) into target. Target-only apps are kept; nothing is
+// redeployed.
+func (c *Client) CopyEnvSetup(project, source, target string) (EnvCopySummary, error) {
+	var out EnvCopySummary
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/envs/copy",
+		map[string]string{"source": source, "target": target}, &out)
+	return out, err
+}
+
 // PreviewApp is one app cloned into a preview environment, as returned by
 // the previews API's "apps" field.
 type PreviewApp struct {

@@ -2,8 +2,11 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"net/http"
 
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -97,4 +100,54 @@ func (s *server) applyAppSetup(appID int64, src store.App) error {
 		return fmt.Errorf("replace env vars: %w", err)
 	}
 	return nil
+}
+
+// handleCopyEnvSetup copies one environment's setup into another (apps'
+// mutable config + sealed env vars + missing addon types). Overwrites
+// matching target apps, creates missing ones, never deletes target-only
+// apps, never redeploys. Write access to the project covers both envs.
+func (s *server) handleCopyEnvSetup(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.requireProjectWrite(w, u, r.PathValue("project"))
+	if !ok {
+		return
+	}
+	var req struct {
+		Source string `json:"source"`
+		Target string `json:"target"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	if req.Source == req.Target {
+		writeError(w, http.StatusBadRequest, "bad_request", "source and target must differ")
+		return
+	}
+	source, err := s.st.GetEnvironment(p.ID, req.Source)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "no such source environment")
+			return
+		}
+		log.Printf("copy env setup: get source: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	target, err := s.st.GetEnvironment(p.ID, req.Target)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "no such target environment")
+			return
+		}
+		log.Printf("copy env setup: get target: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	sum, err := s.copyEnvSetup(r.Context(), source, target)
+	if err != nil {
+		log.Printf("copy env setup %s -> %s: %v", source.Name, target.Name, err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, sum)
 }
