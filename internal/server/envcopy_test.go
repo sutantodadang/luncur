@@ -215,3 +215,39 @@ func TestHandleCopyEnvSetupValidation(t *testing.T) {
 		t.Fatalf("valid copy: want 200, got %d: %s", w.Code, w.Body)
 	}
 }
+
+// TestUIEnvCopy drives the UI handler directly (same style as the API
+// handler test): a valid copy flashes ok and redirects; same from/to 400s.
+func TestUIEnvCopy(t *testing.T) {
+	s, _ := previewTestServer(t)
+	u, err := s.st.CreateUser("ui@b.co", "pw123456", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.st.CreateProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.AddMember(p.ID, u.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.SeedProjectEnvironments(p.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	do := func(form string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/ui/projects/proj/envs/copy", strings.NewReader(form))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.SetPathValue("project", "proj")
+		w := httptest.NewRecorder()
+		s.handleUIEnvCopy(w, r, u)
+		return w
+	}
+
+	if w := do("from=production&to=production"); w.Code != http.StatusBadRequest {
+		t.Fatalf("same env: want 400, got %d", w.Code)
+	}
+	if w := do("from=production&to=staging"); w.Code != http.StatusSeeOther {
+		t.Fatalf("valid copy: want 303 redirect, got %d: %s", w.Code, w.Body)
+	}
+}

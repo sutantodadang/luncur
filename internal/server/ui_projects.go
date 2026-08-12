@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -360,5 +361,49 @@ func (s *server) handleUIPreviewDelete(w http.ResponseWriter, r *http.Request, u
 		return
 	}
 	flash(w, "ok", "preview deleted")
+	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
+}
+
+// handleUIEnvCopy copies one environment's setup into another from the
+// project page's "Copy environment setup" card. Errors use plain
+// http.Error (same convention as handleUIPreviewDelete); success flashes
+// the summary and returns to the project page.
+func (s *server) handleUIEnvCopy(w http.ResponseWriter, r *http.Request, u store.User) {
+	p, ok := s.uiProjectWrite(w, r, u)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	from, to := r.PostFormValue("from"), r.PostFormValue("to")
+	if from == to {
+		http.Error(w, "source and target must differ", http.StatusBadRequest)
+		return
+	}
+	source, err := s.st.GetEnvironment(p.ID, from)
+	if err != nil {
+		http.Error(w, "no such source environment", http.StatusNotFound)
+		return
+	}
+	target, err := s.st.GetEnvironment(p.ID, to)
+	if err != nil {
+		http.Error(w, "no such target environment", http.StatusNotFound)
+		return
+	}
+	sum, err := s.copyEnvSetup(r.Context(), source, target)
+	if err != nil {
+		log.Printf("ui env copy %s -> %s: %v", from, to, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	msg := fmt.Sprintf("copied %s to %s: %d apps created, %d updated, %d addons cloned",
+		from, to, sum.AppsCreated, sum.AppsUpdated, sum.AddonsCloned)
+	if len(sum.Warnings) > 0 {
+		log.Printf("ui env copy warnings: %v", sum.Warnings)
+		msg = fmt.Sprintf("%s (%d warnings, see server log)", msg, len(sum.Warnings))
+	}
+	flash(w, "ok", msg)
 	http.Redirect(w, r, "/ui/projects/"+p.Name, http.StatusSeeOther)
 }
