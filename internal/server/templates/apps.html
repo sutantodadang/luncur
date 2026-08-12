@@ -229,6 +229,22 @@ function uiPresetChange(preset) {
 </div>
 
 <div class="card mb-6">
+<h2>Copy environment setup</h2>
+<p class="mb-1 text-sm text-mut">Copy app config, env vars, and missing addons from one environment into another. Apps that only exist in the target are kept; changes apply on each app's next deploy.</p>
+<form method="post" action="/ui/projects/{{.Project.Name}}/envs/copy" class="flex flex-wrap items-center gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <select class="input w-auto" name="from">
+    {{range .Envs}}<option value="{{.Name}}"{{if eq .Name $.Env.Name}} selected{{end}}>from: {{.Name}}</option>{{end}}
+  </select>
+  <select class="input w-auto" name="to">
+    {{range .Envs}}<option value="{{.Name}}">to: {{.Name}}</option>{{end}}
+  </select>
+  <button type="submit" class="btn" hx-confirm="Overwrite the target environment's app config and env vars with the source's? Target-only apps are kept.">copy</button>
+</form>
+<div class="cli-echo">$ <b>luncur envs copy --project {{.Project.Name}} --from production --to staging</b></div>
+</div>
+
+<div class="card mb-6">
 <h2>Members</h2>
 <table class="tbl"><tr><th>Email</th><th>Role</th><th></th></tr>
 {{range .Members}}<tr><td>{{.Email}}</td><td>{{.Role}}</td><td>{{if $.IsAdmin}}<form class="inline-flex" method="post" action="/ui/projects/{{$.Project.Name}}/members/remove">

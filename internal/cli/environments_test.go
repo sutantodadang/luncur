@@ -48,6 +48,34 @@ func TestEnvsCommands(t *testing.T) {
 	}
 }
 
+// TestEnvsCopyCommand: copying into a non-default env succeeds and prints
+// the summary; copying into the default env without --yes refuses.
+func TestEnvsCopyCommand(t *testing.T) {
+	srv := testEnv(t)
+	if _, err := run(t, "login", srv.URL, "--email", "root@b.co", "--password", "pw123456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, "project", "create", "proj"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := run(t, "envs", "copy", "--project", "proj", "--from", "production", "--to", "staging")
+	if err != nil {
+		t.Fatalf("copy to staging: %v (%s)", err, out)
+	}
+	if !strings.Contains(out, "copied production -> staging") {
+		t.Fatalf("missing summary line: %q", out)
+	}
+
+	// Default env target refuses without --yes.
+	if _, err := run(t, "envs", "copy", "--project", "proj", "--from", "staging", "--to", "production"); err == nil {
+		t.Fatal("copy into default env without --yes must refuse")
+	}
+	if out, err := run(t, "envs", "copy", "--project", "proj", "--from", "staging", "--to", "production", "--yes"); err != nil {
+		t.Fatalf("copy with --yes: %v (%s)", err, out)
+	}
+}
+
 // TestEnvFlagOnAppCommand confirms an app subcommand accepts --env and that
 // `envs` and `env` are distinct top-level commands.
 func TestEnvFlagOnAppCommand(t *testing.T) {

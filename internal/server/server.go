@@ -263,6 +263,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{project}/envs", s.authed(s.handleCreateEnv))
 	mux.HandleFunc("DELETE /v1/projects/{project}/envs/{env}", s.authed(s.handleDeleteEnv))
 	mux.HandleFunc("PUT /v1/projects/{project}/envs/{env}/default", s.authed(s.handleSetDefaultEnv))
+	mux.HandleFunc("POST /v1/projects/{project}/envs/copy", s.authed(s.handleCopyEnvSetup))
 	mux.HandleFunc("PUT /v1/projects/{project}/preview-base", s.authed(s.handleSetPreviewBase))
 	mux.HandleFunc("GET /v1/projects/{project}/previews", s.authed(s.handleListPreviews))
 	mux.HandleFunc("POST /v1/projects/{project}/previews", s.authed(s.handleCreatePreview))

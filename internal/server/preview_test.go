@@ -386,7 +386,10 @@ func TestClonePreviewAddons(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	warnings := srv.clonePreviewAddons(context.Background(), dev, preview)
+	cloned, warnings := srv.cloneEnvAddons(context.Background(), dev, preview)
+	if cloned != 2 {
+		t.Fatalf("cloned = %d, want 2", cloned)
+	}
 
 	previewAddons, err := st.AddonsForEnv(preview.ID)
 	if err != nil || len(previewAddons) != 2 {
@@ -471,7 +474,7 @@ func TestClonePreviewAddonsPerAddonFailureWarns(t *testing.T) {
 	seedPreviewAddon(t, srv, st, dev, "postgres", "db1")
 	seedPreviewAddon(t, srv, st, dev, "redis", "cache1")
 
-	warnings := srv.clonePreviewAddons(context.Background(), dev, preview)
+	_, warnings := srv.cloneEnvAddons(context.Background(), dev, preview)
 	if len(warnings) != 2 {
 		t.Fatalf("warnings = %v, want 2 (one dump failure per addon)", warnings)
 	}
@@ -512,7 +515,7 @@ func TestClonePreviewAddonsNoExecerWarns(t *testing.T) {
 
 	seedPreviewAddon(t, srv, st, dev, "postgres", "db1")
 
-	warnings := srv.clonePreviewAddons(context.Background(), dev, preview)
+	_, warnings := srv.cloneEnvAddons(context.Background(), dev, preview)
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "exec unavailable") {
 		t.Fatalf("warnings = %v, want one exec-unavailable warning", warnings)
 	}

@@ -433,7 +433,7 @@ func sanitizeBranch(b string) string {
 // replicas capped low, its env vars copied, and — for a git-source app —
 // the same repo with git_branch overridden to the pushed branch. Addon data
 // (postgres/redis via dump->restore, minio/mlflow created empty) is seeded
-// separately by clonePreviewAddons, below.
+// separately by cloneEnvAddons, below.
 //
 // ensurePreview always resolves its base the automatic way; a caller that
 // needs to override which environment a fresh preview clones from (the
@@ -504,7 +504,7 @@ func (s *server) ensurePreviewFromBase(ctx context.Context, p store.Project, bra
 		}
 	}
 
-	if warnings := s.clonePreviewAddons(ctx, base, env); len(warnings) > 0 {
+	if _, warnings := s.cloneEnvAddons(ctx, base, env); len(warnings) > 0 {
 		log.Printf("ensure preview: addon clone warnings: %v", warnings)
 	}
 
@@ -584,43 +584,62 @@ func (s *server) clonePreviewEnvVars(baseAppID, previewAppID int64) error {
 	return nil
 }
 
-// clonePreviewAddons seeds a preview environment's addon data from its base
-// environment: for every addon actually provisioned into base
-// (AddonsForEnv, not the whole-project ListAddons), create a same-typed
-// addon in preview via createAddon — the same core handleCreateAddon uses,
-// so the preview's creds/secret get minted and applied identically. name is
-// left "" so createAddon mints its own project-wide-unique name (addons.go's
-// UNIQUE(project_id, name) means the preview's clone is a genuinely separate
-// provisioned instance, never the base's own row). postgres/redis then get
-// their data seeded via the same dump->restore path backup/restore use;
-// minio/mlflow have no logical dump, so the clone is left freshly
-// provisioned and empty. Any single addon's failure (create, dump, or
-// restore) degrades to a warning rather than aborting the rest — a partial
-// preview beats none, mirroring createBackup's per-addon resilience.
-// Returns the warnings for the caller (ensurePreview) to log.
-func (s *server) clonePreviewAddons(ctx context.Context, base, preview store.Environment) []string {
+// cloneEnvAddons seeds a target environment's addon data from a base
+// environment: for every addon actually provisioned into base (AddonsForEnv,
+// not the whole-project ListAddons) whose type target doesn't already have,
+// create a same-typed addon in target via createAddon — the same core
+// handleCreateAddon uses, so the clone's creds/secret get minted and applied
+// identically. name is left "" so createAddon mints its own project-wide-
+// unique name (addons.go's UNIQUE(project_id, name) means the clone is a
+// genuinely separate provisioned instance, never base's own row).
+// postgres/redis then get their data seeded via the same dump->restore path
+// backup/restore use; minio/mlflow have no logical dump, so the clone is
+// left freshly provisioned and empty. Any single addon's failure (create,
+// dump, or restore) degrades to a warning rather than aborting the rest — a
+// partial clone beats none, mirroring createBackup's per-addon resilience.
+// Serves both preview creation (ensurePreviewFromBase, where target always
+// starts addon-less so the skip guard is a no-op) and env copy
+// (copyEnvSetup, where target may already run some of base's addon types).
+// Returns the cloned count and warnings for the caller to log/report.
+func (s *server) cloneEnvAddons(ctx context.Context, base, target store.Environment) (int, []string) {
 	addons, err := s.st.AddonsForEnv(base.ID)
 	if err != nil {
-		return []string{fmt.Sprintf("list base addons: %v", err)}
+		return 0, []string{fmt.Sprintf("list base addons: %v", err)}
 	}
 	if len(addons) == 0 {
-		return nil
+		return 0, nil
 	}
 	if s.kube == nil {
-		return []string{"kubernetes unavailable, addons not cloned"}
+		return 0, []string{"kubernetes unavailable, addons not cloned"}
 	}
 	p, err := s.st.GetProjectByID(base.ProjectID)
 	if err != nil {
-		return []string{fmt.Sprintf("get project: %v", err)}
+		return 0, []string{fmt.Sprintf("get project: %v", err)}
+	}
+	// An addon type target already runs is skipped — env copy must not
+	// stack a second postgres next to staging's own. Fresh preview envs
+	// have no addons, so this guard is a no-op on the preview path.
+	existing, err := s.st.AddonsForEnv(target.ID)
+	if err != nil {
+		return 0, []string{fmt.Sprintf("list target addons: %v", err)}
+	}
+	have := map[string]bool{}
+	for _, a := range existing {
+		have[a.Type] = true
 	}
 
+	cloned := 0
 	var warnings []string
 	for _, ad := range addons {
-		newAddon, err := s.createAddon(ctx, p, preview, ad.Type, "", ad.Version, ad.SizeGB, "")
+		if have[ad.Type] {
+			continue
+		}
+		newAddon, err := s.createAddon(ctx, p, target, ad.Type, "", ad.Version, ad.SizeGB, "")
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("create %s addon %s: %v", ad.Type, ad.Name, err))
 			continue
 		}
+		cloned++
 
 		switch ad.Type {
 		case "postgres", "redis":
@@ -640,13 +659,13 @@ func (s *server) clonePreviewAddons(ctx context.Context, base, preview store.Env
 			warnings = append(warnings, fmt.Sprintf("addon %s (%s): created empty, no data clone supported", ad.Name, ad.Type))
 		}
 
-		// Re-point the preview apps' addon attachments the same way base's
+		// Re-point the target apps' addon attachments the same way base's
 		// were wired: any base app attached to ad gets its already-cloned
-		// preview counterpart (clonePreviewApp always runs before this, in
+		// target counterpart (clonePreviewApp always runs before this, in
 		// ensurePreview) attached to newAddon instead.
-		warnings = append(warnings, s.clonePreviewAddonAttachments(preview, ad, newAddon)...)
+		warnings = append(warnings, s.clonePreviewAddonAttachments(target, ad, newAddon)...)
 	}
-	return warnings
+	return cloned, warnings
 }
 
 // clonePreviewAddonAttachments replicates base's app-addon attachments onto
