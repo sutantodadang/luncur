@@ -126,6 +126,50 @@ func envsCmd() *cobra.Command {
 	setBase.Flags().StringVar(&setBaseProject, "project", "", "project name")
 	setBase.MarkFlagRequired("project")
 
-	cmd.AddCommand(list, create, rm, setDefault, setBase)
+	var copyProject, copyFrom, copyTo string
+	var copyYes bool
+	copyC := &cobra.Command{
+		Use:   "copy",
+		Short: "Copy one environment's setup (app config, env vars, missing addons) into another",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			// Overwriting the default (production) environment's setup is
+			// the risky direction — require an explicit --yes for it.
+			if !copyYes {
+				envs, err := c.ListEnvs(copyProject)
+				if err != nil {
+					return err
+				}
+				for _, e := range envs {
+					if e.Name == copyTo && e.IsDefault {
+						return fmt.Errorf("%q is the project's default environment; re-run with --yes to overwrite its setup", copyTo)
+					}
+				}
+			}
+			sum, err := c.CopyEnvSetup(copyProject, copyFrom, copyTo)
+			if err != nil {
+				return err
+			}
+			cmd.Printf("copied %s -> %s: %d apps created, %d updated, %d addons cloned\n",
+				copyFrom, copyTo, sum.AppsCreated, sum.AppsUpdated, sum.AddonsCloned)
+			for _, warn := range sum.Warnings {
+				cmd.Printf("warning: %s\n", warn)
+			}
+			return nil
+		},
+	}
+	copyC.Flags().StringVar(&copyProject, "project", "", "project name")
+	copyC.MarkFlagRequired("project")
+	copyC.Flags().StringVar(&copyFrom, "from", "", "source environment")
+	copyC.MarkFlagRequired("from")
+	copyC.Flags().StringVar(&copyTo, "to", "", "target environment")
+	copyC.MarkFlagRequired("to")
+	copyC.Flags().BoolVar(&copyYes, "yes", false, "allow overwriting the default environment's setup")
+
+	cmd.AddCommand(list, create, rm, setDefault, setBase, copyC)
 	return cmd
 }
