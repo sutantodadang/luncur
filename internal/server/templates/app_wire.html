@@ -76,10 +76,13 @@
 {{if not .App.Ejected}}
 <div class="card mb-6">
 <h2>Environment</h2>
-<table class="tbl">{{range .EnvKeys}}<tr><td><code>{{.}}</code></td><td>
+<table class="tbl">{{range $i, $env := .EnvVars}}<tr><td><code>{{$env.Key}}</code></td><td class="flex flex-wrap items-center gap-2">
+  <input id="env-secret-{{$i}}" class="input min-w-48 flex-1 font-mono text-xs" type="password" value="{{$env.Value}}" readonly autocomplete="off">
+  <button type="button" class="btn-ghost" aria-label="Show {{$env.Key}}" aria-pressed="false" onclick="luncurToggleSecret(this, 'env-secret-{{$i}}')">show</button>
+  <button type="button" class="btn-ghost" aria-label="Copy {{$env.Key}}" onclick="luncurCopySecret(this, 'env-secret-{{$i}}')">copy</button>
   <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/env/delete">
     <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-    <input type="hidden" name="key" value="{{.}}"><button type="submit" class="btn-ghost" hx-confirm="Unset env var {{.}}? This cannot be undone.">unset</button>
+    <input type="hidden" name="key" value="{{$env.Key}}"><button type="submit" class="btn-ghost" hx-confirm="Unset env var {{$env.Key}}? This cannot be undone.">unset</button>
   </form></td></tr>{{end}}
 </table>
 {{template "envSetForm" .}}
@@ -93,6 +96,24 @@
 </details>
 <div class="cli-echo">$ <b>luncur env set {{.App.Name}} KEY=VALUE</b> &middot; $ <b>luncur env push {{.App.Name}} .env</b></div>
 </div>
+<script>
+function luncurToggleSecret(btn, id) {
+  var input = document.getElementById(id);
+  var show = input.type === "password";
+  input.type = show ? "text" : "password";
+  btn.textContent = show ? "hide" : "show";
+  btn.setAttribute("aria-label", (show ? "Hide " : "Show ") + input.closest("tr").querySelector("code").textContent);
+  btn.setAttribute("aria-pressed", show ? "true" : "false");
+}
+function luncurCopySecret(btn, id) {
+  var input = document.getElementById(id);
+  if (!input || !navigator.clipboard) return;
+  navigator.clipboard.writeText(input.value).then(function () {
+    btn.textContent = "copied";
+    setTimeout(function () { btn.textContent = "copy"; }, 2000);
+  });
+}
+</script>
 {{end}}
 
 <details class="mb-2">

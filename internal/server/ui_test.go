@@ -1524,6 +1524,11 @@ func TestUIEnvBulk(t *testing.T) {
 	if !strings.Contains(body, "FOO") || !strings.Contains(body, "BAZ") {
 		t.Fatalf("app page after bulk set: want FOO and BAZ listed, got: %s", body)
 	}
+	for _, want := range []string{`type="password" value="bar"`, `type="password" value="qux"`, `luncurToggleSecret`, `luncurCopySecret`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("app page after bulk set: missing secret reveal/copy UI %q, got: %s", want, body)
+		}
+	}
 }
 
 // TestUIAddons exercises the project-page create/delete and app-page

@@ -109,6 +109,11 @@ type uiAppRow struct {
 	Status      string
 }
 
+type uiEnvVar struct {
+	Key   string
+	Value string
+}
+
 func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.User) {
 	p, ok := s.uiProject(w, r, u)
 	if !ok {
@@ -882,7 +887,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 
-	// Env values stay sealed — the UI only ever shows keys, never plaintext.
+	// Keep values sealed unless the Wire tab needs reveal/copy controls.
 	sealed, err := s.st.ListEnv(a.ID)
 	if err != nil {
 		log.Printf("ui app env: %v", err)
@@ -894,6 +899,23 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		envKeys = append(envKeys, k)
 	}
 	sort.Strings(envKeys)
+	var envVars []uiEnvVar
+	if tab == tabWire {
+		if len(sealed) > 0 && s.sealer == nil {
+			http.Error(w, "sealer is not configured", http.StatusServiceUnavailable)
+			return
+		}
+		envVars = make([]uiEnvVar, 0, len(envKeys))
+		for _, k := range envKeys {
+			value, err := s.sealer.Open(sealed[k])
+			if err != nil {
+				log.Printf("ui app unseal env %q: %v", k, err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			envVars = append(envVars, uiEnvVar{Key: k, Value: string(value)})
+		}
+	}
 
 	domains, err := s.st.ListDomains(a.ID)
 	if err != nil {
@@ -1042,7 +1064,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"User": u, "Project": p, "App": a,
 		"Status": status, "LatestID": latestID, "LatestSeq": latestSeq, "URL": url, "InternalURL": internalURL,
 		"Chip": chip, "Building": chip.Building,
-		"Deploys": uiDeployRows(history, 10), "EnvKeys": envKeys,
+		"Deploys": uiDeployRows(history, 10), "EnvKeys": envKeys, "EnvVars": envVars,
 		"IsGit":          a.SourceType == "git",
 		"WebhookEnabled": a.WebhookSecret != nil,
 		"WebhookURL":     "http://" + r.Host + webhookPath(p.Name, a.Name),
