@@ -1598,6 +1598,28 @@ func TestUIAddons(t *testing.T) {
 		t.Fatalf("project page after create: want postgres1 listed, got: %s", body)
 	}
 
+	// 1b. Create with custom name/version/size from the same form -> 303,
+	// custom values ride through to the store.
+	customResp := uiPost(t, client, srv.URL+"/ui/projects/proj/addons", csrfCk, ck, url.Values{"type": {"redis"}, "name": {"cache"}, "version": {"7.4"}, "size_gb": {"2"}})
+	customResp.Body.Close()
+	if customResp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("POST addons create custom: want 303, got %d", customResp.StatusCode)
+	}
+	if body := projectPage(t); !strings.Contains(body, "<td>cache</td>") || !strings.Contains(body, "<td>7.4</td>") {
+		t.Fatalf("project page after custom create: want cache/7.4 listed, got: %s", body)
+	}
+	proj, err := st.GetProject("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ad, err := st.GetAddon(proj.ID, "cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ad.SizeGB != 2 {
+		t.Fatalf("custom size_gb: want 2, got %d", ad.SizeGB)
+	}
+
 	// 2. Attach via the app page's attach form -> 303, addon shown attached.
 	attachResp := uiPost(t, client, srv.URL+"/ui/projects/proj/apps/web/addons/attach", csrfCk, ck, url.Values{"name": {"postgres1"}})
 	attachResp.Body.Close()

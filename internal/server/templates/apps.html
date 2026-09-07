@@ -167,10 +167,12 @@ function uiPresetChange(preset) {
     <option value="minio">minio</option>
     <option value="mlflow">mlflow</option>
   </select>
-  <input class="input w-auto flex-1" name="name" placeholder="name (optional)">
+  <input class="input w-40" name="name" placeholder="name (optional)">
+  <input class="input w-28" name="version" placeholder="version (optional)">
+  <label class="flex items-center gap-1 text-xs text-mut">GB<input class="input w-16" name="size_gb" type="number" min="1" value="1"></label>
   <button type="submit" class="btn">create addon</button>
 </form>
-<div class="cli-echo">$ <b>luncur addon create postgres</b></div>
+<div class="cli-echo">$ <b>luncur addon create &lt;type&gt; --name &lt;name&gt; --version &lt;tag&gt; --size &lt;gb&gt;</b></div>
 <div class="cli-echo">$ <b>luncur addon upgrade &lt;name&gt;</b></div>
 <div class="cli-echo">$ <b>luncur addon url &lt;name&gt;</b></div>
 </div>
