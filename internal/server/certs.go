@@ -109,7 +109,7 @@ func (m *certManager) Run(ctx context.Context) {
 	}
 }
 
-// sweep re-enqueues unissued domains and soon-to-expire certs. For the
+// sweep re-enqueues unissued/failed domains and soon-to-expire certs. For the
 // cert-manager provider, issuance isn't luncur's job — instead it reads the
 // expiry back from the TLS Secret cert-manager maintains.
 func (m *certManager) sweep(ctx context.Context) {
@@ -126,7 +126,7 @@ func (m *certManager) sweep(ctx context.Context) {
 		}
 		renew := false
 		switch d.CertStatus {
-		case "none", "pending":
+		case "none", "pending", "failed":
 			renew = true
 		case "issued":
 			if exp, err := time.Parse(time.RFC3339, d.CertExpiresAt); err == nil {
@@ -145,7 +145,7 @@ func (m *certManager) sweep(ctx context.Context) {
 	}
 
 	// Panel custom domain: same builtin-only lifecycle as an app domain
-	// above (renew "none"/"pending", renew "issued" nearing expiry), but
+	// above (renew "none"/"pending"/"failed", renew "issued" nearing expiry), but
 	// state lives in panel_cert_* settings rather than a domains row.
 	if provider == "builtin" {
 		host, _ := m.s.st.GetSetting("panel_domain")
@@ -153,7 +153,7 @@ func (m *certManager) sweep(ctx context.Context) {
 			status, _ := m.s.st.GetSetting("panel_cert_status")
 			renew := false
 			switch status {
-			case "none", "pending":
+			case "none", "pending", "failed":
 				renew = true
 			case "issued":
 				if exp, err := m.s.st.GetSetting("panel_cert_expires_at"); err == nil {
@@ -447,6 +447,9 @@ func (m *certManager) setChallengeHost(ctx context.Context, host string, present
 	}
 	m.mu.Unlock()
 	sort.Strings(hosts)
+	if len(hosts) == 0 {
+		return m.s.kube.DeleteObject(ctx, m.s.systemNamespace, "Ingress", challengeIngress)
+	}
 
 	rules := make([]map[string]any, 0, len(hosts))
 	for _, h := range hosts {

@@ -47,6 +47,7 @@ type recordedPatch struct {
 type patchRecorder struct {
 	mu      sync.Mutex
 	patches []recordedPatch
+	deletes []recordedPatch
 }
 
 func (r *patchRecorder) add(p recordedPatch) {
@@ -59,6 +60,23 @@ func (r *patchRecorder) snapshot() []recordedPatch {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]recordedPatch(nil), r.patches...)
+}
+
+func (r *patchRecorder) addDelete(p recordedPatch) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.deletes = append(r.deletes, p)
+}
+
+func (r *patchRecorder) deleted(resource, namespace, name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, d := range r.deletes {
+		if d.resource == resource && d.namespace == namespace && d.name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // certTestServer builds a *server wired with a fake dynamic client (patches
@@ -79,6 +97,13 @@ func certTestServer(t *testing.T) (*server, *store.Store, *patchRecorder, *k8sfa
 				namespace: a.GetNamespace(),
 				name:      pa.GetName(),
 				raw:       pa.GetPatch(),
+			})
+		}
+		if da, ok := a.(ktesting.DeleteAction); ok {
+			rec.addDelete(recordedPatch{
+				resource:  a.GetResource().Resource,
+				namespace: a.GetNamespace(),
+				name:      da.GetName(),
 			})
 		}
 		return true, nil, nil
@@ -222,6 +247,41 @@ func TestCertManagerFailureMarksDomain(t *testing.T) {
 	}
 	if got.CertError == "" {
 		t.Fatal("cert_error not set on failure")
+	}
+}
+
+func TestCertSweepRetriesFailedDomain(t *testing.T) {
+	t.Parallel()
+	srv, st, _, _ := certTestServer(t)
+	_, _, _, d := seedDomain(t, st, "www.example.com")
+	if err := st.SetDomainCert(d.ID, "failed", "temporary DNS failure", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.certs.sweep(context.Background())
+
+	select {
+	case job := <-srv.certs.jobs:
+		if job.d.ID != d.ID {
+			t.Fatalf("queued domain = %d, want %d", job.d.ID, d.ID)
+		}
+	default:
+		t.Fatal("failed domain was not queued for retry")
+	}
+}
+
+func TestChallengeIngressDeletedWhenLastHostRemoved(t *testing.T) {
+	t.Parallel()
+	srv, _, recorded, _ := certTestServer(t)
+	ctx := context.Background()
+	if err := srv.certs.setChallengeHost(ctx, "www.example.com", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.certs.setChallengeHost(ctx, "www.example.com", false); err != nil {
+		t.Fatal(err)
+	}
+	if !recorded.deleted("ingresses", "luncur-system", challengeIngress) {
+		t.Fatal("challenge ingress was not deleted after its last host was removed")
 	}
 }
 
