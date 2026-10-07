@@ -53,6 +53,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(volumeCmd())
 	root.AddCommand(configCmd())
 	root.AddCommand(rollbackCmd())
+	root.AddCommand(rolloutCmd())
 	root.AddCommand(tokenCmd())
 	root.AddCommand(inviteCmd())
 	root.AddCommand(addonCmd())

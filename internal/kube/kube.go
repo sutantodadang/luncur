@@ -72,6 +72,10 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"ResourceQuota":       {Group: "", Version: "v1", Resource: "resourcequotas"},
 	"LimitRange":          {Group: "", Version: "v1", Resource: "limitranges"},
 	"PodDisruptionBudget": {Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"},
+	// Traefik's CRDs (bundled with K3s) for canary / blue-green weighted
+	// routing (internal/server/canary.go).
+	"TraefikService": {Group: "traefik.io", Version: "v1alpha1", Resource: "traefikservices"},
+	"IngressRoute":   {Group: "traefik.io", Version: "v1alpha1", Resource: "ingressroutes"},
 }
 
 // clusterScoped marks kinds Apply must patch without a namespace.
@@ -311,6 +315,22 @@ func clusterRoleToUnstructured(cr *rbacv1.ClusterRole) (*unstructured.Unstructur
 	return &unstructured.Unstructured{Object: m}, nil
 }
 
+// HasCRD reports whether a CustomResourceDefinition (e.g.
+// "traefikservices.traefik.io") is installed.
+func (c *Client) HasCRD(ctx context.Context, name string) (bool, error) {
+	if c.dyn == nil {
+		return false, nil
+	}
+	u, err := c.dyn.Resource(gvrByKind["CustomResourceDefinition"]).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return u != nil, nil
+}
+
 // HasWorkflowCRD reports whether the Argo Workflows CRD is installed —
 // the preflight `startPipelineRun` uses before compiling a run onto the
 // argo engine (spec §Argo: friendly "run `luncur argo install`" error
@@ -369,6 +389,14 @@ func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) er
 		{"HorizontalPodAutoscaler", app},
 		{"PodDisruptionBudget", app},
 		{"Secret", render.SecretName(app)},
+		// A canary / blue-green rollout's track and routing (see
+		// internal/server/canary.go); NotFound when none ran (or the
+		// Traefik CRDs aren't installed).
+		{"Deployment", app + "-canary"},
+		{"Service", app + "-canary"},
+		{"IngressRoute", app + "-split-web"},
+		{"IngressRoute", app + "-split-websecure"},
+		{"TraefikService", app + "-split"},
 	}
 	for _, t := range targets {
 		err := c.dyn.Resource(gvrByKind[t.kind]).Namespace(namespace).Delete(

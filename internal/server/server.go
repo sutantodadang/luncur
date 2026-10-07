@@ -112,6 +112,9 @@ type server struct {
 	// drains tracks node drains (nodes.go).
 	drains drainTracker
 
+	// canaryProbeFn replaces canary.go's HTTP probe in tests.
+	canaryProbeFn func(url string) bool
+
 	// lastRegistryGC tracks the last completed weekly registry GC sweep,
 	// in memory only — StartRegistryGC uses it to decide when to run again.
 	lastRegistryGC time.Time
@@ -334,6 +337,9 @@ func (s *server) handler() http.Handler {
 	routeEnv(mux, "PUT /v1/projects/{project}/apps/{app}/autoscale", s.authed(s.handleAutoscaleApp))
 	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/health", s.authed(s.handleSetHealth))
 	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/policy", s.authed(s.handleGetPolicy))
+	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/rollout", s.authed(s.handleGetRollout))
+	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/rollout/promote", s.authed(s.handleRolloutAction("promote")))
+	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/rollout/abort", s.authed(s.handleRolloutAction("abort")))
 	routeEnv(mux, "PUT /v1/projects/{project}/apps/{app}/policy", s.authed(s.handlePutPolicy))
 	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookEnable))
 	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookShow))

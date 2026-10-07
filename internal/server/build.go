@@ -330,16 +330,8 @@ func (s *server) finishDeploy(ctx context.Context, p store.Project, env store.En
 		return err
 	}
 
-	rendered, err := s.renderApp(p, env, a, imageRef, true)
-	if err != nil {
+	if err := s.applyAndGate(ctx, p, env, a, d, imageRef); err != nil {
 		return err
 	}
-	if err := s.ensureEnvNamespace(ctx, env); err != nil {
-		return err
-	}
-	if err := s.kube.Apply(ctx, env.Namespace, rendered.Objects); err != nil {
-		return err
-	}
-	s.afterApply(ctx, p, env, a, d)
 	return nil
 }

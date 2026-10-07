@@ -1771,3 +1771,31 @@ func (c *Client) SetPolicy(project, app string, patch map[string]any) (AppPolicy
 	err := c.do("PUT", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/policy", patch, &out)
 	return out, err
 }
+
+// RolloutInfo is an app's canary / blue-green rollout state.
+type RolloutInfo struct {
+	Active      bool   `json:"active"`
+	DeployID    string `json:"deploy_id"`
+	Seq         int64  `json:"seq"`
+	Strategy    string `json:"strategy"`
+	Phase       string `json:"phase"`
+	Step        int    `json:"step"`
+	Weight      int    `json:"weight"`
+	Steps       []int  `json:"steps"`
+	SuccessRate int    `json:"success_rate"`
+	ProbesOK    int    `json:"probes_ok"`
+	ProbesTotal int    `json:"probes_total"`
+	Note        string `json:"note"`
+}
+
+// GetRollout fetches the app's active rollout ({active:false} when none).
+func (c *Client) GetRollout(project, app string) (RolloutInfo, error) {
+	var out RolloutInfo
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/rollout", nil, &out)
+	return out, err
+}
+
+// RolloutAction requests promote or abort of the app's active rollout.
+func (c *Client) RolloutAction(project, app, action string) error {
+	return c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/rollout/"+action, nil, nil)
+}

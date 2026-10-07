@@ -504,20 +504,13 @@ func (s *server) deployGitApp(p store.Project, env store.Environment, a store.Ap
 // deployment to the rollout gate (afterApply) — or mark it failed, returning
 // the error.
 func (s *server) applyImageDeploy(ctx context.Context, p store.Project, env store.Environment, a store.App, d store.Deployment, image string) error {
-	rendered, err := s.renderApp(p, env, a, image, true)
-	if err == nil {
-		if err = s.ensureEnvNamespace(ctx, env); err == nil {
-			err = s.kube.Apply(ctx, env.Namespace, rendered.Objects)
-		}
-	}
-	if err != nil {
+	if err := s.applyAndGate(ctx, p, env, a, d, image); err != nil {
 		if e := s.st.SetDeploymentStatus(d.ID, "failed"); e != nil {
 			log.Printf("mark deploy %s failed: %v", d.ID, e)
 		}
 		s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, Err: err.Error()})
 		return err
 	}
-	s.afterApply(ctx, p, env, a, d)
 	return nil
 }
 

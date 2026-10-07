@@ -65,6 +65,8 @@ func auditToCLI(method, pattern string, vars map[string]string) (string, bool) {
 		return "luncur rollback " + a + " --project " + p, true
 	case "POST /ui/projects/{project}/apps/{app}/scale":
 		return "luncur scale " + a + " <n> --project " + p, true
+	case "POST /ui/projects/{project}/apps/{app}/rollout/{action}":
+		return "luncur rollout " + vars["action"] + " " + a + " --project " + p, true
 	case "POST /ui/projects/{project}/apps/{app}/policy", "PUT /v1/projects/{project}/apps/{app}/policy":
 		return "luncur app set " + a + " --project " + p + " <flags>", true
 	case "POST /ui/projects/{project}/apps/{app}/autoscale":

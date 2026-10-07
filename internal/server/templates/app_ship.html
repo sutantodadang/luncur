@@ -12,6 +12,26 @@
 </div>
 {{end}}
 
+{{with .Rollout}}
+<div class="card mb-6" id="rollout" hx-get="/ui/projects/{{$.Project.Name}}/{{if not $.Env.Default}}envs/{{$.Env.Name}}/{{end}}apps/{{$.App.Name}}?tab=ship" hx-select="#rollout" hx-swap="outerHTML" hx-trigger="every 5s">
+<h2>{{if eq .Strategy "bluegreen"}}blue-green{{else}}canary{{end}} rollout &middot; deploy #{{.Seq}}</h2>
+<div class="flex flex-wrap items-center gap-2">
+  <span class="pipe-stage {{if eq .Phase "starting"}}pipe-current{{else}}pipe-done{{end}}">{{if ne .Phase "starting"}}&check; {{end}}canary ready</span>
+  {{$cur := .Step}}{{$phase := .Phase}}{{range $i, $w := .Steps}}<span class="text-mut">&rarr;</span><span class="pipe-stage {{if eq $phase "promoting"}}pipe-done{{else if eq $phase "starting"}}pipe-pending{{else if lt $i $cur}}pipe-done{{else if eq $i $cur}}pipe-current{{else}}pipe-pending{{end}}">{{$w}}%</span>{{end}}
+  <span class="text-mut">&rarr;</span><span class="pipe-stage {{if eq .Phase "promoting"}}pipe-current{{else}}pipe-pending{{end}}">promote</span>
+</div>
+<p class="mt-2 font-mono text-xs text-mut">{{.Phase}} &middot; {{.Weight}}% of traffic on the new image &middot; probe success {{.SuccessRate}}% ({{.ProbesOK}}/{{.ProbesTotal}})</p>
+{{if .Note}}<p class="mt-1 font-mono text-xs text-mut">{{.Note}}</p>{{end}}
+{{if or (eq .Phase "starting") (eq .Phase "stepping")}}
+<div class="mt-3 flex items-center gap-2">
+  <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollout/promote"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button type="submit" class="btn">promote now</button></form>
+  <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollout/abort"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button type="submit" class="btn-danger" hx-confirm="Abort the rollout of deploy #{{.Seq}}? Traffic returns to the current version.">abort</button></form>
+</div>
+{{end}}
+<div class="cli-echo">$ <b>luncur rollout status {{$.App.Name}} --project {{$.Project.Name}}</b> &middot; $ <b>luncur rollout promote {{$.App.Name}}</b> &middot; $ <b>luncur rollout abort {{$.App.Name}}</b></div>
+</div>
+{{end}}
+
 <div class="card mb-6">
 <h2>Deploy history</h2>
 <table class="tbl"><tr><th>#</th><th>Status</th><th>Image</th><th>Actor</th><th>When</th><th></th></tr>

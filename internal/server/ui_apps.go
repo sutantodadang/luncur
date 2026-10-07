@@ -1091,6 +1091,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"PipelineStages": uiPipelineStages(status, latestImageRef),
 		"RolloutProgress": s.rolloutProgress(status, latestID),
 		"Policy":          s.appPolicyView(a),
+		"Rollout":         s.uiRollout(a, tab),
 		"ErrorCard":      errorCard,
 		"LaunchSequence": launch,
 	}

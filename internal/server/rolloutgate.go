@@ -55,9 +55,46 @@ func (s *server) afterApply(ctx context.Context, p store.Project, env store.Envi
 	go s.watchRollout(p, env, a, d)
 }
 
-// rolloutTarget is the Deployment a deploy's gate watches.
+// rolloutTarget is the Deployment a deploy's gate watches: the canary
+// track while a canary/blue-green rollout is starting, the app's own
+// otherwise.
 func (s *server) rolloutTarget(a store.App, d store.Deployment) string {
+	if ro, err := s.st.GetRollout(d.ID); err == nil && ro.Phase == "starting" {
+		return canaryName(a.Name)
+	}
 	return a.Name
+}
+
+// gateFailed routes a gate failure: a canary track that never became
+// ready aborts the canary (stable untouched); a failed promotion cleans up
+// and fails like any rollout (auto-rollback applies).
+func (s *server) gateFailed(ctx context.Context, p store.Project, env store.Environment, a store.App, d store.Deployment, reason string, mayRollback bool) {
+	if ro, err := s.st.GetRollout(d.ID); err == nil {
+		switch ro.Phase {
+		case "starting", "stepping", "promote-requested", "abort-requested":
+			s.abortCanary(ctx, p, env, a, d, reason)
+			return
+		case "promoting":
+			s.cleanupCanary(ctx, env, a)
+			s.st.SetRolloutPhase(d.ID, "aborted", reason)
+		}
+	}
+	s.failDeploy(ctx, p, env, a, d, reason, mayRollback)
+}
+
+// gateDone routes a finished rollout: a ready canary track starts the
+// step machine; a finished promotion removes the canary and goes live.
+func (s *server) gateDone(ctx context.Context, p store.Project, env store.Environment, a store.App, d store.Deployment) {
+	if ro, err := s.st.GetRollout(d.ID); err == nil {
+		switch ro.Phase {
+		case "starting":
+			s.startCanarySteps(p, env, a, d)
+			return
+		case "promoting":
+			s.finishCanary(ctx, env, a, d)
+		}
+	}
+	s.markDeployLive(ctx, p, env, a, d)
 }
 
 // watchRollout samples the rollout until it is done, fails, or the deploy
@@ -76,13 +113,13 @@ func (s *server) watchRollout(p store.Project, env store.Environment, a store.Ap
 	s.buildLogf(d, "rollout: waiting up to %s for the new pods to become ready", timeout)
 	for {
 		if latest, err := s.st.LatestDeployment(a.ID); err == nil && latest.ID != d.ID {
-			s.failDeploy(ctx, p, env, a, d, fmt.Sprintf("superseded by deploy #%d before it became ready", latest.Seq), false)
+			s.gateFailed(ctx, p, env, a, d, fmt.Sprintf("superseded by deploy #%d before it became ready", latest.Seq), false)
 			return
 		}
 		r, err := s.kube.RolloutStatus(ctx, env.Namespace, target)
 		switch {
 		case errors.Is(err, kube.ErrNoDeployment):
-			s.failDeploy(ctx, p, env, a, d, "the app's Deployment was deleted during the rollout", false)
+			s.gateFailed(ctx, p, env, a, d, "the app's Deployment was deleted during the rollout", false)
 			return
 		case err != nil:
 			log.Printf("rollout gate %s/%s #%d: %v", env.Namespace, a.Name, d.Seq, err)
@@ -98,17 +135,17 @@ func (s *server) watchRollout(p store.Project, env store.Environment, a store.Ap
 			}
 			v := kube.Judge(r, time.Now(), started, timeout)
 			if v.Done {
-				s.markDeployLive(ctx, p, env, a, d)
+				s.gateDone(ctx, p, env, a, d)
 				return
 			}
 			if v.Failed {
-				s.failDeploy(ctx, p, env, a, d, v.Reason, true)
+				s.gateFailed(ctx, p, env, a, d, v.Reason, true)
 				return
 			}
 		}
 		select {
 		case <-ctx.Done():
-			s.failDeploy(context.Background(), p, env, a, d, "rollout gate timed out", true)
+			s.gateFailed(context.Background(), p, env, a, d, "rollout gate timed out", true)
 			return
 		case <-time.After(rolloutPoll):
 		}
@@ -216,6 +253,10 @@ func failReasonWhy(reason string) string {
 func (s *server) rolloutProgress(status, deployID string) string {
 	if status != "deploying" || deployID == "" {
 		return ""
+	}
+	if ro, err := s.st.GetRollout(deployID); err == nil && ro.Phase == "stepping" {
+		name := map[string]string{"canary": "canary", "bluegreen": "blue-green"}[ro.Strategy]
+		return fmt.Sprintf("%s · %d%% of traffic on the new image", name, ro.Weight)
 	}
 	o, err := s.st.GetDeployOutcome(deployID)
 	if err != nil || o.Want == 0 {
