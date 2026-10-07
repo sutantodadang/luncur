@@ -260,6 +260,9 @@ func (s *server) createAddon(ctx context.Context, p store.Project, env store.Env
 	if err != nil {
 		return store.Addon{}, err
 	}
+	for i := range objs {
+		objs[i] = withPriority(objs[i], s.systemPriority())
+	}
 	if err := s.ensureEnvNamespace(ctx, env); err != nil {
 		return store.Addon{}, err
 	}
@@ -647,6 +650,9 @@ func (s *server) upgradeAddon(ctx context.Context, p store.Project, env store.En
 	objs, err := addon.Render(params)
 	if err != nil {
 		return store.Addon{}, fmt.Errorf("render: %w", err)
+	}
+	for i := range objs {
+		objs[i] = withPriority(objs[i], s.systemPriority())
 	}
 	if err := s.ensureEnvNamespace(ctx, env); err != nil {
 		return store.Addon{}, fmt.Errorf("namespace: %w", err)

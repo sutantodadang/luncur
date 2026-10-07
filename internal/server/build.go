@@ -295,7 +295,7 @@ func (s *server) runBuild(ctx context.Context, p store.Project, env store.Enviro
 		return fail(err)
 	}
 	s.buildLogf(d, "applying build job to cluster")
-	if err := s.kube.Apply(ctx, s.systemNamespace, []render.Object{job}); err != nil {
+	if err := s.kube.Apply(ctx, s.systemNamespace, []render.Object{withPriority(job, s.batchPriority())}); err != nil {
 		return fail(err)
 	}
 

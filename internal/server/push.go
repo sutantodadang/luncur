@@ -163,7 +163,11 @@ func NewWithBackend(d Deps) (http.Handler, *PushBackend, func(ctx context.Contex
 		go s.StartPreviewReaper(ctx)
 		go s.StartFailedPodGC(ctx)
 		go s.StartRegistryGC(ctx)
-		go s.reconcileUnfinished(ctx)
+		go func() {
+			// Priority classes first, so reconciled deploys render with them.
+			s.ensurePriorityClasses(ctx)
+			s.reconcileUnfinished(ctx)
+		}()
 		go s.StartMonitor(ctx)
 		go s.StartGPUWatch(ctx)
 		s.StartGPUIdleLoop(ctx)

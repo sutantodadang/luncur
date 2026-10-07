@@ -543,6 +543,9 @@ func (s *server) pipelineLaunchImage(ctx context.Context, run store.PipelineRun,
 		}
 	}
 	objs := render.PipelineStepJob(project.Namespace, run.ID, v.Row.Name, attempt, v.Spec.Image, v.Spec.Command, env, v.Spec.GPU)
+	for i := range objs {
+		objs[i] = withPriority(objs[i], s.batchPriority())
+	}
 
 	err := s.ensureProjectNamespace(ctx, project.Namespace)
 	if err == nil {

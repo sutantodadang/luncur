@@ -106,6 +106,9 @@ type server struct {
 	aiAPIHandler http.Handler
 	aiConvs      aiConversations
 
+	// hardening caches cluster facts for render's hardening knobs.
+	hardening hardeningState
+
 	// lastRegistryGC tracks the last completed weekly registry GC sweep,
 	// in memory only — StartRegistryGC uses it to decide when to run again.
 	lastRegistryGC time.Time

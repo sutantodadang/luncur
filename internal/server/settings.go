@@ -33,6 +33,12 @@ func validEmailCSV(v string) bool {
 	return true
 }
 
+// validPrice accepts a non-negative decimal unit price.
+func validPrice(v string) bool {
+	f, err := strconv.ParseFloat(v, 64)
+	return err == nil && f >= 0
+}
+
 // settableKeys guards the settings API: only install-level knobs luncur
 // understands, with per-key validation.
 var settableKeys = map[string]func(string) bool{
@@ -124,6 +130,26 @@ var settableKeys = map[string]func(string) bool{
 	// metrics_token: bearer token gating GET /metrics/prometheus. Sealed at
 	// rest like backup_s3_secret_key; unset means the endpoint 404s.
 	"metrics_token": func(v string) bool { return v != "" },
+	// Workload defaults (hardening.go): requests-only CPU/memory for apps
+	// that set none ("0" turns a default off), and how long a Pending GPU
+	// pod may hold rented VMs before idle-destroy ignores it.
+	"default_cpu_request": func(v string) bool {
+		_, err := parseCPUMilli(v)
+		return err == nil && v != ""
+	},
+	"default_memory_request": func(v string) bool {
+		_, err := parseMemoryMB(v)
+		return err == nil && v != ""
+	},
+	"gpu_pending_grace_minutes": func(v string) bool {
+		n, err := strconv.Atoi(v)
+		return err == nil && n >= 1 && n <= 1440
+	},
+	// Cost insights (insights.go): monthly unit prices, any decimal >= 0.
+	"cost_cpu_core_month": validPrice,
+	"cost_mem_gb_month":   validPrice,
+	"cost_gpu_month":      validPrice,
+	"cost_currency":       func(v string) bool { return len(v) >= 1 && len(v) <= 4 },
 	// AI assistant (ai.go, docs/ai/assistant.md).
 	"ai_provider": func(v string) bool { return v == "claude" || v == "openai" || v == "off" },
 	"ai_model":    func(v string) bool { return v != "" },

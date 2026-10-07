@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -251,3 +252,22 @@ func firstLine(s, fallback string) string {
 // CanWatchRollouts reports whether RolloutStatus can work (it needs the
 // typed clientset, which dynamic-only test clients lack).
 func (c *Client) CanWatchRollouts() bool { return c != nil && c.cs != nil }
+
+// ServerVersionAtLeast reports whether the API server is at least
+// major.minor. Unknown versions (fakes, discovery errors) report false, so
+// version-gated features stay off when in doubt.
+func (c *Client) ServerVersionAtLeast(major, minor int) bool {
+	if c == nil || c.cs == nil {
+		return false
+	}
+	v, err := c.cs.Discovery().ServerVersion()
+	if err != nil {
+		return false
+	}
+	maj, err1 := strconv.Atoi(strings.TrimRight(v.Major, "+"))
+	min, err2 := strconv.Atoi(strings.TrimRight(v.Minor, "+"))
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return maj > major || (maj == major && min >= minor)
+}

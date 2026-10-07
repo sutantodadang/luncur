@@ -312,6 +312,7 @@ func (s *server) renderAppWithRun(p store.Project, env store.Environment, a stor
 		AutoMax:            int32(a.AutoMax),
 		AutoCPU:            int32(a.AutoCPU),
 	}
+	s.hardenInput(&in, a)
 	return render.Render(in, envVars)
 }
 

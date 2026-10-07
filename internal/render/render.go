@@ -102,6 +102,31 @@ type Input struct {
 	// staged and only goes live on the next explicit redeploy. Empty leaves the
 	// annotation off (deterministic default).
 	DeployStamp string
+
+	// Hardening knobs (see harden.go). Zero values render exactly the
+	// pre-hardening manifests; the server fills them from settings and the
+	// app's policy.
+	//
+	// DefaultCPUMilli/DefaultMemoryMB are requests-only defaults used when
+	// CPUMilli/MemoryMB are unset, so no pod runs BestEffort.
+	DefaultCPUMilli, DefaultMemoryMB int64
+	// TCPProbe adds a TCP readiness probe to web apps with no HealthPath,
+	// so "Ready" means "accepting connections", not "process started".
+	TCPProbe bool
+	// PreStopSleep is a native preStop sleep (seconds) on web/model pods:
+	// endpoint removal reaches the ingress before SIGTERM.
+	PreStopSleep int64
+	// ProgressDeadline and RevisionHistory set the Deployment's
+	// progressDeadlineSeconds and revisionHistoryLimit.
+	ProgressDeadline, RevisionHistory int32
+	// Spread adds soft topology spread (hostname, zone) to multi-replica
+	// web/worker/model Deployments.
+	Spread bool
+	// PriorityClass is the pods' priorityClassName.
+	PriorityClass string
+	// Security is the pod security level: baseline or restricted ("" and
+	// "relaxed" render no security context).
+	Security string
 }
 
 // Volume is a single per-app persistent volume: a name (becomes the PVC's
@@ -359,6 +384,7 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 		}
 		container.Resources = corev1.ResourceRequirements{Requests: res, Limits: res}
 	}
+	defaultRequests(in, &container)
 	if in.HealthPath != "" && kind == "web" {
 		probe := func() *corev1.Probe {
 			return &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
@@ -374,6 +400,11 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 		// 60s boot budget (2s x 30); liveness only starts after startup succeeds.
 		s.PeriodSeconds, s.FailureThreshold = 2, 30
 		container.StartupProbe = s
+	} else if in.TCPProbe && kind == "web" {
+		container.ReadinessProbe = &corev1.Probe{
+			ProbeHandler:  corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(in.Port)}},
+			PeriodSeconds: 5, FailureThreshold: 3,
+		}
 	}
 	// Model apps rewire the container for their serving runtime; svcPort is
 	// what the Service targets (the runtime's port for models, in.Port
@@ -451,6 +482,7 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 	dep.Spec.Template.Spec.TerminationGracePeriodSeconds = &grace
 	dep.Spec.Template.Spec.InitContainers = modelInits
 	applyGPU(&dep.Spec.Template.Spec, in.GPU)
+	hardenDeployment(in, kind, dep)
 	hasPVC := kind != "cron" && len(in.Volumes) > 0
 	if hasPVC || (kind == "model" && in.GPU > 0) {
 		// RWO node-local volumes can't be attached by the old and new pod
@@ -611,6 +643,7 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 				job.Spec.Template.Spec.Subdomain = in.RunName
 			}
 			applyGPU(&job.Spec.Template.Spec, in.GPU)
+			hardenPod(in, &job.Spec.Template.Spec)
 			if err := add("Job", job); err != nil {
 				return Rendered{}, err
 			}
@@ -661,6 +694,7 @@ func Render(in Input, env map[string]string) (Rendered, error) {
 			},
 		}
 		applyGPU(&cj.Spec.JobTemplate.Spec.Template.Spec, in.GPU)
+		hardenPod(in, &cj.Spec.JobTemplate.Spec.Template.Spec)
 		if err := add("CronJob", cj); err != nil {
 			return Rendered{}, err
 		}
