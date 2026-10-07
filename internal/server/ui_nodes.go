@@ -7,7 +7,6 @@ import (
 	"strconv"
 
 	"github.com/sutantodadang/luncur/internal/gpucloud"
-	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/store"
 )
 
@@ -15,11 +14,11 @@ func (s *server) handleUINodes(w http.ResponseWriter, r *http.Request, u store.U
 	if !s.uiAdmin(w, u) {
 		return
 	}
-	var nodes []kube.NodeInfo
+	var nodes []nodeView
 	var kubeErr string
 	if s.kube == nil {
 		kubeErr = "kubernetes is not configured"
-	} else if list, err := s.kube.ListNodes(r.Context()); err != nil {
+	} else if list, err := s.nodeViews(r.Context()); err != nil {
 		kubeErr = err.Error()
 	} else {
 		nodes = list
@@ -207,5 +206,28 @@ func (s *server) handleUIGPUStop(w http.ResponseWriter, r *http.Request, u store
 		return
 	}
 	flash(w, "ok", "gpu instance stopped")
+	http.Redirect(w, r, "/ui/nodes", http.StatusSeeOther)
+}
+
+// handleUINodeAction is handleNodeAction's UI twin (Nodes page row
+// actions): cordon, uncordon, drain.
+func (s *server) handleUINodeAction(w http.ResponseWriter, r *http.Request, u store.User) {
+	if !s.uiAdmin(w, u) {
+		return
+	}
+	if s.kube == nil {
+		http.Error(w, "kubernetes is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	action, node := r.PathValue("action"), r.PathValue("name")
+	if action != "cordon" && action != "uncordon" && action != "drain" {
+		http.Error(w, "unknown action", http.StatusNotFound)
+		return
+	}
+	if err := s.nodeAction(r.Context(), action, node, r.PostFormValue("force") != "", 0); err != nil {
+		flash(w, "err", err.Error())
+	} else {
+		flash(w, "ok", map[string]string{"cordon": node + " cordoned", "uncordon": node + " schedulable again", "drain": "draining " + node}[action])
+	}
 	http.Redirect(w, r, "/ui/nodes", http.StatusSeeOther)
 }

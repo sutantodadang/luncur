@@ -109,6 +109,9 @@ type server struct {
 	// hardening caches cluster facts for render's hardening knobs.
 	hardening hardeningState
 
+	// drains tracks node drains (nodes.go).
+	drains drainTracker
+
 	// lastRegistryGC tracks the last completed weekly registry GC sweep,
 	// in memory only — StartRegistryGC uses it to decide when to run again.
 	lastRegistryGC time.Time
@@ -392,6 +395,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/ai/generate", s.authed(s.handleAIGenerate))
 	mux.HandleFunc("GET /v1/ai/usage", s.authed(s.handleAIUsage))
 	mux.HandleFunc("GET /v1/nodes", s.adminOnly(s.handleListNodes))
+	mux.HandleFunc("POST /v1/nodes/{name}/cordon", s.adminOnly(s.handleNodeAction("cordon")))
+	mux.HandleFunc("POST /v1/nodes/{name}/uncordon", s.adminOnly(s.handleNodeAction("uncordon")))
+	mux.HandleFunc("POST /v1/nodes/{name}/drain", s.adminOnly(s.handleNodeAction("drain")))
 	mux.HandleFunc("PUT /v1/gpu/key", s.adminOnly(s.handleSetGPUKey))
 	mux.HandleFunc("GET /v1/gpu/offers", s.adminOnly(s.handleGPUOffers))
 	mux.HandleFunc("POST /v1/gpu/instances", s.adminOnly(s.handleRentGPU))

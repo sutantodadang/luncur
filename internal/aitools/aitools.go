@@ -140,7 +140,7 @@ var registry = []Tool{
 		CLI: "luncur pipeline status {id} --pipeline {name} --project {project}"},
 	{Name: "doctor", Description: "Run luncur's health checks (database, kubernetes, registry, builds, certificates, backups).", Method: "GET",
 		Path: "/v1/doctor", Admin: true, CLI: "luncur doctor"},
-	{Name: "list_nodes", Description: "List cluster nodes with readiness and resource usage.", Method: "GET",
+	{Name: "list_nodes", Description: "List cluster nodes with readiness, resource usage, cordon state and drain progress.", Method: "GET",
 		Path: "/v1/nodes", Admin: true, CLI: "luncur node ls"},
 
 	// ---- write ----
@@ -164,6 +164,13 @@ var registry = []Tool{
 		Path: projectPrefix + "apps/{app}/rollback", EnvScoped: true, Mutating: true,
 		Params: []Param{pProject, pApp, bodyS("deploy_id", "deploy id to roll back to", false)},
 		CLI:    "luncur rollback {app} --project {project}"},
+	{Name: "cordon_node", Description: "Mark a node unschedulable (running pods stay).", Method: "POST",
+		Path: "/v1/nodes/{name}/cordon", Admin: true, Mutating: true, Params: []Param{pathP("name", "node name")}, CLI: "luncur node cordon {name}"},
+	{Name: "uncordon_node", Description: "Mark a node schedulable again.", Method: "POST",
+		Path: "/v1/nodes/{name}/uncordon", Admin: true, Mutating: true, Params: []Param{pathP("name", "node name")}, CLI: "luncur node uncordon {name}"},
+	{Name: "drain_node", Description: "Cordon a node and evict its pods for maintenance (disruption budgets respected); refuses the only schedulable node unless force.", Method: "POST",
+		Path: "/v1/nodes/{name}/drain", Admin: true, Mutating: true,
+		Params: []Param{pathP("name", "node name"), bodyB("force", "drain even the only schedulable node")}, CLI: "luncur node drain {name}"},
 	{Name: "get_policy", Description: "Show an app's rollout policy: auto-rollback, rollout timeout, default probe, pod security level, deploy strategy (rolling/canary/bluegreen) and canary settings.", Method: "GET",
 		Path: projectPrefix + "apps/{app}/policy", EnvScoped: true, Params: []Param{pProject, pApp},
 		CLI: "luncur app set {app} --project {project} --env {env}"},

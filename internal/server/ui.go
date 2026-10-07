@@ -59,6 +59,7 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/explain", s.uiPage(s.handleUIAIExplain))
 	mux.HandleFunc("POST /ui/projects/{project}/envs/{env}/apps/{app}/explain", s.uiPage(s.handleUIAIExplain))
 	mux.HandleFunc("GET /ui/nodes", s.uiPage(s.handleUINodes))
+	mux.HandleFunc("POST /ui/nodes/{name}/{action}", s.uiPage(s.handleUINodeAction))
 	mux.HandleFunc("POST /ui/gpu/key", s.uiPage(s.handleUIGPUKey))
 	mux.HandleFunc("POST /ui/gpu/key/nebius", s.uiPage(s.handleUIGPUKeyNebius))
 	mux.HandleFunc("POST /ui/gpu/rent", s.uiPage(s.handleUIGPURent))

@@ -1016,6 +1016,8 @@ type NodeInfo struct {
 	GPU         bool   `json:"gpu"`
 	GPUCapacity int64  `json:"gpu_capacity"`
 	MetricsOK   bool   `json:"metrics_available"`
+	// Cordoned is spec.unschedulable: no new pods land here.
+	Cordoned bool `json:"cordoned"`
 }
 
 // ListNodes summarizes every cluster node: role (control-plane label or
@@ -1072,7 +1074,8 @@ func (c *Client) ListNodes(ctx context.Context) ([]NodeInfo, error) {
 			ip = internal
 		}
 		info := NodeInfo{
-			Name: n.Name, Role: role, Ready: ready, IP: ip,
+			Cordoned: n.Spec.Unschedulable,
+			Name:     n.Name, Role: role, Ready: ready, IP: ip,
 			Version:     n.Status.NodeInfo.KubeletVersion,
 			CPUCapMilli: n.Status.Allocatable.Cpu().MilliValue(),
 			MemCapMiB:   n.Status.Allocatable.Memory().Value() / (1 << 20),

@@ -1411,6 +1411,20 @@ type Node struct {
 	GPU         bool   `json:"gpu"`
 	GPUCapacity int64  `json:"gpu_capacity"`
 	MetricsOK   bool   `json:"metrics_available"`
+	Cordoned    bool   `json:"cordoned"`
+	Drain       *struct {
+		State   string   `json:"state"`
+		Total   int      `json:"total"`
+		Evicted int      `json:"evicted"`
+		Blocked []string `json:"blocked"`
+		Error   string   `json:"error"`
+	} `json:"drain"`
+}
+
+// NodeAction runs cordon, uncordon or drain on a node (admin only). Drain
+// starts in the background; poll ListNodes for its progress.
+func (c *Client) NodeAction(name, action string, force bool, timeoutSec int) error {
+	return c.do("POST", "/v1/nodes/"+url.PathEscape(name)+"/"+action, map[string]any{"force": force, "timeout": timeoutSec}, nil)
 }
 
 // ListNodes fetches every cluster node (admin only).
