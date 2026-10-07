@@ -208,6 +208,7 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		"GPUQuota": p.GPUQuota, "Pipelines": pipelines, "Previews": previews,
 		"CPUQuotaMilli": p.CPUQuotaMilli, "MemQuotaMB": p.MemQuotaMB,
 		"Env": uiEnvChipFrom(env), "Envs": envs, "AIEnabled": s.aiConfigured(),
+		"StatusPage": s.uiStatusPage(p), "Incidents": s.uiIncidents(p),
 	})
 }
 
@@ -1092,6 +1093,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"RolloutProgress": s.rolloutProgress(status, latestID),
 		"Policy":          s.appPolicyView(a),
 		"Rollout":         s.uiRollout(a, tab),
+		"Uptime":          s.uiUptime(p, env, a, tab),
 		"ErrorCard":      errorCard,
 		"LaunchSequence": launch,
 	}

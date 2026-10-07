@@ -177,6 +177,7 @@ func NewWithBackend(d Deps) (http.Handler, *PushBackend, func(ctx context.Contex
 			}
 		}()
 		go s.StartMonitor(ctx)
+		go s.StartUptime(ctx)
 		go s.StartGPUWatch(ctx)
 		s.StartGPUIdleLoop(ctx)
 		// Run watchers die with the process: re-attach them first, so the

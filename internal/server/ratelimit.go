@@ -19,6 +19,8 @@ type rateLimiter struct {
 	hits  map[string]int
 	reset time.Time
 	now   func() time.Time
+	// limit is hits per window per IP (0 = loginLimit).
+	limit int
 }
 
 func newRateLimiter(now func() time.Time) *rateLimiter {
@@ -37,7 +39,11 @@ func (l *rateLimiter) allow(ip string) bool {
 		l.reset = n.Add(loginWindow)
 	}
 	l.hits[ip]++
-	return l.hits[ip] <= loginLimit
+	limit := l.limit
+	if limit == 0 {
+		limit = loginLimit
+	}
+	return l.hits[ip] <= limit
 }
 
 // rateLimited wraps a handler with the per-IP login limiter.

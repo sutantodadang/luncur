@@ -1799,3 +1799,106 @@ func (c *Client) GetRollout(project, app string) (RolloutInfo, error) {
 func (c *Client) RolloutAction(project, app, action string) error {
 	return c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/rollout/"+action, nil, nil)
 }
+
+// UptimeInfo is an app's uptime check and stats.
+type UptimeInfo struct {
+	Enabled   bool   `json:"enabled"`
+	External  bool   `json:"external"`
+	Path      string `json:"path"`
+	State     string `json:"state"`
+	LastAt    string `json:"last_at"`
+	LastError string `json:"last_error"`
+	URL       string `json:"url"`
+	Stats     struct {
+		Pct24h float64 `json:"pct_24h"`
+		Pct30d float64 `json:"pct_30d"`
+		Pct90d float64 `json:"pct_90d"`
+		P95MS  int     `json:"p95_ms_24h"`
+	} `json:"stats"`
+}
+
+// GetUptime fetches the app's uptime check.
+func (c *Client) GetUptime(project, app string) (UptimeInfo, error) {
+	var out UptimeInfo
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/uptime", nil, &out)
+	return out, err
+}
+
+// SetUptime applies a partial uptime check update.
+func (c *Client) SetUptime(project, app string, patch map[string]any) (UptimeInfo, error) {
+	var out UptimeInfo
+	err := c.do("PUT", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/uptime", patch, &out)
+	return out, err
+}
+
+// StatusPageInfo is a project's public status page config.
+type StatusPageInfo struct {
+	Enabled bool     `json:"enabled"`
+	Slug    string   `json:"slug"`
+	Title   string   `json:"title"`
+	Apps    []string `json:"apps"`
+	Path    string   `json:"path"`
+}
+
+// GetStatusPage fetches the project's status page config.
+func (c *Client) GetStatusPage(project string) (StatusPageInfo, error) {
+	var out StatusPageInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/status-page", nil, &out)
+	return out, err
+}
+
+// SetStatusPage publishes (or updates) the project's status page.
+func (c *Client) SetStatusPage(project string, in map[string]any) (StatusPageInfo, error) {
+	var out StatusPageInfo
+	err := c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/status-page", in, &out)
+	return out, err
+}
+
+// DeleteStatusPage unpublishes the project's status page.
+func (c *Client) DeleteStatusPage(project string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/status-page", nil, nil)
+}
+
+// IncidentInfo is one incident.
+type IncidentInfo struct {
+	ID         int64  `json:"id"`
+	App        string `json:"app"`
+	Title      string `json:"title"`
+	Status     string `json:"status"`
+	Auto       bool   `json:"auto"`
+	OpenedAt   string `json:"opened_at"`
+	ResolvedAt string `json:"resolved_at"`
+	Updates    []struct {
+		Body      string `json:"body"`
+		CreatedAt string `json:"created_at"`
+	} `json:"updates"`
+}
+
+// ListIncidents lists a project's incidents.
+func (c *Client) ListIncidents(project string) ([]IncidentInfo, error) {
+	var out struct {
+		Incidents []IncidentInfo `json:"incidents"`
+	}
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/incidents", nil, &out)
+	return out.Incidents, err
+}
+
+// OpenIncident opens an incident (app "" = project-wide).
+func (c *Client) OpenIncident(project, title, app, body string) (IncidentInfo, error) {
+	var out IncidentInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/incidents", map[string]string{"title": title, "app": app, "body": body}, &out)
+	return out, err
+}
+
+// IncidentNote adds an update to an incident.
+func (c *Client) IncidentNote(project string, id int64, body string) error {
+	return c.do("POST", fmt.Sprintf("/v1/projects/%s/incidents/%d/updates", url.PathEscape(project), id), map[string]string{"body": body}, nil)
+}
+
+// ResolveIncident resolves an incident.
+func (c *Client) ResolveIncident(project string, id int64) error {
+	return c.do("POST", fmt.Sprintf("/v1/projects/%s/incidents/%d/resolve", url.PathEscape(project), id), nil, nil)
+}
+
+// Server is the base URL this client talks to.
+func (c *Client) Server() string { return c.base }

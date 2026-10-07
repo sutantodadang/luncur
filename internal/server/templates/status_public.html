@@ -1,0 +1,50 @@
+{{/* status_public.html is a project's public status page (statuspage.go):
+     unauthenticated, no JS, no nav — only what the project published. */}}
+{{define "status_public.html"}}<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.S.Title}} status</title>
+<link rel="stylesheet" href="/ui/static/app.css?v={{v}}">
+<link rel="alternate" type="application/json" href="/status/{{.Slug}}.json">
+</head>
+<body class="bg-bg text-ink min-h-screen antialiased font-sans">
+<main class="mx-auto max-w-3xl p-4 md:p-8">
+<p class="seclabel">status</p>
+<h1 class="mb-4 text-xl font-semibold text-inkhi">{{.S.Title}}</h1>
+
+<div class="card mb-6 sp-overall sp-overall-{{.S.Overall}}">
+  <p class="font-mono text-sm">{{if eq .S.Overall "operational"}}&#9679; All systems operational{{else if eq .S.Overall "degraded"}}&#9679; Some systems are degraded{{else}}&#9679; Outage in progress{{end}}</p>
+</div>
+
+<div class="card mb-6">
+<h2>Components</h2>
+{{range .S.Apps}}
+<div class="mb-4">
+  <div class="mb-1 flex items-center justify-between">
+    <span class="font-mono text-sm text-inkhi">{{.Name}}</span>
+    <span class="chip {{if eq .State "operational"}}chip-ok{{else if eq .State "degraded"}}chip-warn{{else if eq .State "down"}}chip-bad{{else}}chip-muted{{end}}">{{.State}}</span>
+  </div>
+  <div class="sp-bars" aria-label="{{.Name}}: 90 days of uptime">{{range .Days}}<span class="sp-bar {{if .NoData}}sp-none{{else if .Outage}}sp-down{{else if .Partial}}sp-partial{{else}}sp-ok{{end}}" title="{{.Day}}: {{if .NoData}}no data{{else}}{{printf "%.2f" .Pct}}%{{end}}"></span>{{end}}</div>
+  <div class="mt-1 flex justify-between font-mono text-[11px] text-mut"><span>90 days ago</span><span>{{printf "%.2f" .Pct90d}}% uptime</span><span>today</span></div>
+</div>
+{{else}}<p class="text-sm text-mut">No components published yet.</p>{{end}}
+</div>
+
+<div class="card mb-6">
+<h2>Incidents</h2>
+{{range .S.Incidents}}
+<div class="mb-4 border-b border-row pb-3">
+  <p class="text-sm text-inkhi">{{.Title}} <span class="chip {{if eq .Status "open"}}chip-bad{{else}}chip-ok{{end}}">{{.Status}}</span></p>
+  <p class="font-mono text-[11px] text-mut">opened {{.OpenedAt}} UTC{{if .ResolvedAt}} &middot; resolved {{.ResolvedAt}} UTC{{end}}</p>
+  {{range .Updates}}<p class="mt-1 text-sm"><span class="font-mono text-[11px] text-mut">{{.CreatedAt}}</span> {{.Body}}</p>{{end}}
+</div>
+{{else}}<p class="text-sm text-mut">No incidents in the last 14 days.</p>{{end}}
+</div>
+
+<p class="font-mono text-[11px] text-mut">updated {{.S.Updated}} &middot; <a class="hover:text-inkhi" href="/status/{{.Slug}}.json">json</a> &middot; powered by luncur</p>
+</main>
+</body>
+</html>
+{{end}}
