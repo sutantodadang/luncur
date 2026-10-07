@@ -14,7 +14,7 @@ import (
 func TestUsageAccumulatesAndFlushesHourly(t *testing.T) {
 	s := aiTestServer(t)
 	p, _ := s.st.CreateProject("shop")
-	p, env := seedDefaultEnv(t, s.st, p)
+	_, env := seedDefaultEnv(t, s.st, p)
 	a, _ := s.st.CreateAppInEnv(env.ID, "web", 8080, "web", "")
 	key := env.Namespace + "/web"
 	h0 := time.Date(2026, 10, 7, 10, 5, 0, 0, time.UTC)

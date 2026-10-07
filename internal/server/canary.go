@@ -380,7 +380,9 @@ func (s *server) runCanary(p store.Project, env store.Environment, a store.App, 
 				s.abortCanary(ctx, p, env, a, d, "route traffic: "+err.Error())
 				return
 			}
-			s.st.SetRolloutStep(d.ID, 0, steps[0])
+			if err := s.st.SetRolloutStep(d.ID, 0, steps[0]); err != nil {
+				log.Printf("canary %s: record step: %v", d.ID, err)
+			}
 			s.buildLogf(d, "canary: %d%% of traffic", steps[0])
 			continue
 		case "done", "aborted", "promoting":
@@ -389,7 +391,9 @@ func (s *server) runCanary(p store.Project, env store.Environment, a store.App, 
 
 		// stepping: probe, check the canary pods, advance when the hold ends.
 		ok := s.canaryProbe(ctx, env, a)
-		s.st.AddRolloutProbe(d.ID, ok)
+		if err := s.st.AddRolloutProbe(d.ID, ok); err != nil {
+			log.Printf("canary %s: record probe: %v", d.ID, err)
+		}
 		ro, _ = s.st.GetRollout(d.ID)
 		if reason := s.canaryUnhealthy(ctx, env, a); reason != "" {
 			s.abortCanary(ctx, p, env, a, d, reason)
@@ -413,7 +417,9 @@ func (s *server) runCanary(p store.Project, env store.Environment, a store.App, 
 					s.abortCanary(ctx, p, env, a, d, "route traffic: "+err.Error())
 					return
 				}
-				s.st.SetRolloutStep(d.ID, next, steps[next])
+				if err := s.st.SetRolloutStep(d.ID, next, steps[next]); err != nil {
+					log.Printf("canary %s: record step: %v", d.ID, err)
+				}
 				s.buildLogf(d, "canary: %d%% of traffic", steps[next])
 				continue
 			}

@@ -15,7 +15,7 @@ import (
 func TestUptimeStateMachineOpensAndResolvesIncidents(t *testing.T) {
 	s := aiTestServer(t)
 	p, _ := s.st.CreateProject("shop")
-	p, env := seedDefaultEnv(t, s.st, p)
+	_, env := seedDefaultEnv(t, s.st, p)
 	a, _ := s.st.CreateAppInEnv(env.ID, "web", 8080, "web", "")
 	s.st.CreateDeployment(a.ID, "live", "nginx:1", 0)
 

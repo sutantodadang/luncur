@@ -60,6 +60,12 @@ Changed your mind? **Adopt** it back. No lock-in in either direction.
 | 💾 **Backups & restore** | One-command snapshot (SQLite + sealer key + addon dumps) to any S3-compatible bucket — stdlib SigV4 client, no SDK. `luncur restore` rebuilds a box from an archive |
 | 🖥️ **Web panel** | Server-rendered UI: deploys, live log streaming (SSE), scaling (with per-app CPU/memory limits), env vars, domains, rollbacks, YAML overrides, user & token management — zero JS frameworks |
 | ⏪ **Instant rollback** | Redeploy any previous image in seconds, lineage tracked, from CLI or UI |
+| 🛡️ **Safe rollouts** | A deploy is `live` only when its new pods serve — crash loops, OOM kills, bad config and image-pull failures fail it fast and **auto-roll back** to the last good deploy, with the 3-line error in your terminal — [docs](docs/guides/deploying.md#rollouts-when-a-deploy-is-live) |
+| 🐤 **Canary & blue-green** | Shift traffic 10% → 50% → 100% (Traefik weighted routing on K3s) while luncur probes the canary; abort on errors or restarts, promote or abort by hand — [docs](docs/guides/deploying.md#canary-and-blue-green-deploys) |
+| 📈 **Uptime & status pages** | Minute-by-minute checks, automatic incidents (`app_down`/`app_recovered`), and a public `/status/<slug>` page with 90-day bars, JSON and a README badge — [docs](docs/guides/status-pages.md) |
+| 🧩 **Template gallery** | One-click n8n, Umami, Gitea, Metabase, Uptime Kuma, Vaultwarden — app, database, volumes and env wired for you — [docs](docs/guides/templates.md) |
+| 💸 **Cost & right-sizing** | Requests vs real usage per app, recommended sizes with the exact `luncur scale` command, monthly cost and savings from your prices — [docs](docs/guides/insights.md) |
+| 🧱 **Hardened by default** | Default requests (no BestEffort pods), TCP readiness probes, preStop drain, topology spread, priority classes (databases outlive batch jobs), pod security levels, node cordon/drain respecting disruption budgets — [docs](docs/operations/node-maintenance.md) |
 | 👥 **Teams** | Projects with members, admin/member roles, single-use invite links (optionally emailed via SMTP), API tokens with self-service revoke |
 | 🪂 **The escape hatch** | `app eject` hands you the raw manifests and stops managing; `app adopt` reverses it. Your cluster, your call |
 | 📦 **One binary** | Server, CLI, installer, and restore tool are the same `luncur` executable. State is one SQLite file. Secrets sealed at rest (AES-256-GCM) |

@@ -305,7 +305,7 @@ func (s *Store) FinishPipelineRun(id, status string) error {
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
 		var n int
-		if s.db.QueryRow(`SELECT count(*) FROM pipeline_runs WHERE id = ?`, id).Scan(&n); n > 0 {
+		if err := s.db.QueryRow(`SELECT count(*) FROM pipeline_runs WHERE id = ?`, id).Scan(&n); err == nil && n > 0 {
 			return ErrAlreadyFinished
 		}
 		return ErrNotFound

@@ -198,7 +198,9 @@ func (s *server) uptimeDown(t uptimeTarget, reason string) {
 	}
 	in, err := s.st.OpenIncident(t.p.ID, t.a.ID, t.a.Name+" is down", true)
 	if err == nil {
-		s.st.AddIncidentUpdate(in.ID, fmt.Sprintf("%d consecutive checks failed: %s", uptimeDownAfter, reason))
+		if err := s.st.AddIncidentUpdate(in.ID, fmt.Sprintf("%d consecutive checks failed: %s", uptimeDownAfter, reason)); err != nil {
+			log.Printf("uptime %s/%s: incident update: %v", t.p.Name, t.a.Name, err)
+		}
 	}
 	s.notify(notifyEvent{Event: "app_down", Project: t.p.Name, App: t.a.Name, Err: reason, URL: s.appURLForEnv(t.a, t.env.Name, t.p.DefaultEnv)})
 }
@@ -209,8 +211,12 @@ func (s *server) uptimeRecovered(t uptimeTarget) {
 		if opened, err := time.ParseInLocation("2006-01-02 15:04:05", in.OpenedAt, time.UTC); err == nil {
 			msg = fmt.Sprintf("checks passing again after %s", time.Since(opened).Round(time.Minute))
 		}
-		s.st.AddIncidentUpdate(in.ID, "Recovered: "+msg)
-		s.st.ResolveIncident(in.ID)
+		if err := s.st.AddIncidentUpdate(in.ID, "Recovered: "+msg); err != nil {
+			log.Printf("uptime %s/%s: incident update: %v", t.p.Name, t.a.Name, err)
+		}
+		if err := s.st.ResolveIncident(in.ID); err != nil {
+			log.Printf("uptime %s/%s: resolve incident: %v", t.p.Name, t.a.Name, err)
+		}
 	}
 	s.notify(notifyEvent{Event: "app_recovered", Project: t.p.Name, App: t.a.Name, Message: msg})
 }

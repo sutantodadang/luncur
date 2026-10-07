@@ -76,7 +76,9 @@ func (s *server) gateFailed(ctx context.Context, p store.Project, env store.Envi
 			return
 		case "promoting":
 			s.cleanupCanary(ctx, env, a)
-			s.st.SetRolloutPhase(d.ID, "aborted", reason)
+			if err := s.st.SetRolloutPhase(d.ID, "aborted", reason); err != nil {
+				log.Printf("rollout %s: mark aborted: %v", d.ID, err)
+			}
 		}
 	}
 	s.failDeploy(ctx, p, env, a, d, reason, mayRollback)
@@ -154,11 +156,11 @@ func (s *server) watchRollout(p store.Project, env store.Environment, a store.Ap
 
 // markDeployLive is the shared success tail of every deploy path.
 func (s *server) markDeployLive(ctx context.Context, p store.Project, env store.Environment, a store.App, d store.Deployment) {
-	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
-		log.Printf("mark deploy %s live: %v", d.ID, err)
-	}
 	if err := s.st.SetDeployReady(d.ID, time.Now()); err != nil {
 		log.Printf("record deploy %s ready: %v", d.ID, err)
+	}
+	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
+		log.Printf("mark deploy %s live: %v", d.ID, err)
 	}
 	s.buildLogf(d, "rollout: live")
 	// Every successful deploy touches its environment's LastActiveAt so an
@@ -183,11 +185,12 @@ func (s *server) markDeployLive(ctx context.Context, p store.Project, env store.
 // mayRollback and the app's policy allows, rolls back to the previous live
 // deploy. A rollback deploy never auto-rolls back (no loops).
 func (s *server) failDeploy(ctx context.Context, p store.Project, env store.Environment, a store.App, d store.Deployment, reason string, mayRollback bool) {
-	if err := s.st.SetDeploymentStatus(d.ID, "failed"); err != nil {
-		log.Printf("mark deploy %s failed: %v", d.ID, err)
-	}
+	// Reason before status: a client that sees "failed" must also see why.
 	if err := s.st.SetDeployFailReason(d.ID, reason); err != nil {
 		log.Printf("record deploy %s fail reason: %v", d.ID, err)
+	}
+	if err := s.st.SetDeploymentStatus(d.ID, "failed"); err != nil {
+		log.Printf("mark deploy %s failed: %v", d.ID, err)
 	}
 	s.buildLogf(d, "rollout failed: %s", reason)
 	s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, Err: reason})

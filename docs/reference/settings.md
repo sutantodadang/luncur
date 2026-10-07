@@ -31,13 +31,18 @@ where each one is explained in context.
 | `smtp_from` | defaults to `smtp_user` | From address for invite emails | [Backups & restore](../guides/backups.md) |
 | `notify_url` | unset (write-only) | Unset disables deploy/cert notifications entirely | [Backups & restore](../guides/backups.md) |
 | `notify_format` | `generic` | Webhook payload shape: `generic`, `discord`, `slack`, or `telegram` | [Backups & restore](../guides/backups.md) |
-| `notify_events` | `deploy_failed,cert_failed,app_unhealthy,backup_failed` | CSV subset of `deploy_success`, `deploy_failed`, `cert_issued`, `cert_failed`, `pipeline` (pipeline run results), `app_unhealthy`, `backup_failed`. A pipeline `notify:` step always delivers | [Backups & restore](../guides/backups.md) |
+| `notify_events` | `deploy_failed,deploy_rolled_back,cert_failed,app_unhealthy,app_down,backup_failed` | CSV subset of `deploy_success`, `deploy_failed`, `deploy_rolled_back` (auto-rollback after a failed rollout), `cert_issued`, `cert_failed`, `pipeline` (pipeline run results), `app_unhealthy`, `app_down` / `app_recovered` (uptime checks), `backup_failed`. A pipeline `notify:` step always delivers | [Backups & restore](../guides/backups.md) |
 | `notify_telegram_chat` | unset | Chat id for the `telegram` notify format | [Backups & restore](../guides/backups.md) |
 | `audit_retention_days` | `90` | Audit rows older than this are pruned opportunistically; `0` keeps every row forever | [Audit log](../operations/audit.md) |
 | `gpu_idle_minutes` | unset (disabled) | Per-instance idle scale-to-zero timeout for rented GPU nodes with no GPU pod scheduled | [GPU cloud](../ml/gpu-cloud.md) |
 | `train_gang_timeout_minutes` | `10` | How long a multi-node training run waits for all pods to schedule together before the Job is torn down; `0` disables the guard | [Training](../ml/training.md) |
 | `pipeline_engine` | `native` | Default orchestrator engine for pipeline runs when a pipeline doesn't pin its own `engine`: `native` or `argo` (`luncur argo install` first) | [Pipelines](../ml/pipelines.md) |
 | `metrics_token` | unset (write-only) | Bearer token gating `GET /metrics/prometheus`; unset 404s the endpoint | — |
+| `default_cpu_request` | `50m` | Requests-only CPU for apps that set none (`0` = off) | [Deploying](../guides/deploying.md) |
+| `default_memory_request` | `64Mi` | Requests-only memory for apps that set none (`0` = off) | [Deploying](../guides/deploying.md) |
+| `gpu_pending_grace_minutes` | `30` | How long an unschedulable GPU pod holds back rented-VM idle destroys before it's ignored (and reported) | [GPU cloud](../ml/gpu-cloud.md) |
+| `cost_currency` | `$` | Currency symbol for cost insights | [Insights](../guides/insights.md) |
+| `cost_cpu_core_month` / `cost_mem_gb_month` / `cost_gpu_month` | `0` (costs hidden) | Monthly unit prices for cost estimates | [Insights](../guides/insights.md) |
 | `ai_provider` | unset (off) | `claude`, `openai` (any OpenAI-compatible endpoint, incl. a luncur model app), or `off` | [AI assistant](../ai/assistant.md) |
 | `ai_api_key` | unset (write-only) | Provider API key, sealed at rest | [AI assistant](../ai/assistant.md) |
 | `ai_model` | `claude-opus-5-5` (claude) | Model id | [AI assistant](../ai/assistant.md) |
