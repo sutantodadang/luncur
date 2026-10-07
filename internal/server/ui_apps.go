@@ -207,7 +207,7 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		"CSRF": s.csrf(w, r), "IsAdmin": u.Role == "admin", "PErrNote": perrNote,
 		"GPUQuota": p.GPUQuota, "Pipelines": pipelines, "Previews": previews,
 		"CPUQuotaMilli": p.CPUQuotaMilli, "MemQuotaMB": p.MemQuotaMB,
-		"Env": uiEnvChipFrom(env), "Envs": envs,
+		"Env": uiEnvChipFrom(env), "Envs": envs, "AIEnabled": s.aiConfigured(),
 	})
 }
 

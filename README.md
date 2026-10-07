@@ -65,6 +65,7 @@ Changed your mind? **Adopt** it back. No lock-in in either direction.
 | 📦 **One binary** | Server, CLI, installer, and restore tool are the same `luncur` executable. State is one SQLite file. Secrets sealed at rest (AES-256-GCM) |
 | 📝 **Audit trail** | Every successful mutating request — API, web UI, login, webhook-triggered deploy — recorded with who/route/path/when; `luncur audit` and the `/ui/audit` panel, configurable retention |
 | 🩺 **One-shot diagnosis** | `luncur doctor` checks database, kubernetes, registry, stuck builds, ingress, certificates, SMTP, notifications, and backups in one call — admin only, exits non-zero on any failing check |
+| 🤖 **AI assistant** | `luncur ai explain` turns a failed deploy into "what broke · why · next command"; `luncur ai ask` runs ops in plain language **as you** (your role, your audit trail); `luncur ai gen` writes pipeline/params/override/Dockerfile files that luncur's own compiler validates; `luncur mcp` lets Claude Code or any MCP agent drive luncur. Claude by default, or fully self-hosted on a luncur model app — [docs](docs/ai/assistant.md) |
 
 **Zero-bloat scorecard:** 1 Go module · SQLite (no DB server) · stdlib
 `html/template` UI (no Node, no bundler) · stdlib S3/SigV4/SMTP/DNS-01

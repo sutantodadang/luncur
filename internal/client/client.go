@@ -24,6 +24,9 @@ type Client struct {
 	// uploads — that http's whole-exchange Timeout would cut off mid-body.
 	// It bounds only connection setup and the wait for response headers.
 	transfer *http.Client
+	// long serves AI assistant calls: one request may wait minutes for the
+	// model's tool loop before any response byte, so only an overall cap.
+	long *http.Client
 }
 
 type UserInfo struct {
@@ -42,6 +45,7 @@ func New(server, token string) *Client {
 			ResponseHeaderTimeout: 30 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 		}},
+		long: &http.Client{Timeout: 15 * time.Minute},
 	}
 }
 
@@ -69,6 +73,12 @@ func (c *Client) EnvPath(project, env string) string {
 // do sends a JSON request and decodes a JSON response. Non-2xx responses
 // are turned into errors carrying the envelope's message and code.
 func (c *Client) do(method, path string, in, out any) error {
+	return c.doWith(c.http, method, path, in, out)
+}
+
+// doWith is do over a chosen http.Client (AI calls use a long-timeout one:
+// an assistant turn can run for minutes before the response starts).
+func (c *Client) doWith(hc *http.Client, method, path string, in, out any) error {
 	body := bytes.NewBuffer(nil)
 	if in != nil {
 		if err := json.NewEncoder(body).Encode(in); err != nil {
@@ -83,7 +93,7 @@ func (c *Client) do(method, path string, in, out any) error {
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-	resp, err := c.http.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return err
 	}

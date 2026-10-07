@@ -25,6 +25,8 @@ markdown_extensions:
   - attr_list
   - pymdownx.superfences
   - pymdownx.highlight
+  - pymdownx.tabbed:
+      alternate_style: true
   - tables
   - toc:
       permalink: true
@@ -40,6 +42,7 @@ nav:
       - Addons: guides/addons.md
       - Volumes: guides/volumes.md
       - Backups & restore: guides/backups.md
+  - AI assistant: ai/assistant.md
   - Machine learning:
       - GPU cloud: ml/gpu-cloud.md
       - Training: ml/training.md

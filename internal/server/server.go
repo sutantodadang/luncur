@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/sutantodadang/luncur/internal/acme"
+	"github.com/sutantodadang/luncur/internal/ai"
 	"github.com/sutantodadang/luncur/internal/build"
 	"github.com/sutantodadang/luncur/internal/dns"
 	"github.com/sutantodadang/luncur/internal/kube"
@@ -96,6 +97,14 @@ type server struct {
 	// pending trial/step twice, or launch one under a run already stopped.
 	sweepMu    sync.Mutex
 	pipelineMu sync.Mutex
+
+	// AI assistant state (ai.go). aiProviderFn is a test seam that replaces
+	// the settings-configured provider; aiAPIHandler is the in-process API
+	// stack tool calls are dispatched through.
+	aiProviderFn func() (ai.Provider, error)
+	aiAPIOnce    sync.Once
+	aiAPIHandler http.Handler
+	aiConvs      aiConversations
 
 	// lastRegistryGC tracks the last completed weekly registry GC sweep,
 	// in memory only — StartRegistryGC uses it to decide when to run again.
@@ -369,6 +378,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/tokens/{id}", s.authed(s.handleRevokeToken))
 	mux.HandleFunc("GET /v1/audit", s.adminOnly(s.handleListAudit))
 	mux.HandleFunc("GET /v1/doctor", s.adminOnly(s.handleDoctor))
+	mux.HandleFunc("GET /v1/ai/status", s.authed(s.handleAIStatus))
+	mux.HandleFunc("POST /v1/ai/explain", s.authed(s.handleAIExplain))
+	mux.HandleFunc("POST /v1/ai/chat", s.authed(s.handleAIChat))
+	mux.HandleFunc("POST /v1/ai/generate", s.authed(s.handleAIGenerate))
+	mux.HandleFunc("GET /v1/ai/usage", s.authed(s.handleAIUsage))
 	mux.HandleFunc("GET /v1/nodes", s.adminOnly(s.handleListNodes))
 	mux.HandleFunc("PUT /v1/gpu/key", s.adminOnly(s.handleSetGPUKey))
 	mux.HandleFunc("GET /v1/gpu/offers", s.adminOnly(s.handleGPUOffers))

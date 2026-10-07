@@ -1,0 +1,75 @@
+{{define "assistant.html"}}
+{{template "head" .}}{{template "nav" .}}
+<h1 class="mb-1 text-xl font-semibold text-inkhi">Assistant</h1>
+<p class="mb-4 text-sm text-mut">Ask in plain language. The assistant works through luncur's API as you: your role decides what it can change, and every change is in the audit log under your name.</p>
+{{if not .AIEnabled}}
+<div class="card mb-6 border-fail text-[13px]">
+<p class="mb-1 text-inkhi">The assistant is off.</p>
+<p class="mb-2 text-mut">{{if .Reason}}{{.Reason}}{{else}}No AI provider is configured.{{end}}</p>
+<div class="cli-echo">$ <b>luncur config set ai_provider claude</b> &middot; $ <b>luncur config set ai_api_key &lt;key&gt;</b>{{if .IsAdmin}} &middot; or <a class="text-inkhi hover:text-signal" href="/ui/settings">Settings → AI assistant</a>{{end}}</div>
+</div>
+{{else}}
+
+<div class="card mb-6">
+<h2>Conversation</h2>
+{{template "aitranscript" .}}
+<form id="ai-ask-form" method="post" action="/ui/assistant" hx-post="/ui/assistant" hx-target="#ai-transcript" hx-swap="outerHTML"
+      class="mt-3 flex flex-col gap-2" hx-on::after-request="if(event.detail.successful) this.querySelector('textarea').value=''">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <textarea class="input font-mono text-xs" name="message" rows="3" placeholder="why is web restarting? · add a postgres to api and attach it · scale web to 3 in staging" required></textarea>
+  <div class="flex flex-wrap items-end gap-2">
+    <label class="flex flex-col gap-1 text-xs text-mut">project<select class="input w-auto" name="project">
+      <option value="">(any)</option>
+      {{$cur := .Project}}{{range .Projects}}<option value="{{.}}"{{if eq . $cur}} selected{{end}}>{{.}}</option>{{end}}
+    </select></label>
+    <label class="flex flex-col gap-1 text-xs text-mut">env<input class="input w-40" name="env" value="{{.Env}}" placeholder="default"></label>
+    <button type="submit" class="btn">ask</button>
+  </div>
+</form>
+<div class="cli-echo">$ <b>luncur ai ask "…" --project &lt;project&gt; --env &lt;env&gt;</b></div>
+</div>
+
+<div class="card mb-6">
+<h2>Generate config</h2>
+<p class="mb-2 text-sm text-mut">Describe a file; luncur validates it with its own compiler before you see it.</p>
+<form hx-post="/ui/ai/generate" hx-target="#ai-gen-result" hx-swap="innerHTML" class="flex flex-col gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <div class="flex flex-wrap items-end gap-2">
+    <label class="flex flex-col gap-1 text-xs text-mut">kind<select class="input w-auto" name="kind">
+      <option value="pipeline">pipeline.yaml</option>
+      <option value="params">sweep params.yaml</option>
+      <option value="override">override patch</option>
+      <option value="dockerfile">Dockerfile</option>
+    </select></label>
+    <label class="flex flex-col gap-1 text-xs text-mut">project<select class="input w-auto" name="project">
+      <option value="">(none)</option>
+      {{range .Projects}}<option value="{{.}}">{{.}}</option>{{end}}
+    </select></label>
+    <label class="flex flex-col gap-1 text-xs text-mut">app<input class="input w-40" name="app" placeholder="override only"></label>
+    <label class="flex flex-col gap-1 text-xs text-mut">manifest<select class="input w-auto" name="override_kind">
+      <option value="Deployment">Deployment</option><option value="Service">Service</option>
+      <option value="Ingress">Ingress</option><option value="CronJob">CronJob</option>
+    </select></label>
+  </div>
+  <textarea class="input font-mono text-xs" name="description" rows="2" placeholder="train with app trainer, then evaluate, then notify on success" required></textarea>
+  <div><button type="submit" class="btn-ghost">generate</button></div>
+</form>
+<div id="ai-gen-result" class="mt-3"></div>
+<div class="cli-echo">$ <b>luncur ai gen pipeline|params|override|dockerfile "…" --project &lt;project&gt; -o &lt;file&gt;</b></div>
+</div>
+{{end}}
+
+<div class="card mb-6">
+<h2>Usage</h2>
+<p class="font-mono text-xs text-ink">today: {{if .TodayTokens}}{{.TodayTokens}}{{else}}0{{end}} tokens</p>
+<div class="cli-echo">$ <b>luncur ai usage</b> &middot; $ <b>luncur ai status</b></div>
+</div>
+
+<div class="card">
+<h2>External agents (MCP)</h2>
+<p class="mb-2 text-sm text-mut">Let Claude Code, Claude Desktop or any MCP client operate luncur with your login. It runs on your machine, so there is no button here.</p>
+<div class="cli-echo">$ <b>claude mcp add luncur -- luncur mcp --project &lt;project&gt;</b></div>
+<div class="cli-echo">claude_desktop_config.json: <b>{"mcpServers": {"luncur": {"command": "luncur", "args": ["mcp"]}}}</b></div>
+</div>
+{{template "foot" .}}
+{{end}}

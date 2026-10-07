@@ -20,7 +20,12 @@
   <td><code class="font-mono text-xs" title="{{.ImageRef}}">{{.ImageTag}}</code>{{if .RolledBackFromSeq}} <em>(rollback of #{{.RolledBackFromSeq}})</em>{{end}}</td>
   <td class="text-xs text-mut">{{.Actor}}</td>
   <td class="text-xs text-mut">{{.CreatedAt}}</td>
-  <td class="flex items-center gap-2"><a class="text-xs text-mut hover:text-signal" href="/v1/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/deploys/{{.ID}}/logs" target="_blank" rel="noopener">view log</a>{{if and .ImageRef (ne .ID $.LatestID) (not $.App.Ejected)}}
+  <td class="flex items-center gap-2"><a class="text-xs text-mut hover:text-signal" href="/v1/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/deploys/{{.ID}}/logs" target="_blank" rel="noopener">view log</a>{{if and $.AIEnabled (eq .Status "failed")}}
+    <form class="inline" hx-post="/ui/projects/{{$.Project.Name}}/{{if not $.Env.Default}}envs/{{$.Env.Name}}/{{end}}apps/{{$.App.Name}}/explain" hx-target="#ai-explain" hx-swap="innerHTML">
+      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="deploy_id" value="{{.ID}}">
+      <button type="submit" class="btn-ghost">explain</button>
+    </form>{{end}}{{if and .ImageRef (ne .ID $.LatestID) (not $.App.Ejected)}}
     <form class="inline" method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/rollback">
       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
       <input type="hidden" name="deploy_id" value="{{.ID}}">
@@ -29,7 +34,8 @@
   {{end}}</td>
 </tr>{{end}}
 </table>
-<div class="cli-echo">$ <b>luncur status {{.App.Name}}</b> &middot; $ <b>luncur rollback {{.App.Name}}</b></div>
+<div id="ai-explain"></div>
+<div class="cli-echo">$ <b>luncur status {{.App.Name}}</b> &middot; $ <b>luncur rollback {{.App.Name}}</b>{{if .AIEnabled}} &middot; $ <b>luncur ai explain {{.App.Name}} --project {{.Project.Name}}{{if not .Env.Default}} --env {{.Env.Name}}{{end}}</b>{{end}}</div>
 </div>
 
 {{if .IsGit}}

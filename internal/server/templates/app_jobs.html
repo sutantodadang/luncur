@@ -30,7 +30,7 @@
 <div class="cli-echo mb-3">$ <b>luncur app training {{.App.Name}} --project {{.Project.Name}} --nodes N --framework f</b></div>
 {{end}}
 {{if .Runs}}
-<table class="tbl"><tr><th>#</th><th>Status</th><th>Nodes</th><th>Exit</th><th>Started</th><th>Finished</th></tr>
+<table class="tbl"><tr><th>#</th><th>Status</th><th>Nodes</th><th>Exit</th><th>Started</th><th>Finished</th><th></th></tr>
 {{range .Runs}}<tr>
   <td>{{.ID}}</td>
   <td><span class="status-{{.Status}}">{{.Status}}</span></td>
@@ -38,17 +38,38 @@
   <td class="font-mono text-xs">{{if .ExitCode}}{{.ExitCode}}{{else}}&ndash;{{end}}</td>
   <td class="text-xs text-mut">{{.StartedAt}}</td>
   <td class="text-xs text-mut">{{if .FinishedAt}}{{.FinishedAt}}{{else}}&ndash;{{end}}</td>
+  <td>{{if and $.AIEnabled (eq .Status "failed")}}<form class="inline" hx-post="/ui/projects/{{$.Project.Name}}/{{if not $.Env.Default}}envs/{{$.Env.Name}}/{{end}}apps/{{$.App.Name}}/explain" hx-target="#ai-explain-run" hx-swap="innerHTML">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="run_id" value="{{.ID}}">
+    <button type="submit" class="btn-ghost">explain</button>
+  </form>{{end}}</td>
 </tr>{{end}}
 </table>
+<div id="ai-explain-run"></div>
 {{else}}<p class="text-sm text-mut">No runs yet. Deploy an image, then trigger the first run.</p>{{end}}
 </div>
 
 <div class="card mb-6">
 <h2>Sweeps</h2>
 {{if not .App.Ejected}}
+{{if .AIEnabled}}<form id="sweep-params-genform" hx-post="/ui/ai/generate" hx-target="#sweep-params" hx-swap="outerHTML" hx-include="#sweep-params">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input type="hidden" name="target" value="sweep-params">
+  <input type="hidden" name="project" value="{{.Project.Name}}">
+  <input type="hidden" name="env" value="{{.Env.Name}}">
+</form>{{end}}
 <form class="mb-2 flex flex-wrap items-end gap-2" method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/sweeps">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <label class="flex w-full flex-col gap-1 text-xs text-mut">params.yaml<textarea class="input w-full font-mono text-xs" name="params_yaml" rows="3" placeholder="lr: {min: 1e-5, max: 1e-2, log: true}&#10;batch_size: [16, 32]" required></textarea></label>
+  {{if .AIEnabled}}<details class="w-full">
+    <summary class="cursor-pointer font-mono text-[11px] text-mut">generate params.yaml with ai</summary>
+    <div class="mt-2 flex flex-wrap items-center gap-2">
+      <input class="input flex-1 text-xs" name="description" form="sweep-params-genform" placeholder="search learning rate 1e-5..1e-2 (log) and batch size 16/32/64">
+      <button type="submit" class="btn-ghost" form="sweep-params-genform">generate</button>
+    </div>
+    <p id="sweep-params-err" class="text-xs text-fail"></p>
+    <div class="cli-echo">$ <b>luncur ai gen params "…" --project {{.Project.Name}}</b></div>
+  </details>{{end}}
+  <label class="flex w-full flex-col gap-1 text-xs text-mut">params.yaml<textarea id="sweep-params" class="input w-full font-mono text-xs" name="params_yaml" rows="3" placeholder="lr: {min: 1e-5, max: 1e-2, log: true}&#10;batch_size: [16, 32]" required></textarea></label>
   <label class="flex flex-col gap-1 text-xs text-mut">metric<input class="input w-32" name="metric" placeholder="val_loss" required></label>
   <label class="flex flex-col gap-1 text-xs text-mut">direction<select class="input w-auto" name="direction">
     <option value="min" selected>min</option>
