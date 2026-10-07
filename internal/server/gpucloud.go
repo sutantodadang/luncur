@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -377,7 +379,13 @@ func (s *server) rentGPU(ctx context.Context, providerName string, offerID int64
 	} else if err != nil {
 		return store.GPUInstance{}, err
 	}
-	label := fmt.Sprintf("luncur-gpu-%d", time.Now().Unix())
+	// The label is also the K3s node name and the idle loop's key, so it
+	// must be unique even for two rents in the same second.
+	suffix := make([]byte, 3)
+	if _, err := rand.Read(suffix); err != nil {
+		return store.GPUInstance{}, fmt.Errorf("label suffix: %w", err)
+	}
+	label := fmt.Sprintf("luncur-gpu-%d-%s", time.Now().Unix(), hex.EncodeToString(suffix))
 	spec := gpucloud.RentSpec{
 		Label:          label,
 		Image:          image,
@@ -483,11 +491,13 @@ func (s *server) destroyGPUInstance(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	v, err := s.vast()
+	// Dispatch on the row's own provider (a nebius VM sent to vast.ai's
+	// destroy endpoint is never stopped and keeps billing).
+	prov, err := s.gpuProvider(g.Provider)
 	if err != nil {
 		return err
 	}
-	if err := v.Destroy(ctx, g.ExternalRef); err != nil {
+	if err := prov.Destroy(ctx, g.ExternalRef); err != nil {
 		return err
 	}
 	if err := s.st.MarkGPUInstanceDestroyed(g.ID); err != nil {

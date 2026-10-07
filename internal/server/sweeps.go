@@ -148,6 +148,19 @@ func trialEnv(sw store.Sweep, tr store.SweepTrial, mlflowURL string) map[string]
 	return env
 }
 
+// runNamespace is the namespace a job app's runs live in: its environment's
+// namespace (startRun applies them to env.Namespace), not the project's
+// (production) namespace. Falls back to the project namespace if the
+// environment can't be resolved.
+func (s *server) runNamespace(a store.App, p store.Project) string {
+	ns, err := s.appNamespace(a)
+	if err != nil {
+		log.Printf("app %s: resolve namespace: %v", a.Name, err)
+		return p.Namespace
+	}
+	return ns
+}
+
 // sweepAppProject loads a sweep's app + project. Logs and returns ok=false
 // on failure (e.g. the app was deleted out from under a running sweep).
 func (s *server) sweepAppProject(sw store.Sweep) (store.App, store.Project, bool) {
@@ -208,14 +221,15 @@ func (s *server) trialMetric(ctx context.Context, sw store.Sweep, tr store.Sweep
 	if s.kube == nil {
 		return sweep.Obs{}
 	}
+	ns := s.runNamespace(app, project)
 	jobName := jobRunName(app.Name, run.ID)
-	pods, err := s.kube.JobPods(ctx, project.Namespace, jobName)
+	pods, err := s.kube.JobPods(ctx, ns, jobName)
 	if err != nil || len(pods) == 0 {
 		return sweep.Obs{}
 	}
 	var best sweep.Obs
 	for _, pod := range pods {
-		rc, err := s.kube.PodLogStream(ctx, project.Namespace, pod, false, 0, 0)
+		rc, err := s.kube.PodLogStream(ctx, ns, pod, false, 0, 0)
 		if err != nil {
 			continue
 		}
@@ -231,6 +245,8 @@ func (s *server) trialMetric(ctx context.Context, sw store.Sweep, tr store.Sweep
 // sweepTick drives one tick of every active sweep: harvest finished trials'
 // metrics, decide launches/prunes/finish via decideSweep, and apply them.
 func (s *server) sweepTick(ctx context.Context) {
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
 	sweeps, err := s.st.ActiveSweeps()
 	if err != nil {
 		log.Printf("sweep tick: list active sweeps: %v", err)
@@ -251,7 +267,7 @@ func (s *server) sweepTickOne(ctx context.Context, sw store.Sweep) {
 	if !ok {
 		return
 	}
-	mlflowURL := s.sweepMLflowURLFn(app, project.Namespace)
+	mlflowURL := s.sweepMLflowURLFn(app, s.runNamespace(app, project))
 
 	views := make([]trialView, len(trials))
 	viewByID := make(map[string]trialView, len(trials))
@@ -367,7 +383,7 @@ func (s *server) sweepPruneTrial(ctx context.Context, sw store.Sweep, tv trialVi
 	}
 	if s.kube != nil {
 		jobName := jobRunName(app.Name, tr.RunID.Int64)
-		if err := s.kube.DeleteJob(ctx, project.Namespace, jobName); err != nil {
+		if err := s.kube.DeleteJob(ctx, s.runNamespace(app, project), jobName); err != nil {
 			log.Printf("sweep %s: prune trial %s: delete job: %v", sw.ID, tr.ID, err)
 		}
 	}
@@ -396,6 +412,8 @@ func (s *server) sweepReconcile(ctx context.Context) {
 	if s.kube == nil {
 		return
 	}
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
 	sweeps, err := s.st.ActiveSweeps()
 	if err != nil {
 		log.Printf("sweep reconcile: list active sweeps: %v", err)
@@ -416,7 +434,7 @@ func (s *server) sweepReconcileOne(ctx context.Context, sw store.Sweep) {
 	if !ok {
 		return
 	}
-	mlflowURL := s.sweepMLflowURLFn(app, project.Namespace)
+	mlflowURL := s.sweepMLflowURLFn(app, s.runNamespace(app, project))
 
 	for _, tr := range trials {
 		if tr.State != "running" || !tr.RunID.Valid {
@@ -447,7 +465,7 @@ func (s *server) sweepReconcileOne(ctx context.Context, sw store.Sweep) {
 		}
 
 		jobName := jobRunName(app.Name, run.ID)
-		exists, err := s.kube.JobExists(ctx, project.Namespace, jobName)
+		exists, err := s.kube.JobExists(ctx, s.runNamespace(app, project), jobName)
 		if err != nil || exists {
 			continue // still there (or a transient check error) — leave it, next tick tries again
 		}
@@ -584,6 +602,17 @@ func (s *server) startSweep(a store.App, req sweepCreateRequest, createdBy sql.N
 // must check sw.Status == "running" first; a non-running sweep is already
 // the idempotent no-op case and this must not be called again for it.
 func (s *server) stopSweep(ctx context.Context, sw store.Sweep, app store.App, project store.Project) error {
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
+	// Re-read under the lock: a tick may have finished the sweep between
+	// the caller's status check and here.
+	cur, err := s.st.GetSweep(sw.ID)
+	if err != nil {
+		return fmt.Errorf("get sweep: %w", err)
+	}
+	if cur.Status != "running" {
+		return nil
+	}
 	trials, err := s.st.ListTrials(sw.ID)
 	if err != nil {
 		return fmt.Errorf("list trials: %w", err)

@@ -105,6 +105,9 @@ these convention values if it sets the same key.
 
 ## Failure handling
 
+`retries: N` on an `app`/`image` step re-runs it up to N more times after a
+failure (N+1 attempts in total), on both engines.
+
 Fail-fast: a failed step (past its `retries` budget) skips every step
 downstream of it; siblings on other branches of the DAG still run to
 completion. The run itself finishes `done` only if every step finished

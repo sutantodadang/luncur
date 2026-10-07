@@ -46,9 +46,10 @@ type pipeActions struct {
 //  2. A pending row launches once every needs-step row is done.
 //  3. A failed row transitively skips its downstream pending rows
 //     (spec.Downstream) — fail-fast. A running app-kind row whose Run
-//     reports failure and whose attempt is still under budget (attempt <
-//     retries) relaunches instead of failing; once attempt reaches
-//     retries the engine marks the row failed itself before the next call
+//     reports failure and whose attempt is still under budget (attempt <=
+//     retries: retries counts re-runs after the first attempt, matching
+//     argo's retryStrategy.limit) relaunches instead of failing; once
+//     attempt exceeds retries the engine marks the row failed itself before the next call
 //     to decide, so this core never needs to fail a row on its own.
 //  4. Finish fires once no row is pending or running: "done" if every row
 //     is done, else "failed" (skipped counts as not-done). A row this
@@ -90,7 +91,7 @@ func decidePipelineRun(spec pipeline.Spec, views []pipeStepView) pipeActions {
 		case "running":
 			anyPendingOrRunning = true
 			allDone = false
-			if v.Spec.Kind == "app" && v.Run != nil && v.Run.Status == "failed" && v.Row.Attempt < v.Spec.Retries {
+			if v.Spec.Kind == "app" && v.Run != nil && v.Run.Status == "failed" && v.Row.Attempt <= v.Spec.Retries {
 				actions.Launch = append(actions.Launch, v.Row.ID)
 			}
 		case "done":
@@ -153,8 +154,10 @@ func (s *server) startPipelineLoop(ctx context.Context) {
 // pipelineTick drives one tick of every active pipeline run, firing any due
 // cron-scheduled pipelines first (firePipelineCrons) so a run it just
 // created gets its root steps driven in the same tick, same as a manual
-// trigger's inline pipelineTick (startPipelineRun's doc comment).
+// trigger's inline tick (startPipelineRun's doc comment). Holds pipelineMu.
 func (s *server) pipelineTick(ctx context.Context) {
+	s.pipelineMu.Lock()
+	defer s.pipelineMu.Unlock()
 	s.firePipelineCrons(ctx)
 
 	runs, err := s.st.ActivePipelineRuns()
@@ -212,9 +215,14 @@ func (s *server) firePipelineCrons(ctx context.Context) {
 			}
 		}
 
-		if _, _, err := s.startPipelineRun(ctx, pl, "cron"); err != nil {
+		// createPipelineRun + pipelineTickOne, not startPipelineRun: we
+		// already hold pipelineMu (startPipelineRun would re-lock it).
+		run, _, err := s.createPipelineRun(ctx, pl, "cron")
+		if err != nil {
 			log.Printf("pipeline %s: cron: start run: %v", pl.Name, err)
+			continue
 		}
+		s.pipelineTickOne(ctx, run)
 	}
 }
 
@@ -385,7 +393,7 @@ func (s *server) pipelineHarvestStep(ctx context.Context, run store.PipelineRun,
 			}
 			v.Row.State = "done"
 		case "failed":
-			if v.Row.Attempt >= v.Spec.Retries {
+			if v.Row.Attempt > v.Spec.Retries {
 				detail := "run failed"
 				if jr.ExitCode.Valid {
 					detail = fmt.Sprintf("exit %d", jr.ExitCode.Int64)
@@ -418,7 +426,7 @@ func (s *server) pipelineHarvestStep(ctx context.Context, run store.PipelineRun,
 			v.Row.State = "done"
 			return v
 		}
-		if v.Row.Attempt >= v.Spec.Retries {
+		if v.Row.Attempt > v.Spec.Retries {
 			if err := s.st.FinishStep(v.Row.ID, "failed", "job failed"); err != nil {
 				log.Printf("pipeline run %s: step %s: finish failed: %v", run.ID, v.Row.Name, err)
 				return v
@@ -504,6 +512,20 @@ func (s *server) pipelineLaunchApp(ctx context.Context, run store.PipelineRun, p
 // pipelineHarvestStep (a retry of an already-running row — decidePipelineRun
 // has no image-retry path, see pipelineHarvestStep's doc comment).
 func (s *server) pipelineLaunchImage(ctx context.Context, run store.PipelineRun, pl store.Pipeline, project store.Project, v pipeStepView, appCache map[string]store.App) {
+	// GPU budget pacing, like app steps get from startRun: a step that can
+	// never fit fails now; one that doesn't fit yet waits for a later tick
+	// rather than being applied and refused by the namespace ResourceQuota
+	// (a Job with zero pods never finishes, so the step would hang).
+	if gpu := int64(v.Spec.GPU); gpu > 0 {
+		if project.GPUQuota > 0 && gpu > project.GPUQuota {
+			s.finishPipelineStep(run, v, "failed", fmt.Sprintf("step needs %d GPUs, project GPU budget is %d", gpu, project.GPUQuota))
+			return
+		}
+		if err := s.validateGPUBudget(project, gpu); err != nil {
+			log.Printf("pipeline run %s: step %s over gpu budget this tick, left as is: %v", run.ID, v.Row.Name, err)
+			return
+		}
+	}
 	attempt := v.Row.Attempt + 1
 	if err := s.st.MarkStepRunning(v.Row.ID, nil, attempt); err != nil {
 		log.Printf("pipeline run %s: step %s: mark running: %v", run.ID, v.Row.Name, err)
@@ -645,7 +667,7 @@ func (s *server) pipelineRunNotify(run store.PipelineRun, pl store.Pipeline, pro
 	if !s.pipelineMarkActionRunning(run, v) {
 		return
 	}
-	s.notify(notifyEvent{Event: "pipeline", Project: project.Name, App: pl.Name, Message: v.Spec.Notify})
+	s.notify(notifyEvent{Event: "pipeline", Project: project.Name, App: pl.Name, Message: v.Spec.Notify, explicit: true})
 	s.finishPipelineStep(run, v, "done", "notified")
 }
 
@@ -664,6 +686,17 @@ func (s *server) finishPipelineStep(run store.PipelineRun, v pipeStepView, state
 // already the idempotent no-op case (B2 stopSweep convention) and this must
 // not be called again for it.
 func (s *server) stopPipelineRun(ctx context.Context, run store.PipelineRun) error {
+	s.pipelineMu.Lock()
+	defer s.pipelineMu.Unlock()
+	// Re-read under the lock: a tick may have finished the run between the
+	// caller's status check and here.
+	cur, err := s.st.GetPipelineRun(run.ID)
+	if err != nil {
+		return fmt.Errorf("get run: %w", err)
+	}
+	if cur.Status != "running" {
+		return nil
+	}
 	_, project, spec, engine, err := s.pipelineRunContext(run)
 	if err != nil {
 		return err
@@ -691,7 +724,7 @@ func (s *server) stopPipelineRun(ctx context.Context, run store.PipelineRun) err
 			case "app":
 				if row.JobRunID.Valid {
 					if a, aok := s.pipelineResolveApp(project, st.App, appCache); aok && s.kube != nil {
-						if err := s.kube.DeleteJob(ctx, project.Namespace, jobRunName(a.Name, row.JobRunID.Int64)); err != nil {
+						if err := s.kube.DeleteJob(ctx, s.runNamespace(a, project), jobRunName(a.Name, row.JobRunID.Int64)); err != nil {
 							log.Printf("pipeline run %s: stop: delete job for step %s: %v", run.ID, row.Name, err)
 						}
 					}
@@ -727,6 +760,8 @@ func (s *server) stopPipelineRun(ctx context.Context, run store.PipelineRun) err
 // failed. Mirrors sweepReconcile. Callers must guard s.kube == nil
 // (startPipelineLoop does).
 func (s *server) pipelineReconcile(ctx context.Context) {
+	s.pipelineMu.Lock()
+	defer s.pipelineMu.Unlock()
 	runs, err := s.st.ActivePipelineRuns()
 	if err != nil {
 		log.Printf("pipeline reconcile: list active runs: %v", err)
@@ -792,7 +827,7 @@ func (s *server) pipelineReconcileOne(ctx context.Context, run store.PipelineRun
 			if !aok {
 				continue
 			}
-			exists, err := s.kube.JobExists(ctx, project.Namespace, jobRunName(a.Name, jr.ID))
+			exists, err := s.kube.JobExists(ctx, s.runNamespace(a, project), jobRunName(a.Name, jr.ID))
 			if err != nil || exists {
 				continue // still there (or a transient check error) — leave it, next tick tries again
 			}
@@ -973,12 +1008,37 @@ func (s *server) updatePipeline(p store.Project, pl store.Pipeline, yamlPtr, eng
 // running immediately (Argo owns their lifecycle from here). The run's
 // engine is recorded in spec_json itself (decodePipelineRunSpec's envelope)
 // so it survives even if the pipeline's own engine setting changes later.
-// Also fires one immediate pipelineTick so the run's root steps launch
-// instantly instead of waiting up to pipelineLoopInterval for the next tick
-// — for a cron-triggered call this re-enters pipelineTick/firePipelineCrons
-// one level deep; the nested firePipelineCrons pass sees this run already
-// "running" and skips it (Forbid concurrency check), so it terminates.
+// Also drives the new run once (pipelineTickOne, under pipelineMu) so its
+// root steps launch instantly instead of waiting up to pipelineLoopInterval
+// for the next tick. Cron fires go through createPipelineRun instead, since
+// they already run inside a tick.
 func (s *server) startPipelineRun(ctx context.Context, pl store.Pipeline, trigger string) (store.PipelineRun, []store.PipelineRunStep, error) {
+	run, steps, err := s.createPipelineRun(ctx, pl, trigger)
+	if err != nil {
+		return run, steps, err
+	}
+
+	// Drive just this run once, under the same lock as the loop's tick, so
+	// a concurrent loop tick can't launch the same root steps a second time.
+	s.pipelineMu.Lock()
+	s.pipelineTickOne(ctx, run)
+	s.pipelineMu.Unlock()
+
+	got, err := s.st.GetPipelineRun(run.ID)
+	if err != nil {
+		return run, steps, nil // launched fine; report the pre-tick snapshot rather than fail the request
+	}
+	gotSteps, err := s.st.ListRunSteps(run.ID)
+	if err != nil {
+		return got, steps, nil
+	}
+	return got, gotSteps, nil
+}
+
+// createPipelineRun is startPipelineRun minus the immediate tick: validate,
+// create the run and its pending step rows, and (argo) apply the Workflow.
+// firePipelineCrons calls it directly since it already runs inside a tick.
+func (s *server) createPipelineRun(ctx context.Context, pl store.Pipeline, trigger string) (store.PipelineRun, []store.PipelineRunStep, error) {
 	engine := pl.Engine
 	if engine == "" {
 		if v, err := s.st.GetSetting("pipeline_engine"); err == nil {
@@ -1084,17 +1144,7 @@ func (s *server) startPipelineRun(ctx context.Context, pl store.Pipeline, trigge
 		}
 	}
 
-	s.pipelineTick(ctx)
-
-	got, err := s.st.GetPipelineRun(run.ID)
-	if err != nil {
-		return run, steps, nil // launched fine; report the pre-tick snapshot rather than fail the request
-	}
-	gotSteps, err := s.st.ListRunSteps(run.ID)
-	if err != nil {
-		return got, steps, nil
-	}
-	return got, gotSteps, nil
+	return run, steps, nil
 }
 
 // pipelineBaseJSON is the field set every pipeline response shares.

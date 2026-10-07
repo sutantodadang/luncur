@@ -144,14 +144,14 @@ func TestDecidePipelineRunRunningAppRetryExhaustedDoesNotLaunch(t *testing.T) {
 	t.Parallel()
 	views := []pipeStepView{
 		{
-			Row:  store.PipelineRunStep{ID: "r", Name: "r", State: "running", Attempt: 2},
+			Row:  store.PipelineRunStep{ID: "r", Name: "r", State: "running", Attempt: 3},
 			Spec: pipeline.Step{Name: "r", Kind: "app", Retries: 2},
 			Run:  &store.JobRun{Status: "failed"},
 		},
 	}
 	actions := launchIDs(t, views)
 	if len(actions.Launch) != 0 {
-		t.Fatalf("Launch = %v, want none (attempt == retries, engine fails it instead)", actions.Launch)
+		t.Fatalf("Launch = %v, want none (attempt 3 = 1 + retries 2, engine fails it instead)", actions.Launch)
 	}
 	if actions.Finish != "" {
 		t.Fatalf("Finish = %q, want \"\" (row still running from decide's point of view)", actions.Finish)
@@ -454,7 +454,7 @@ func TestPipelineTickAppRetryExhaustedFailsStep(t *testing.T) {
 	}
 	row := pipelineFindStep(t, s.st, run.ID, "a")
 	jrID := jr.ID
-	if err := s.st.MarkStepRunning(row.ID, &jrID, 2); err != nil { // already at attempt 2 == retries
+	if err := s.st.MarkStepRunning(row.ID, &jrID, 3); err != nil { // already at attempt 3 = first try + 2 retries
 		t.Fatal(err)
 	}
 
@@ -462,7 +462,7 @@ func TestPipelineTickAppRetryExhaustedFailsStep(t *testing.T) {
 
 	got := pipelineFindStep(t, s.st, run.ID, "a")
 	if got.State != "failed" || got.Detail != "exit 1" {
-		t.Fatalf("step a = %+v, want failed/exit 1 (attempt == retries, no more relaunches)", got)
+		t.Fatalf("step a = %+v, want failed/exit 1 (retries used up, no more relaunches)", got)
 	}
 	gotRun, err := s.st.GetPipelineRun(run.ID)
 	if err != nil {

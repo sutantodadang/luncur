@@ -165,6 +165,7 @@ func Compile(b []byte) (Spec, error) {
 	for _, name := range names {
 		st := steps[name]
 		upstream := transitiveNeeds(name, steps)
+		inputEnv := make(map[string]string, len(st.Inputs)) // LUNCUR_INPUT_<UPPER> -> input
 		for _, in := range st.Inputs {
 			parts := strings.SplitN(in, "/", 2)
 			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -181,6 +182,13 @@ func Compile(b []byte) (Spec, error) {
 			if !containsStr(src.Outputs, outName) {
 				return Spec{}, fmt.Errorf("step %q: input %q references undeclared output %q of step %q", name, in, outName, srcStep)
 			}
+			// Inputs are exposed as LUNCUR_INPUT_<NAME>: two inputs sharing
+			// an output name would silently overwrite each other.
+			key := strings.ToUpper(outName)
+			if prev, dup := inputEnv[key]; dup && prev != in {
+				return Spec{}, fmt.Errorf("step %q: inputs %q and %q both map to LUNCUR_INPUT_%s; rename one of the outputs", name, prev, in, key)
+			}
+			inputEnv[key] = in
 		}
 	}
 
@@ -281,10 +289,12 @@ func checkStepValues(name, kind string, rs rawStep) error {
 		if !envKeyRe.MatchString(o) {
 			return fmt.Errorf("step %q: invalid output name %q (must match %s)", name, o, envKeyRe.String())
 		}
-		if seenOutputs[o] {
+		// Outputs become LUNCUR_OUTPUT_<UPPER>, so "model" and "Model"
+		// would collide on one env var.
+		if seenOutputs[strings.ToUpper(o)] {
 			return fmt.Errorf("step %q: duplicate output %q", name, o)
 		}
-		seenOutputs[o] = true
+		seenOutputs[strings.ToUpper(o)] = true
 	}
 	return nil
 }

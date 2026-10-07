@@ -47,6 +47,16 @@ func ParseParams(b []byte) (map[string]Param, error) {
 	return out, nil
 }
 
+// choiceString renders one discrete choice for env. YAML numbers arrive as
+// float64 (YAML -> JSON), and %v would print 1000000 as "1e+06", which a
+// trial's int(os.environ[...]) rejects — so floats use plain decimal form.
+func choiceString(item any) string {
+	if f, ok := item.(float64); ok {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return fmt.Sprintf("%v", item)
+}
+
 func badParamErr(key string) error {
 	return fmt.Errorf("param %q: want a list or {min,max[,log]}", key)
 }
@@ -59,7 +69,7 @@ func parseParam(key string, v any) (Param, error) {
 		}
 		choices := make([]string, len(val))
 		for i, item := range val {
-			choices[i] = fmt.Sprintf("%v", item)
+			choices[i] = choiceString(item)
 		}
 		return Param{Choices: choices}, nil
 
@@ -133,9 +143,15 @@ func Expand(space map[string]Param, maxTrials int, rng *rand.Rand) ([]map[string
 }
 
 func expandGrid(space map[string]Param, keys []string, maxTrials int) ([]map[string]string, bool) {
+	// Cap the running product just past maxTrials: the exact grid size is
+	// only needed to decide truncation, and an uncapped product overflows
+	// int for large spaces (e.g. 63 binary params wraps negative).
 	total := 1
 	for _, k := range keys {
 		total *= len(space[k].Choices)
+		if total > maxTrials {
+			total = maxTrials + 1
+		}
 	}
 	n := total
 	truncated := false

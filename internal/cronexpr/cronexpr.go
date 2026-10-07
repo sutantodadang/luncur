@@ -12,7 +12,7 @@ import (
 
 // Schedule is a parsed 5-field cron expression (minute hour day-of-month
 // month day-of-week). Supported syntax: "*", single numbers, lists "1,15",
-// ranges "1-5", steps "*/15" and "10-30/5". Day-of-week 0-6, 0=Sunday
+// ranges "1-5", steps "*/15", "10-30/5" and "5/15" (= "5-59/15"). Day-of-week 0-6, 0=Sunday
 // (7 also accepted as Sunday, normalized to 0). No names (jan/mon), no
 // @daily macros — numbers only.
 type Schedule struct {
@@ -81,8 +81,9 @@ func parseField(field string, spec fieldSpec) (map[int]bool, error) {
 	return set, nil
 }
 
-// parseTerm parses one comma-delimited term — "*", "*/N", "N", "N-M", or
-// "N-M/S" — adding every selected value into set.
+// parseTerm parses one comma-delimited term — "*", "*/N", "N", "N-M",
+// "N-M/S", or "N/S" (N through the field max, step S) — adding every
+// selected value into set.
 func parseTerm(term string, spec fieldSpec, set map[int]bool) error {
 	rangePart := term
 	step := 1
@@ -125,6 +126,10 @@ func parseTerm(term string, spec fieldSpec, set map[int]bool) error {
 			return fmt.Errorf("bad value %q", rangePart)
 		}
 		lo, hi = v, v
+		if strings.IndexByte(term, '/') >= 0 {
+			// "N/S" means "N-max/S" (Vixie cron, Kubernetes CronJob).
+			hi = spec.max
+		}
 	}
 
 	if lo < spec.min || hi > spec.max {
