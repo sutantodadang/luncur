@@ -60,7 +60,7 @@ func newGateFixture(t *testing.T, done bool, pod corev1.Pod) gateFixture {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: ns, UID: types.UID("dep-uid"), Generation: 2,
 			Annotations: map[string]string{"deployment.kubernetes.io/revision": "2"}},
-		Spec: appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": "web"}}},
+		Spec:   appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": "web"}}},
 		Status: appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 2, UpdatedReplicas: 1, AvailableReplicas: 1},
 	}
 	if done {

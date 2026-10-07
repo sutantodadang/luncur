@@ -132,7 +132,7 @@ func TestPriorityClasses(t *testing.T) {
 		t.Fatalf("got %d classes", len(objs))
 	}
 	var batch struct {
-		Metadata struct{ Name string }
+		Metadata         struct{ Name string }
 		Value            int32
 		PreemptionPolicy string
 	}

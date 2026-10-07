@@ -282,7 +282,7 @@ func jobWithStatus(name string, status map[string]any) *unstructured.Unstructure
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "batch/v1", "kind": "Job",
 		"metadata": map[string]any{"name": name, "namespace": "luncur-system"},
-		"status":    status,
+		"status":   status,
 	}}
 }
 
@@ -1031,7 +1031,7 @@ func workflowObj(name, namespace string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "argoproj.io/v1alpha1", "kind": "Workflow",
 		"metadata": map[string]any{"name": name, "namespace": namespace},
-		"spec":      map[string]any{"entrypoint": "main"},
+		"spec":     map[string]any{"entrypoint": "main"},
 	}}
 }
 

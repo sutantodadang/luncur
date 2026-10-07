@@ -72,7 +72,7 @@ func (s *server) handleUINodes(w http.ResponseWriter, r *http.Request, u store.U
 
 	s.renderPage(w, r, "nodes.html", map[string]any{
 		"User": u, "Nodes": nodes, "Error": kubeErr,
-		"HasGPUKey": hasVastKey || hasNebiusKey,
+		"HasGPUKey":  hasVastKey || hasNebiusKey,
 		"HasVastKey": hasVastKey, "HasNebiusKey": hasNebiusKey,
 		"GPUInstances": rows, "GPUOffers": offers,
 		"GPUError": firstNonEmpty(gpuErr, r.URL.Query().Get("gpu_err")),

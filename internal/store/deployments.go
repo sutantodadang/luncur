@@ -33,7 +33,6 @@ const deploySelect = `SELECT d.id, d.app_id, d.seq, d.status, d.image_ref, d.log
   COALESCE(o.fail_reason, ''), COALESCE(o.ready_at, '')
   FROM deployments d LEFT JOIN deployment_outcomes o ON o.deploy_id = d.id`
 
-
 func scanDeployment(sc rowScanner) (Deployment, error) {
 	var d Deployment
 	var img, logp, rolledBackFrom sql.NullString

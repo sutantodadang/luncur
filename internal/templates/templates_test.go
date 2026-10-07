@@ -41,10 +41,13 @@ func TestCatalogParsesAndResolves(t *testing.T) {
 func TestValidateRejects(t *testing.T) {
 	base := Template{Name: "x1", Title: "X", Description: "d", App: App{Image: "x:1", Port: 80}}
 	for name, mut := range map[string]func(*Template){
-		"latest":      func(t *Template) { t.App.Image = "x:latest" },
-		"untagged":    func(t *Template) { t.App.Image = "x" },
-		"bad addon":   func(t *Template) { t.Env = map[string]string{"A": "${addon.db.host}"} },
-		"bad field":   func(t *Template) { t.Addons = []Addon{{Key: "db", Type: "postgres"}}; t.Env = map[string]string{"A": "${addon.db.nope}"} },
+		"latest":    func(t *Template) { t.App.Image = "x:latest" },
+		"untagged":  func(t *Template) { t.App.Image = "x" },
+		"bad addon": func(t *Template) { t.Env = map[string]string{"A": "${addon.db.host}"} },
+		"bad field": func(t *Template) {
+			t.Addons = []Addon{{Key: "db", Type: "postgres"}}
+			t.Env = map[string]string{"A": "${addon.db.nope}"}
+		},
 		"short rand":  func(t *Template) { t.Env = map[string]string{"A": "${random:2}"} },
 		"unknown":     func(t *Template) { t.Env = map[string]string{"A": "${foo}"} },
 		"addon type":  func(t *Template) { t.Addons = []Addon{{Key: "db", Type: "mysql"}} },

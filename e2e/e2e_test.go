@@ -75,7 +75,7 @@ func TestDeployRoundTrip(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	defer func() {
-		// 5. Cleanup: delete project (namespace should go away).
+		// Cleanup: delete project (namespace should go away).
 		if err := c.DeleteProject("e2e"); err != nil {
 			t.Logf("cleanup: delete project e2e: %v", err)
 		}
@@ -84,7 +84,8 @@ func TestDeployRoundTrip(t *testing.T) {
 	if _, err := c.CreateApp("e2e", "web", 80, "web", "", "", false, 0); err != nil {
 		t.Fatalf("create app: %v", err)
 	}
-	if _, err := c.Deploy("e2e", "web", "nginx:alpine"); err != nil {
+	res, err := c.Deploy("e2e", "web", "nginx:alpine")
+	if err != nil {
 		t.Fatalf("deploy nginx:alpine: %v", err)
 	}
 
@@ -99,5 +100,22 @@ func TestDeployRoundTrip(t *testing.T) {
 			t.Fatalf("app not ready after 3m: metrics=%+v err=%v", m, mErr)
 		}
 		time.Sleep(5 * time.Second)
+	}
+
+	// 5. The rollout gate marks the deploy live once its new pods serve
+	// (it may still be "deploying" for a moment after the pod is ready).
+	deadline = time.Now().Add(2 * time.Minute)
+	for {
+		d, dErr := c.GetDeploy("e2e", "web", res.DeploymentID)
+		if dErr == nil && d.Status == "live" {
+			break
+		}
+		if dErr == nil && d.Status == "failed" {
+			t.Fatalf("rollout gate failed the deploy: %s", d.FailReason)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("deploy never went live: %+v err=%v", d, dErr)
+		}
+		time.Sleep(2 * time.Second)
 	}
 }

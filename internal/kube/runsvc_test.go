@@ -37,7 +37,7 @@ func TestDeleteOrphanRunServicesAndOwnByJob(t *testing.T) {
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		gvrByKind["Service"]: "ServiceList", gvrByKind["Job"]: "JobList",
 	},
-		svcObj("train-run-1", "None", false), // leaked
+		svcObj("train-run-1", "None", false),                        // leaked
 		svcObj("train-run-2", "None", false), jobObj("train-run-2"), // live run
 		svcObj("train-run-3", "None", true), // owned: GC handles it
 		svcObj("web", "10.0.0.1", false),    // ordinary app Service

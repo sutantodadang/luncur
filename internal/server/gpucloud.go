@@ -138,7 +138,7 @@ func (s *server) storeNebiusCreds(c nebiusCreds) error {
 type errGPUUnconfigured struct{ err error }
 
 func (e *errGPUUnconfigured) Error() string { return e.err.Error() }
-func (e *errGPUUnconfigured) Unwrap() error  { return e.err }
+func (e *errGPUUnconfigured) Unwrap() error { return e.err }
 
 // gpuProvider resolves a configured client for name ("vastai" or "nebius"),
 // or an error identifying what's missing/unknown.
