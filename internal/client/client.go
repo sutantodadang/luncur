@@ -1979,3 +1979,43 @@ func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
 }
+
+// InsightsReport is the cost / right-sizing report.
+type InsightsReport struct {
+	Prices struct {
+		Currency string  `json:"currency"`
+		CPUCore  float64 `json:"cpu_core_month"`
+		MemGB    float64 `json:"memory_gb_month"`
+	} `json:"prices"`
+	MetricsOK    bool    `json:"metrics_available"`
+	MonthlyTotal float64 `json:"monthly_total"`
+	SavingsTotal float64 `json:"monthly_savings_total"`
+	Apps         []struct {
+		Project  string  `json:"project"`
+		Env      string  `json:"env"`
+		App      string  `json:"app"`
+		Replicas int     `json:"replicas"`
+		CPUReq   int64   `json:"cpu_request_millicores"`
+		MemReq   int64   `json:"memory_request_mib"`
+		CPUP95   int64   `json:"cpu_p95_millicores"`
+		MemMax   int64   `json:"memory_max_mib"`
+		Hours    int     `json:"hours"`
+		RecCPU   int64   `json:"recommended_cpu_millicores"`
+		RecMem   int64   `json:"recommended_memory_mib"`
+		Flag     string  `json:"flag"`
+		Monthly  float64 `json:"monthly_cost"`
+		Savings  float64 `json:"monthly_savings"`
+		ScaleCmd string  `json:"scale_command"`
+	} `json:"apps"`
+}
+
+// Insights fetches the report (project "" = every project you can see).
+func (c *Client) Insights(project string) (InsightsReport, error) {
+	var out InsightsReport
+	path := "/v1/insights"
+	if project != "" {
+		path += "?project=" + url.QueryEscape(project)
+	}
+	err := c.do("GET", path, nil, &out)
+	return out, err
+}

@@ -121,6 +121,9 @@ type server struct {
 	statusLimiter *rateLimiter
 	statusCache   statusCache
 
+	// usage folds monitor samples into hourly aggregates (insights.go).
+	usage usageAccumulator
+
 	// lastRegistryGC tracks the last completed weekly registry GC sweep,
 	// in memory only — StartRegistryGC uses it to decide when to run again.
 	lastRegistryGC time.Time
@@ -347,6 +350,7 @@ func (s *server) handler() http.Handler {
 	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/rollout", s.authed(s.handleGetRollout))
 	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/uptime", s.authed(s.handleGetUptime))
 	mux.HandleFunc("GET /v1/templates", s.authed(s.handleListTemplates))
+	mux.HandleFunc("GET /v1/insights", s.authed(s.handleInsights))
 	routeEnv(mux, "POST /v1/projects/{project}/templates/{name}/install", s.authed(s.handleInstallTemplate))
 	routeEnv(mux, "PUT /v1/projects/{project}/apps/{app}/uptime", s.authed(s.handlePutUptime))
 	mux.HandleFunc("GET /v1/projects/{project}/incidents", s.authed(s.handleListIncidents))

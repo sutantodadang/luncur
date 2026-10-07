@@ -1095,6 +1095,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"Policy":          s.appPolicyView(a),
 		"Rollout":         s.uiRollout(a, tab),
 		"Uptime":          s.uiUptime(p, env, a, tab),
+		"Insight":         s.uiInsight(p, env, a, tab),
 		"ErrorCard":       errorCard,
 		"LaunchSequence":  launch,
 	}

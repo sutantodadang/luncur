@@ -188,6 +188,8 @@ var registry = []Tool{
 		Path: projectPrefix + "templates/{name}/install", EnvScoped: true, Mutating: true,
 		Params: []Param{pProject, pathP("name", "template name from list_templates"), bodyS("app_name", "app name (default: the template name)", false)},
 		CLI:    "luncur template install {name} --project {project} --env {env}"},
+	{Name: "usage_insights", Description: "Cost estimates and right-sizing: each app's requests vs observed CPU p95 / memory peak, recommended requests, over-provisioned or at-risk flags, monthly cost and potential savings.", Method: "GET",
+		Path: "/v1/insights", Params: []Param{{Name: "project", Type: "string", In: "query", Description: "limit to one project"}}, CLI: "luncur insights"},
 	{Name: "cordon_node", Description: "Mark a node unschedulable (running pods stay).", Method: "POST",
 		Path: "/v1/nodes/{name}/cordon", Admin: true, Mutating: true, Params: []Param{pathP("name", "node name")}, CLI: "luncur node cordon {name}"},
 	{Name: "uncordon_node", Description: "Mark a node schedulable again.", Method: "POST",

@@ -58,6 +58,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(statusPageCmd())
 	root.AddCommand(incidentCmd())
 	root.AddCommand(templateCmd())
+	root.AddCommand(insightsCmd())
 	root.AddCommand(tokenCmd())
 	root.AddCommand(inviteCmd())
 	root.AddCommand(addonCmd())

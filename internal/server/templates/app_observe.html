@@ -132,6 +132,18 @@
 </div>
 {{end}}
 
+{{with .Insight}}
+<div class="card mb-6" id="rightsize">
+<h2>Right-size</h2>
+{{if .RecCPU}}
+<p class="font-mono text-xs">requests {{.CPURequest}}m &middot; {{.MemRequest}}Mi per pod &middot; observed p95 {{.CPUP95Milli}}m &middot; peak {{.MemMaxMB}}Mi ({{.Hours}}h)</p>
+<p class="mt-1 text-sm">{{if eq .Flag "over"}}<span class="chip chip-warn">over-provisioned</span> recommend {{.RecCPU}}m &middot; {{.RecMem}}Mi{{else if eq .Flag "risk"}}<span class="chip chip-bad">at risk</span> memory peak is near the {{.MemLimit}}Mi limit — recommend {{.RecMem}}Mi{{else}}<span class="chip chip-ok">right-sized</span>{{end}}</p>
+{{if .ScaleCmd}}<div class="cli-echo">$ <b>{{.ScaleCmd}}</b></div>{{end}}
+{{else}}<p class="text-sm text-mut">Collecting usage — recommendations appear after 6 hours of metrics ({{.Hours}}h so far).</p>{{end}}
+<p class="mt-2 text-xs"><a class="text-mut hover:text-inkhi" href="/ui/insights?project={{$.Project.Name}}">all apps &rarr;</a></p>
+</div>
+{{end}}
+
 {{if and (not .App.Ejected) (eq .App.Kind "web")}}
 <div class="card">
 <h2>Health check</h2>
