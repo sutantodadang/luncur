@@ -21,6 +21,7 @@ var (
 func deployCmd() *cobra.Command {
 	var project, image, environment string
 	var envs []string
+	var noWait bool
 	cmd := &cobra.Command{
 		Use:   "deploy <app>",
 		Short: "Deploy an app from an image or from the current directory's source",
@@ -50,8 +51,7 @@ func deployCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				cmd.Printf("deployed %s → %s (deployment #%d)\n", args[0], result.URL, result.Seq)
-				return nil
+				return waitRollout(cmd, c, project, args[0], result, noWait, "deployed")
 			}
 
 			return deployFromSource(cmd, c, project, args[0])
@@ -64,7 +64,58 @@ func deployCmd() *cobra.Command {
 	// --env is already the env-var flag above; the deployment environment
 	// selector is --environment here (it is --env on other commands).
 	cmd.Flags().StringVar(&environment, "environment", "", "deployment environment (default: the project's default env)")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return once the image is applied instead of waiting for the rollout")
 	return cmd
+}
+
+// waitRollout follows a gated deploy (status "deploying") until the rollout
+// gate marks it live or failed, printing new-pod progress. A failed rollout
+// prints the 3-line error (what broke · why · next command).
+func waitRollout(cmd *cobra.Command, c *client.Client, project, app string, res client.DeployResult, noWait bool, verb string) error {
+	if res.Status != "deploying" || noWait {
+		if res.Status == "deploying" {
+			cmd.Printf("%s %s: deployment #%d rolling out (not waiting)\n", verb, app, res.Seq)
+			return nil
+		}
+		cmd.Printf("%s %s → %s (deployment #%d)\n", verb, app, res.URL, res.Seq)
+		return nil
+	}
+	cmd.Printf("deployment #%d rolling out…\n", res.Seq)
+	deadline := time.Now().Add(deployPollTimeout)
+	lastProgress := ""
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for deployment #%d to roll out", res.Seq)
+		}
+		time.Sleep(deployPollInterval)
+		d, err := c.GetDeploy(project, app, res.DeploymentID)
+		if err != nil {
+			return err
+		}
+		if d.Want > 0 {
+			if p := fmt.Sprintf("ready %d/%d", d.Ready, d.Want); p != lastProgress {
+				cmd.Printf("  %s\n", p)
+				lastProgress = p
+			}
+		}
+		switch d.Status {
+		case "live":
+			cmd.Printf("%s %s → %s (deployment #%d)\n", verb, app, d.URL, res.Seq)
+			return nil
+		case "failed":
+			return rolloutFailure(cmd, project, app, res.Seq, d)
+		}
+	}
+}
+
+// rolloutFailure prints a gate failure in the 3-line error contract.
+func rolloutFailure(cmd *cobra.Command, project, app string, seq int64, d client.DeployResult) error {
+	cmd.Printf("✗ deployment #%d failed: %s\n", seq, d.FailReason)
+	if d.Why != "" {
+		cmd.Printf("  why:  %s\n", d.Why)
+	}
+	cmd.Printf("  next: luncur logs %s --project %s\n", app, project)
+	return fmt.Errorf("deploy failed")
 }
 
 // parseEnvPairs turns []string{"KEY=VALUE"} into a map, erroring on any pair
@@ -97,6 +148,7 @@ func sortedKeys(m map[string]string) []string {
 // app" — e.g. to pick up an env change or clear bad in-memory state.
 func redeployCmd() *cobra.Command {
 	var project string
+	var noWait bool
 	cmd := &cobra.Command{
 		Use:   "redeploy <app>",
 		Short: "Re-roll an app's current release (rebuild for git apps; re-apply the latest image otherwise)",
@@ -114,12 +166,12 @@ func redeployCmd() *cobra.Command {
 				cmd.Printf("redeploy started for %s (deployment #%d, building)\n", args[0], result.Seq)
 				return nil
 			}
-			cmd.Printf("redeployed %s → %s (deployment #%d)\n", args[0], result.URL, result.Seq)
-			return nil
+			return waitRollout(cmd, c, project, args[0], result, noWait, "redeployed")
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project name")
 	cmd.MarkFlagRequired("project")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return once applied instead of waiting for the rollout")
 	return cmd
 }
 
@@ -158,6 +210,10 @@ func deployFromSource(cmd *cobra.Command, c *client.Client, project, app string)
 			cmd.Printf("deployed %s → %s (deployment #%d)\n", app, d.URL, res.Seq)
 			return nil
 		case "failed":
+			if d.FailReason != "" {
+				// The build succeeded; the rollout gate failed the deploy.
+				return rolloutFailure(cmd, project, app, res.Seq, d)
+			}
 			logs, logErr := c.DeployLogs(project, app, res.DeploymentID)
 			if logErr == nil {
 				cmd.Print(tailLines(string(logs), 40))

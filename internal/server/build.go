@@ -318,8 +318,8 @@ func (s *server) runBuild(ctx context.Context, p store.Project, env store.Enviro
 	return nil
 }
 
-// finishDeploy applies a built image's manifests to the cluster and marks
-// the deployment live: the shared tail end of both runBuild's
+// finishDeploy applies a built image's manifests to the cluster and hands
+// the deployment to the rollout gate (afterApply): the shared tail end of both runBuild's
 // Job-succeeded path and reconcileUnfinished's resume path (a 'deploying'
 // deployment already has image_ref set — re-setting it here is harmless).
 func (s *server) finishDeploy(ctx context.Context, p store.Project, env store.Environment, a store.App, d store.Deployment, imageRef string) error {
@@ -340,22 +340,6 @@ func (s *server) finishDeploy(ctx context.Context, p store.Project, env store.En
 	if err := s.kube.Apply(ctx, env.Namespace, rendered.Objects); err != nil {
 		return err
 	}
-	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
-		log.Printf("mark deploy %s live (kube apply already succeeded): %v", d.ID, err)
-	}
-	// See applyImageDeploy's identical call: every successful deploy touches
-	// its environment's LastActiveAt so an actively-deployed preview
-	// survives reapPreviews' idle-TTL sweep.
-	if err := s.st.TouchEnvironment(env.ID); err != nil {
-		log.Printf("touch environment %s after deploy: %v", env.Name, err)
-	}
-	// A successful rollout is the natural moment to clear eviction corpses:
-	// the old ReplicaSet's Failed pods are pure noise once the new one is up.
-	if n, err := s.kube.DeleteFailedPods(ctx, env.Namespace); err != nil {
-		log.Printf("gc failed pods after deploy %s: %v", d.ID, err)
-	} else if n > 0 {
-		log.Printf("deploy %s: deleted %d dead pod(s) in %s", d.ID, n, env.Namespace)
-	}
-	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: s.appURLForEnv(a, env.Name, p.DefaultEnv)})
+	s.afterApply(ctx, p, env, a, d)
 	return nil
 }

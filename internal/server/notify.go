@@ -15,7 +15,7 @@ const errTailLimit = 300
 
 // defaultNotifyEvents is the notify_events value used when the setting is
 // unset.
-const defaultNotifyEvents = "deploy_failed,cert_failed,app_unhealthy,backup_failed"
+const defaultNotifyEvents = "deploy_failed,deploy_rolled_back,cert_failed,app_unhealthy,app_down,backup_failed"
 
 // notifyEventNames are the valid values inside notify_events (CSV).
 var notifyEventNames = map[string]bool{
@@ -26,6 +26,12 @@ var notifyEventNames = map[string]bool{
 	"pipeline":       true,
 	"app_unhealthy":  true,
 	"backup_failed":  true,
+	// deploy_rolled_back: the rollout gate failed a deploy and auto-rollback
+	// restored the previous one. app_down/app_recovered: the uptime prober
+	// opened/resolved an incident.
+	"deploy_rolled_back": true,
+	"app_down":           true,
+	"app_recovered":      true,
 }
 
 // notifyFormats are the valid values for notify_format.
@@ -67,7 +73,7 @@ func parseNotifyEvents(csv string) map[string]bool {
 // notifyEvent describes one deploy/cert/pipeline/health outcome to report to
 // the configured notification webhook (see the notify_* settings).
 type notifyEvent struct {
-	Event    string // deploy_success|deploy_failed|cert_issued|cert_failed|pipeline|app_unhealthy|backup_failed
+	Event    string // see notifyEventNames
 	Project  string
 	App      string
 	DeployID string // "" for cert/pipeline events — internal id, kept for API consumers
@@ -259,6 +265,12 @@ func notifyStatus(event string) string {
 		return "issued"
 	case "pipeline":
 		return "info"
+	case "deploy_rolled_back":
+		return "rolled_back"
+	case "app_recovered":
+		return "recovered"
+	case "app_down":
+		return "down"
 	default:
 		return "failed"
 	}
@@ -290,6 +302,12 @@ func notifyMessageBase(ev notifyEvent) string {
 		return fmt.Sprintf("🚨 %s/%s unhealthy: %s", ev.Project, ev.App, ev.Err)
 	case "backup_failed":
 		return fmt.Sprintf("💾 scheduled backup failed: %s", ev.Err)
+	case "deploy_rolled_back":
+		return fmt.Sprintf("↩️ %s/%s rolled back: %s", ev.Project, ev.App, ev.Message)
+	case "app_down":
+		return fmt.Sprintf("🔴 %s/%s is down: %s", ev.Project, ev.App, ev.Err)
+	case "app_recovered":
+		return fmt.Sprintf("🟢 %s/%s recovered: %s", ev.Project, ev.App, ev.Message)
 	default:
 		return fmt.Sprintf("%s: %s/%s", ev.Event, ev.Project, ev.App)
 	}

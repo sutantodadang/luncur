@@ -50,6 +50,9 @@ func (s *server) copyEnvSetup(ctx context.Context, source, target store.Environm
 		if err := s.applyAppSetup(tgt.ID, src); err != nil {
 			return sum, fmt.Errorf("app %s: %w", src.Name, err)
 		}
+		if err := s.st.CopyAppPolicy(src.ID, tgt.ID); err != nil {
+			return sum, fmt.Errorf("app %s: copy rollout policy: %w", src.Name, err)
+		}
 		if created {
 			sum.AppsCreated++
 		} else {

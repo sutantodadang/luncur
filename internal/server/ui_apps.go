@@ -468,7 +468,11 @@ type uiDeployRow struct {
 	ImageTag          string
 	CreatedAt         string
 	RolledBackFromSeq int64 // 0 = not a rollback (or source fell out of history)
-	Actor             string
+	// AutoRollback marks a rollback the rollout gate made (no user).
+	AutoRollback bool
+	Actor        string
+	// FailReason is the rollout gate's one-line verdict on a failed deploy.
+	FailReason string
 }
 
 // uiDeployRows builds the Deploys card's view model from ListDeployments'
@@ -527,6 +531,8 @@ func uiDeployRows(history []store.Deployment, limit int) []uiDeployRow {
 		rows = append(rows, uiDeployRow{
 			ID: d.ID, Seq: d.Seq, Status: d.Status, ImageRef: d.ImageRef, ImageTag: tag,
 			CreatedAt: d.CreatedAt, RolledBackFromSeq: seqByID[d.RolledBackFrom], Actor: "-",
+			AutoRollback: d.RolledBackFrom != "" && !d.CreatedBy.Valid,
+			FailReason:   d.FailReason,
 		})
 	}
 	return rows
@@ -648,6 +654,9 @@ type uiErrorCard struct {
 	Seq   int64
 	Stage string
 	Why   string
+	// Reason is the rollout gate's verdict when the deploy failed after a
+	// successful apply ("crash-looping: Error (4 restarts)").
+	Reason string
 }
 
 // lastLines returns at most n trailing lines of s, joined back with "\n".
@@ -868,12 +877,13 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 	status := "never_deployed"
 	latestID := ""
 	var latestSeq int64
-	var latestImageRef string
+	var latestImageRef, latestFailReason string
 	if d, err := s.st.LatestDeployment(a.ID); err == nil {
 		status = d.Status
 		latestID = d.ID
 		latestSeq = d.Seq
 		latestImageRef = d.ImageRef
+		latestFailReason = d.FailReason
 	} else if !errors.Is(err, store.ErrNotFound) {
 		log.Printf("ui app latest deployment: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -969,7 +979,9 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 	// one tab that renders it so a failed deploy sitting on, say, the Data
 	// tab doesn't pay for a log read it won't show.
 	var errorCard *uiErrorCard
-	if tab == tabOverview && status == "failed" {
+	if tab == tabOverview && status == "failed" && latestFailReason != "" {
+		errorCard = &uiErrorCard{Seq: latestSeq, Stage: "deploying", Reason: latestFailReason, Why: failReasonWhy(latestFailReason)}
+	} else if tab == tabOverview && status == "failed" {
 		why := ""
 		if s.src != nil {
 			if logBytes, err := s.src.ReadLog(latestID); err == nil {
@@ -1077,6 +1089,8 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"Env": uiEnvChipFrom(env), "Envs": envs,
 		"Tab": string(tab), "TabItems": uiTabItems(a.Kind, tab),
 		"PipelineStages": uiPipelineStages(status, latestImageRef),
+		"RolloutProgress": s.rolloutProgress(status, latestID),
+		"Policy":          s.appPolicyView(a),
 		"ErrorCard":      errorCard,
 		"LaunchSequence": launch,
 	}

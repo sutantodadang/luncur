@@ -541,6 +541,9 @@ func (s *server) clonePreviewApp(env store.Environment, base store.App, branch s
 			return fmt.Errorf("set health path: %w", err)
 		}
 	}
+	if err := s.st.CopyAppPolicy(base.ID, a.ID); err != nil {
+		return fmt.Errorf("copy rollout policy: %w", err)
+	}
 	if base.Internal {
 		if err := s.st.SetInternal(a.ID, true); err != nil {
 			return fmt.Errorf("set internal: %w", err)

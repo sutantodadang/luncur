@@ -269,6 +269,12 @@ type DeployResult struct {
 	Seq          int64  `json:"seq"`
 	Status       string `json:"status"`
 	URL          string `json:"url"`
+	// FailReason/Why are the rollout gate's verdict on a failed deploy;
+	// Ready/Want its new-pod progress while deploying.
+	FailReason string `json:"fail_reason,omitempty"`
+	Why        string `json:"why,omitempty"`
+	Ready      int    `json:"ready,omitempty"`
+	Want       int    `json:"want,omitempty"`
 }
 
 // DeployInfo is one row of an app's deploy history, as returned by
@@ -281,6 +287,7 @@ type DeployInfo struct {
 	Image          string `json:"image"`
 	CreatedAt      string `json:"created_at"`
 	RolledBackFrom string `json:"rolled_back_from,omitempty"`
+	FailReason     string `json:"fail_reason,omitempty"`
 }
 
 func (c *Client) CreateProject(name string) (ProjectInfo, error) {
@@ -878,14 +885,11 @@ func (c *Client) SetSetting(key, value string) error {
 // Rollback redeploys a previous deployment's image (deployID == "" auto-picks
 // the previous live deployment) and returns the new deployment's per-app
 // seq (deploy number) — the human-facing number, not the internal id.
-func (c *Client) Rollback(project, app string, deployID string) (int64, error) {
-	var out struct {
-		DeploymentID string `json:"deployment_id"`
-		Seq          int64  `json:"seq"`
-	}
+func (c *Client) Rollback(project, app string, deployID string) (DeployResult, error) {
+	var out DeployResult
 	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/rollback",
 		map[string]string{"deploy_id": deployID}, &out)
-	return out.Seq, err
+	return out, err
 }
 
 // S3Config is a project's external S3 configuration. SecretKey is only
@@ -1724,4 +1728,32 @@ func (c *Client) CreatePreview(project, branch, from string) (PreviewInfo, error
 func (c *Client) DeletePreview(project, name string) error {
 	return c.do("DELETE",
 		"/v1/projects/"+url.PathEscape(project)+"/previews/"+url.PathEscape(name), nil, nil)
+}
+
+// AppPolicy is an app's reliability and rollout policy.
+type AppPolicy struct {
+	AutoRollback     bool   `json:"auto_rollback"`
+	RolloutTimeout   int    `json:"rollout_timeout"`
+	Probe            string `json:"probe"`
+	Security         string `json:"security"`
+	Strategy         string `json:"strategy"`
+	CanarySteps      []int  `json:"canary_steps"`
+	CanaryInterval   int    `json:"canary_interval"`
+	CanaryMinSuccess int    `json:"canary_min_success"`
+	BlueGreenKeep    int    `json:"bluegreen_keep"`
+}
+
+// GetPolicy fetches the app's policy.
+func (c *Client) GetPolicy(project, app string) (AppPolicy, error) {
+	var out AppPolicy
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/policy", nil, &out)
+	return out, err
+}
+
+// SetPolicy applies a partial policy update (only the given keys change)
+// and returns the resulting policy.
+func (c *Client) SetPolicy(project, app string, patch map[string]any) (AppPolicy, error) {
+	var out AppPolicy
+	err := c.do("PUT", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/policy", patch, &out)
+	return out, err
 }

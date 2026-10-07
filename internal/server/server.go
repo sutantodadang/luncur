@@ -324,6 +324,8 @@ func (s *server) handler() http.Handler {
 	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/scale", s.authed(s.handleScaleApp))
 	routeEnv(mux, "PUT /v1/projects/{project}/apps/{app}/autoscale", s.authed(s.handleAutoscaleApp))
 	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/health", s.authed(s.handleSetHealth))
+	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/policy", s.authed(s.handleGetPolicy))
+	routeEnv(mux, "PUT /v1/projects/{project}/apps/{app}/policy", s.authed(s.handlePutPolicy))
 	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookEnable))
 	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookShow))
 	routeEnv(mux, "DELETE /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookDisable))

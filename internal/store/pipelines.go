@@ -408,6 +408,13 @@ func (s *Store) FinishStep(stepID, state, detail string) error {
 	return nil
 }
 
+// SetStepDetail updates a running step's detail without finishing it (a
+// deploy step waiting on the rollout gate records its deploy id here).
+func (s *Store) SetStepDetail(stepID, detail string) error {
+	_, err := s.db.Exec(`UPDATE pipeline_run_steps SET detail = ? WHERE id = ? AND state = 'running'`, detail, stepID)
+	return err
+}
+
 func (s *Store) getRunStep(stepID string) (PipelineRunStep, error) {
 	rows, err := s.db.Query(`SELECT `+pipelineRunStepCols+` FROM pipeline_run_steps WHERE id = ?`, stepID)
 	if err != nil {

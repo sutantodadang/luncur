@@ -16,8 +16,8 @@
 <h2>Deploy history</h2>
 <table class="tbl"><tr><th>#</th><th>Status</th><th>Image</th><th>Actor</th><th>When</th><th></th></tr>
 {{range .Deploys}}<tr id="deploy-{{.Seq}}">
-  <td>{{.Seq}}</td><td><span class="status-{{.Status}}">{{.Status}}</span></td>
-  <td><code class="font-mono text-xs" title="{{.ImageRef}}">{{.ImageTag}}</code>{{if .RolledBackFromSeq}} <em>(rollback of #{{.RolledBackFromSeq}})</em>{{end}}</td>
+  <td>{{.Seq}}</td><td><span class="status-{{.Status}}">{{.Status}}</span>{{if .FailReason}}<div class="mt-1 max-w-xs font-mono text-[11px] text-fail" title="{{.FailReason}}">{{.FailReason}}</div>{{end}}</td>
+  <td><code class="font-mono text-xs" title="{{.ImageRef}}">{{.ImageTag}}</code>{{if .RolledBackFromSeq}} <em>({{if .AutoRollback}}auto-rollback{{else}}rollback{{end}} of #{{.RolledBackFromSeq}})</em>{{end}}</td>
   <td class="text-xs text-mut">{{.Actor}}</td>
   <td class="text-xs text-mut">{{.CreatedAt}}</td>
   <td class="flex items-center gap-2"><a class="text-xs text-mut hover:text-signal" href="/v1/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/deploys/{{.ID}}/logs" target="_blank" rel="noopener">view log</a>{{if and $.AIEnabled (eq .Status "failed")}}

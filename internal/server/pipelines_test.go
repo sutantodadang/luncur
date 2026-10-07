@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -1404,5 +1405,40 @@ func TestPipelineWebhookTriggerNotForbidGated(t *testing.T) {
 	}
 	if len(runs) != 2 {
 		t.Fatalf("runs = %+v, want 2 (webhook not Forbid-gated)", runs)
+	}
+}
+
+// A deploy step whose deploy is still rolling out stays running across
+// ticks and finishes with the rollout gate's verdict.
+func TestPipelineDeployStepWaitsForRolloutGate(t *testing.T) {
+	t.Parallel()
+	s := pipelineTestServer(t, nil, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	a := pipelineSeedApp(t, s.st, p.ID, "api", "web", "api:1")
+	pl := pipelineSeedPipeline(t, s.st, p.ID, "pipe")
+	run := pipelineSeedRun(t, s.st, pl, []pipeline.Step{{Name: "d", Kind: "deploy", Deploy: "api"}})
+	row := pipelineFindStep(t, s.st, run.ID, "d")
+	if err := s.st.MarkStepRunning(row.ID, nil, 1); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.st.CreateDeployment(a.ID, "deploying", "api:2", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.SetStepDetail(row.ID, pipelineDeployWaitPrefix+d.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	s.pipelineTick(context.Background())
+	if got := pipelineFindStep(t, s.st, run.ID, "d"); got.State != "running" {
+		t.Fatalf("step while deploying = %+v, want running", got)
+	}
+
+	s.st.SetDeploymentStatus(d.ID, "failed")
+	s.st.SetDeployFailReason(d.ID, "crash-looping: Error (3 restarts)")
+	s.pipelineTick(context.Background())
+	got := pipelineFindStep(t, s.st, run.ID, "d")
+	if got.State != "failed" || !strings.Contains(got.Detail, "crash-looping") {
+		t.Fatalf("step after gate failure = %+v", got)
 	}
 }
