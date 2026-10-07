@@ -98,14 +98,7 @@ func collectKeys(v any) []string {
 }
 
 func (s *Store) SetOverride(appID int64, kind, patchJSON string) error {
-	if !overridableKinds[kind] {
-		return validationErrorf("unsupported kind %q (Deployment, Service, Ingress, or CronJob)", kind)
-	}
-	var obj map[string]any
-	if err := json.Unmarshal([]byte(patchJSON), &obj); err != nil || obj == nil {
-		return validationErrorf("override patch must be a JSON object (got %q): %v", patchJSON, err)
-	}
-	if err := rejectDangerousOverride(kind, obj); err != nil {
+	if err := ValidateOverride(kind, patchJSON); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(
@@ -115,6 +108,20 @@ func (s *Store) SetOverride(appID int64, kind, patchJSON string) error {
 		appID, kind, patchJSON,
 	)
 	return err
+}
+
+// ValidateOverride applies SetOverride's checks without storing anything:
+// a supported kind, a JSON-object patch, and none of the fields that would
+// escape the app's boundary (see rejectDangerousOverride).
+func ValidateOverride(kind, patchJSON string) error {
+	if !overridableKinds[kind] {
+		return validationErrorf("unsupported kind %q (Deployment, Service, Ingress, or CronJob)", kind)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(patchJSON), &obj); err != nil || obj == nil {
+		return validationErrorf("override patch must be a JSON object (got %q): %v", patchJSON, err)
+	}
+	return rejectDangerousOverride(kind, obj)
 }
 
 func (s *Store) Overrides(appID int64) (map[string]string, error) {

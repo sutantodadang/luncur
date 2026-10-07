@@ -61,6 +61,16 @@ var settingGroups = []settingGroup{
 		{Key: "notify_email"},
 		{Key: "notify_events"},
 	}},
+	{Title: "AI assistant", Fields: []settingField{
+		{Key: "ai_provider", Options: []string{"off", "claude", "openai"}},
+		{Key: "ai_api_key", Sealed: true},
+		{Key: "ai_model"},
+		{Key: "ai_base_url"},
+		{Key: "ai_effort", Options: []string{"medium", "low", "high", "xhigh", "max"}},
+		{Key: "ai_notify", Options: []string{"off", "on"}},
+		{Key: "ai_daily_token_budget"},
+		{Key: "ai_max_steps"},
+	}},
 	{Title: "Backups", Fields: []settingField{
 		{Key: "backup_s3_endpoint"},
 		{Key: "backup_s3_bucket"},

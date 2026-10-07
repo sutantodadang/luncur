@@ -124,6 +124,23 @@ var settableKeys = map[string]func(string) bool{
 	// metrics_token: bearer token gating GET /metrics/prometheus. Sealed at
 	// rest like backup_s3_secret_key; unset means the endpoint 404s.
 	"metrics_token": func(v string) bool { return v != "" },
+	// AI assistant (ai.go, docs/ai/assistant.md).
+	"ai_provider": func(v string) bool { return v == "claude" || v == "openai" || v == "off" },
+	"ai_model":    func(v string) bool { return v != "" },
+	"ai_base_url": func(v string) bool {
+		return strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "app:")
+	},
+	"ai_api_key": func(v string) bool { return v != "" },
+	"ai_effort":  func(v string) bool { return aiEfforts[v] },
+	"ai_notify":  func(v string) bool { return v == "on" || v == "off" },
+	"ai_daily_token_budget": func(v string) bool {
+		n, err := strconv.ParseInt(v, 10, 64)
+		return err == nil && n >= 0
+	},
+	"ai_max_steps": func(v string) bool {
+		n, err := strconv.Atoi(v)
+		return err == nil && n >= 1 && n <= 100
+	},
 }
 
 // sealedKeys are write-only secrets: sealed at rest with the install
@@ -139,6 +156,7 @@ var sealedKeys = map[string]bool{
 	"dns_digitalocean_token":  true,
 	"notify_url":              true,
 	"metrics_token":           true,
+	"ai_api_key":              true,
 }
 
 func (s *server) handleGetSetting(w http.ResponseWriter, r *http.Request, _ store.User) {

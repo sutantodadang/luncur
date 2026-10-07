@@ -332,3 +332,16 @@ CREATE INDEX IF NOT EXISTS idx_project_members_user ON project_members(user_id);
 -- PRIMARY KEY (addon_id, app_id) covers addon_id only; attachments are read
 -- per app when building an app's env.
 CREATE INDEX IF NOT EXISTS idx_addon_attachments_app ON addon_attachments(app_id);
+
+-- Token usage of the built-in AI assistant, one row per (UTC day, user,
+-- workflow), upserted after every model call. Feeds the ai_daily_token_budget
+-- check and `luncur ai usage`. user_id 0 = system (notification summaries).
+CREATE TABLE IF NOT EXISTS ai_usage (
+  day           TEXT NOT NULL,
+  user_id       INTEGER NOT NULL,
+  workflow      TEXT NOT NULL,
+  input_tokens  INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  requests      INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, user_id, workflow)
+);

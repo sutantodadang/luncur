@@ -44,6 +44,18 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 // authed wraps a handler with bearer-token authentication.
 func (s *server) authed(next func(http.ResponseWriter, *http.Request, store.User)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// An in-process call the AI assistant makes on a user's behalf
+		// (aiCallTool): the identity was verified when the user reached the
+		// assistant, and only server code can plant this context value. The
+		// audit row carries the user plus a "via ai" marker.
+		if a, ok := r.Context().Value(aiActorKey{}).(*aiActor); ok {
+			if info := auditFrom(r.Context()); info != nil {
+				info.Email = a.user.Email
+				info.Pattern = r.Pattern + " (via ai)"
+			}
+			next(w, r, a.user)
+			return
+		}
 		const prefix = "Bearer "
 		var tok string
 		if h := r.Header.Get("Authorization"); len(h) > len(prefix) && h[:len(prefix)] == prefix {

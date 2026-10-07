@@ -70,6 +70,8 @@ func newRoot() *cobra.Command {
 	root.AddCommand(argoCmd())
 	root.AddCommand(accountCmd())
 	root.AddCommand(forwardCmd())
+	root.AddCommand(aiCmd())
+	root.AddCommand(mcpCmd())
 	return root
 }
 

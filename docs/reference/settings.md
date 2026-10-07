@@ -38,5 +38,13 @@ where each one is explained in context.
 | `train_gang_timeout_minutes` | `10` | How long a multi-node training run waits for all pods to schedule together before the Job is torn down; `0` disables the guard | [Training](../ml/training.md) |
 | `pipeline_engine` | `native` | Default orchestrator engine for pipeline runs when a pipeline doesn't pin its own `engine`: `native` or `argo` (`luncur argo install` first) | [Pipelines](../ml/pipelines.md) |
 | `metrics_token` | unset (write-only) | Bearer token gating `GET /metrics/prometheus`; unset 404s the endpoint | — |
+| `ai_provider` | unset (off) | `claude`, `openai` (any OpenAI-compatible endpoint, incl. a luncur model app), or `off` | [AI assistant](../ai/assistant.md) |
+| `ai_api_key` | unset (write-only) | Provider API key, sealed at rest | [AI assistant](../ai/assistant.md) |
+| `ai_model` | `claude-opus-5-5` (claude) | Model id | [AI assistant](../ai/assistant.md) |
+| `ai_base_url` | provider default | `https://…/v1`, or `app:<project>/<app>` for a luncur model app | [AI assistant](../ai/assistant.md) |
+| `ai_effort` | `medium` | `low`, `medium`, `high`, `xhigh`, `max` (chat and generation) | [AI assistant](../ai/assistant.md) |
+| `ai_notify` | `off` | `on` appends an AI diagnosis to `deploy_failed` / `app_unhealthy` notifications | [AI assistant](../ai/assistant.md) |
+| `ai_daily_token_budget` | `2000000` | Install-wide tokens per UTC day; `0` = unlimited | [AI assistant](../ai/assistant.md) |
+| `ai_max_steps` | `20` | Model calls per assistant request (1–100) | [AI assistant](../ai/assistant.md) |
 
 **Related:** [Audit log](../operations/audit.md) · [Backups & restore](../guides/backups.md) · [Domains & TLS](../guides/domains-and-tls.md)

@@ -1,0 +1,55 @@
+{{/* AI assistant fragments (ui_ai.go). */}}
+
+{{/* aiexplain: the DESIGN.md error contract — what broke · most likely why ·
+     the next command (copyable CLI-echo). */}}
+{{define "aiexplain"}}
+{{if .Error}}<p class="err">{{.Error}}</p>{{else}}
+<div class="card mt-3 border-fail text-[13px]">
+<p class="seclabel mb-2">ai diagnosis{{if .D.Confidence}} &middot; {{.D.Confidence}} confidence{{end}}</p>
+<p class="mb-1 text-inkhi">{{.D.Broke}}</p>
+<p class="mb-2 text-ink">{{.D.Why}}</p>
+<div class="flex flex-wrap items-center gap-2">
+  <code class="font-mono text-xs text-inkhi">$ {{.D.NextCommand}}</code>
+  <button type="button" class="btn-ghost" onclick="navigator.clipboard&&navigator.clipboard.writeText(this.dataset.cmd);this.textContent='copied'" data-cmd="{{.D.NextCommand}}">copy</button>
+</div>
+</div>
+{{end}}
+{{end}}
+
+
+{{/* aitranscript: the assistant conversation; each action the assistant
+     took renders as its CLI-echo, so the session reads as a runbook. */}}
+{{define "aitranscript"}}
+<div id="ai-transcript">
+{{/* Associated with the ask form by id, so each re-render carries the
+     current conversation into the next submit. */}}
+<input type="hidden" name="conversation_id" value="{{.ConversationID}}" form="ai-ask-form">
+{{if not .Turns}}<p class="text-sm text-mut">No messages yet.</p>{{end}}
+{{range .Turns}}
+<div class="mb-4 border-b border-row pb-3">
+  <p class="seclabel mb-1">you</p>
+  <p class="mb-2 text-sm text-inkhi">{{.User}}</p>
+  {{range .Actions}}
+  <div class="cli-echo">{{if .OK}}<span class="chip chip-ok">ok</span>{{else}}<span class="chip chip-bad">err</span>{{end}}{{if .Destructive}} <span class="chip chip-warn">destructive</span>{{end}} $ <b>{{if .CLI}}{{.CLI}}{{else}}{{.Tool}}{{end}}</b>{{if .Error}} — {{.Error}}{{end}}</div>
+  {{end}}
+  <p class="seclabel mb-1 mt-2">assistant</p>
+  <p class="whitespace-pre-wrap text-sm text-ink">{{.Reply}}</p>
+  {{if .Error}}<p class="err">stopped: {{.Error}}</p>{{end}}
+</div>
+{{end}}
+</div>
+{{end}}
+
+{{/* aigenfield: a generated file swapped into the editor it was asked from
+     (same id/name/classes as the original textarea). */}}
+{{define "aigenfield"}}<textarea id="{{.ID}}" class="{{.Class}}" name="{{.Name}}" rows="{{.Rows}}">{{.Content}}</textarea>{{end}}
+
+{{/* aigenresult: a generated file on the assistant page. */}}
+{{define "aigenresult"}}
+{{if .Error}}<p class="err">{{.Error}}</p>{{else}}
+<p class="mb-1 font-mono text-[11px] text-mut">validated by luncur &middot; {{.Attempts}} attempt(s)</p>
+<textarea class="input h-72 font-mono text-xs" readonly rows="16">{{.Content}}</textarea>
+{{end}}
+{{end}}
+
+

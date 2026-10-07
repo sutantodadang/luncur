@@ -53,6 +53,11 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/settings/update", s.uiPage(s.handleUISettingsUpdate))
 	mux.HandleFunc("POST /ui/registry-gc", s.uiPage(s.handleUIRegistryGC))
 	mux.HandleFunc("GET /ui/doctor", s.uiPage(s.handleUIDoctor))
+	mux.HandleFunc("GET /ui/assistant", s.uiPage(s.handleUIAssistant))
+	mux.HandleFunc("POST /ui/assistant", s.uiPage(s.handleUIAssistantAsk))
+	mux.HandleFunc("POST /ui/ai/generate", s.uiPage(s.handleUIAIGenerate))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/explain", s.uiPage(s.handleUIAIExplain))
+	mux.HandleFunc("POST /ui/projects/{project}/envs/{env}/apps/{app}/explain", s.uiPage(s.handleUIAIExplain))
 	mux.HandleFunc("GET /ui/nodes", s.uiPage(s.handleUINodes))
 	mux.HandleFunc("POST /ui/gpu/key", s.uiPage(s.handleUIGPUKey))
 	mux.HandleFunc("POST /ui/gpu/key/nebius", s.uiPage(s.handleUIGPUKeyNebius))
@@ -235,6 +240,11 @@ func (s *server) renderPage(w http.ResponseWriter, r *http.Request, page string,
 			} else {
 				m["Tree"] = tree
 			}
+		}
+	}
+	if m, ok := data.(map[string]any); ok {
+		if _, set := m["AIEnabled"]; !set {
+			m["AIEnabled"] = s.aiConfigured()
 		}
 	}
 	if err := s.tmpl.ExecuteTemplate(w, page, data); err != nil {

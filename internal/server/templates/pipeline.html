@@ -11,9 +11,24 @@
 <div class="card mb-6">
 <h2>Definition</h2>
 <p class="mb-3 text-sm text-mut">step env is stored in plaintext — put secrets in app env instead.</p>
+{{if .AIEnabled}}<form id="pipeline-yaml-genform" hx-post="/ui/ai/generate" hx-target="#pipeline-yaml" hx-swap="outerHTML" hx-include="#pipeline-yaml">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input type="hidden" name="target" value="pipeline-yaml">
+  <input type="hidden" name="project" value="{{.Project.Name}}">
+</form>
+<details class="mb-3">
+  <summary class="cursor-pointer font-mono text-[11px] text-mut">generate or change with ai</summary>
+  <div class="mt-2 flex flex-wrap items-center gap-2">
+    <input class="input flex-1 text-xs" name="description" form="pipeline-yaml-genform" placeholder="add an evaluate step after train, retry it twice, then notify">
+    <button type="submit" class="btn-ghost" form="pipeline-yaml-genform">generate</button>
+  </div>
+  <p id="pipeline-yaml-err" class="text-xs text-fail"></p>
+  <p class="text-xs text-mut">The result fills the editor below; nothing is saved until you press save.</p>
+  <div class="cli-echo">$ <b>luncur ai gen pipeline "…" --project {{.Project.Name}} --from pipeline.yaml</b></div>
+</details>{{end}}
 <form method="post" action="/ui/projects/{{.Project.Name}}/pipelines/{{.Pipeline.Name}}">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <textarea class="input mb-3 h-72 font-mono text-xs" name="yaml" rows="24">{{.Pipeline.YAML}}</textarea>
+  <textarea id="pipeline-yaml" class="input mb-3 h-72 font-mono text-xs" name="yaml" rows="24">{{.Pipeline.YAML}}</textarea>
   <div class="mb-1 flex flex-wrap items-end gap-2">
     <label class="flex flex-col gap-1 text-xs text-mut">cron<input class="input w-56" name="cron" placeholder="0 3 * * * (blank = manual/webhook only)" value="{{.Pipeline.Cron}}"></label>
     <label class="flex flex-col gap-1 text-xs text-mut">engine<select class="input w-auto" name="engine">

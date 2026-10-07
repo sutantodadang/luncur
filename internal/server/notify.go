@@ -79,6 +79,9 @@ type notifyEvent struct {
 	// `notify:` step), which skips the notify_events subscription filter —
 	// only the delivery channel needs to be configured.
 	explicit bool
+	// AI is an optional one-line AI diagnosis (ai_notify=on) appended to
+	// deploy_failed / app_unhealthy messages.
+	AI string
 }
 
 // notify is the best-effort entry point: it reads notify_format to pick the
@@ -116,7 +119,12 @@ func (s *server) notify(ev notifyEvent) {
 		ev.Err = ev.Err[len(ev.Err)-errTailLimit:]
 	}
 
-	go s.sendNotify(ev)
+	go func() {
+		if ev.Event == "deploy_failed" || ev.Event == "app_unhealthy" {
+			ev.AI = s.aiNotifySummary(ev)
+		}
+		s.sendNotify(ev)
+	}()
 }
 
 // sendNotify builds the format-specific payload and POSTs it (or, for
@@ -235,6 +243,7 @@ type genericNotifyPayload struct {
 	URL      string `json:"url,omitempty"`
 	Error    string `json:"error,omitempty"`
 	Message  string `json:"message,omitempty"`
+	AI       string `json:"ai,omitempty"`
 	Time     string `json:"time"`
 }
 
@@ -258,6 +267,14 @@ func notifyStatus(event string) string {
 // notifyMessage renders the one human-readable line used by the
 // discord/slack/telegram encoders.
 func notifyMessage(ev notifyEvent) string {
+	msg := notifyMessageBase(ev)
+	if ev.AI != "" {
+		msg += "\n🤖 " + ev.AI
+	}
+	return msg
+}
+
+func notifyMessageBase(ev notifyEvent) string {
 	switch ev.Event {
 	case "deploy_success":
 		return fmt.Sprintf("✅ %s/%s deploy #%d live — %s", ev.Project, ev.App, ev.Seq, ev.URL)
@@ -292,6 +309,7 @@ func buildNotifyPayload(format, chat string, ev notifyEvent, now time.Time) ([]b
 			URL:      ev.URL,
 			Error:    ev.Err,
 			Message:  ev.Message,
+			AI:       ev.AI,
 			Time:     now.UTC().Format(time.RFC3339),
 		})
 	case "discord":
