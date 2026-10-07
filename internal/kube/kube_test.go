@@ -916,9 +916,21 @@ func TestGPUBusyNodes(t *testing.T) {
 	cs := k8sfake.NewSimpleClientset(gpuRunning, nonGPURunning, gpuPendingUnscheduled)
 	c := NewForTest(nil, cs)
 
-	busy, err := c.GPUBusyNodes(context.Background())
+	busy, stuck, err := c.GPUBusyNodes(context.Background(), time.Hour)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(stuck) != 0 {
+		t.Fatalf("stuck = %v, want none (pod is younger than the grace)", stuck)
+	}
+	// Past the grace, the unscheduled pod stops freezing destroys (S3).
+	old := gpuPendingUnscheduled.DeepCopy()
+	old.Name, old.CreationTimestamp = "gpu-stuck", metav1.NewTime(time.Now().Add(-2*time.Hour))
+	if _, err := cs.CoreV1().Pods("default").Create(context.Background(), old, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if b2, st2, _ := c.GPUBusyNodes(context.Background(), time.Hour); len(st2) != 1 || st2[0] != "default/gpu-stuck" || !b2[""] {
+		t.Fatalf("with stuck pod: busy=%v stuck=%v", b2, st2)
 	}
 	want := map[string]bool{"node-a": true, "": true}
 	if len(busy) != len(want) {

@@ -298,11 +298,16 @@ func (s *Store) FinishPipelineRun(id, status string) error {
 	if status != "done" && status != "stopped" && status != "failed" {
 		return errors.New("finish status must be done, stopped, or failed")
 	}
-	res, err := s.db.Exec(`UPDATE pipeline_runs SET status = ?, finished_at = datetime('now') WHERE id = ?`, status, id)
+	// Guarded like FinishSweep: a terminal status is final.
+	res, err := s.db.Exec(`UPDATE pipeline_runs SET status = ?, finished_at = datetime('now') WHERE id = ? AND status NOT IN ('done','stopped','failed')`, status, id)
 	if err != nil {
 		return err
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
+		var n int
+		if s.db.QueryRow(`SELECT count(*) FROM pipeline_runs WHERE id = ?`, id).Scan(&n); n > 0 {
+			return ErrAlreadyFinished
+		}
 		return ErrNotFound
 	}
 	return nil

@@ -157,6 +157,15 @@ func (s *server) startRun(ctx context.Context, p store.Project, env store.Enviro
 		return store.JobRun{}, fmt.Errorf("%w: %v", errRunStartFailed, err)
 	}
 
+	if nodes > 1 {
+		// The headless rendezvous Service would outlive the Job's TTL: make
+		// the Job its owner so garbage collection removes both together.
+		name := jobRunName(a.Name, run.ID)
+		if err := s.kube.OwnByJob(ctx, env.Namespace, "Service", name, name); err != nil {
+			log.Printf("start run %d: own run service by job (hourly GC will clean it): %v", run.ID, err)
+		}
+	}
+
 	go s.watchRun(p, env, a, run)
 
 	return run, nil

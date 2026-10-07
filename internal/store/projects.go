@@ -9,6 +9,10 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+// ErrAlreadyFinished is returned when finishing a sweep or pipeline run that
+// already reached a terminal status (done, stopped, failed).
+var ErrAlreadyFinished = errors.New("already finished")
+
 // validName enforces a DNS-1123 label (1-40 chars) so names can become
 // Kubernetes namespaces, object names, and hostnames unmodified.
 var nameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)

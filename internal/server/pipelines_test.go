@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
@@ -1440,5 +1442,30 @@ func TestPipelineDeployStepWaitsForRolloutGate(t *testing.T) {
 	got := pipelineFindStep(t, s.st, run.ID, "d")
 	if got.State != "failed" || !strings.Contains(got.Detail, "crash-looping") {
 		t.Fatalf("step after gate failure = %+v", got)
+	}
+}
+
+// S12: an image step whose Job was deleted mid-run fails instead of
+// hanging until the next restart.
+func TestPipelineImageStepFailsWhenJobDeleted(t *testing.T) {
+	t.Parallel()
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		if a.GetVerb() == "get" && a.GetResource().Resource == "jobs" {
+			return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, "x")
+		}
+		return true, nil, nil
+	})
+	s := pipelineTestServer(t, dyn, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pl := pipelineSeedPipeline(t, s.st, p.ID, "pipe")
+	run := pipelineSeedRun(t, s.st, pl, []pipeline.Step{{Name: "i", Kind: "image", Image: "busybox:1", Command: []string{"true"}}})
+	row := pipelineFindStep(t, s.st, run.ID, "i")
+	if err := s.st.MarkStepRunning(row.ID, nil, 1); err != nil {
+		t.Fatal(err)
+	}
+	s.pipelineTick(context.Background())
+	if got := pipelineFindStep(t, s.st, run.ID, "i"); got.State != "failed" || got.Detail != "job deleted" {
+		t.Fatalf("step = %+v, want failed/job deleted", got)
 	}
 }

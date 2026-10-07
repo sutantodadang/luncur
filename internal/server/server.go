@@ -117,6 +117,9 @@ type server struct {
 	// seen idle (no GPU pod scheduled on it). In-memory, loop-local state
 	// for runGPUIdleLoop — written only by that single goroutine.
 	gpuIdleSince map[string]time.Time
+	// gpuStuckReported dedupes reportStuckGPUPods notifications (same
+	// single-goroutine ownership as gpuIdleSince).
+	gpuStuckReported map[string]bool
 
 	// sweepMLflowDown tracks, per sweep id, whether its mlflow addon has
 	// already been found unreachable this sweep's lifetime — once set, the

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -284,5 +285,26 @@ func TestMarkTrialLaunchedValidation(t *testing.T) {
 	}
 	if err := st.MarkTrialLaunched("nope", run.ID); err != ErrNotFound {
 		t.Fatalf("missing trial: %v, want ErrNotFound", err)
+	}
+}
+
+// S10: a late tick can't overwrite a terminal sweep status.
+func TestFinishSweepIsFinal(t *testing.T) {
+	st, a := sweepStore(t)
+	sw, _, err := st.CreateSweep(Sweep{AppID: a.ID, Metric: "loss", Direction: "min", MaxTrials: 1, Parallel: 1, Nodes: 1}, []string{`{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishSweep(sw.ID, "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishSweep(sw.ID, "done"); !errors.Is(err, ErrAlreadyFinished) {
+		t.Fatalf("second finish = %v, want ErrAlreadyFinished", err)
+	}
+	if got, _ := st.GetSweep(sw.ID); got.Status != "stopped" {
+		t.Fatalf("status = %q, want stopped", got.Status)
+	}
+	if err := st.FinishSweep("nope", "done"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing = %v", err)
 	}
 }

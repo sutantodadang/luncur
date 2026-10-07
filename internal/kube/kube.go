@@ -1422,16 +1422,19 @@ func (c *Client) CronRuns(ctx context.Context, namespace, app string) ([]CronRun
 // candidate. Pending pods with no NodeName yet (unscheduled) can't be
 // attributed to a node, so they're recorded under the "" key instead —
 // callers treat that as "freeze all destroys," since the scheduler may still
-// place the pod on any node this tick.
-func (c *Client) GPUBusyNodes(ctx context.Context) (map[string]bool, error) {
+// place the pod on any node this tick. An unscheduled pod older than
+// pendingGrace stops counting (it likely asks for more than any node has,
+// and must not keep rented VMs billing forever); it's returned in stuck
+// ("namespace/name") so the caller can report it instead.
+func (c *Client) GPUBusyNodes(ctx context.Context, pendingGrace time.Duration) (busy map[string]bool, stuck []string, err error) {
 	if c.cs == nil {
-		return nil, fmt.Errorf("kubernetes client not configured")
+		return nil, nil, fmt.Errorf("kubernetes client not configured")
 	}
 	pods, err := c.cs.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	busy := map[string]bool{}
+	busy = map[string]bool{}
 	for _, p := range pods.Items {
 		if p.Status.Phase != corev1.PodPending && p.Status.Phase != corev1.PodRunning {
 			continue
@@ -1439,7 +1442,11 @@ func (c *Client) GPUBusyNodes(ctx context.Context) (map[string]bool, error) {
 		if !podRequestsGPU(&p) {
 			continue
 		}
+		if p.Spec.NodeName == "" && pendingGrace > 0 && !p.CreationTimestamp.IsZero() && time.Since(p.CreationTimestamp.Time) > pendingGrace {
+			stuck = append(stuck, p.Namespace+"/"+p.Name)
+			continue
+		}
 		busy[p.Spec.NodeName] = true
 	}
-	return busy, nil
+	return busy, stuck, nil
 }

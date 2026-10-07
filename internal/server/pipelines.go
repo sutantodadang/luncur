@@ -420,6 +420,16 @@ func (s *server) pipelineHarvestStep(ctx context.Context, run store.PipelineRun,
 			return v
 		}
 		if !done {
+			// A Job deleted mid-run (by hand, or a namespace cleanup) never
+			// reports done; without this the step would hang until a
+			// restart's reconcile.
+			if exists, err := s.kube.JobExists(ctx, project.Namespace, name); err == nil && !exists {
+				if err := s.st.FinishStep(v.Row.ID, "failed", "job deleted"); err != nil {
+					log.Printf("pipeline run %s: step %s: finish failed: %v", run.ID, v.Row.Name, err)
+					return v
+				}
+				v.Row.State = "failed"
+			}
 			return v
 		}
 		if !failed {

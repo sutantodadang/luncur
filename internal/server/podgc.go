@@ -30,6 +30,11 @@ func (s *server) gcFailedPods(ctx context.Context) {
 			if n > 0 {
 				log.Printf("gc failed pods: deleted %d dead pod(s) in %s", n, env.Namespace)
 			}
+			if n, err := s.kube.DeleteOrphanRunServices(ctx, env.Namespace); err != nil {
+				log.Printf("gc run services: %s/%s: %v", p.Name, env.Name, err)
+			} else if n > 0 {
+				log.Printf("gc run services: deleted %d leaked run Service(s) in %s", n, env.Namespace)
+			}
 		}
 	}
 }
