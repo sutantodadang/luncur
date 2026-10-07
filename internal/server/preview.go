@@ -154,6 +154,9 @@ func (s *server) handleProjectWebhook(w http.ResponseWriter, r *http.Request) {
 		webhookUnauthorized(w)
 		return
 	}
+	if s.webhookReplay(w, r, "project:"+p.Name) {
+		return
+	}
 
 	if info := auditFrom(r.Context()); info != nil {
 		info.Email = "webhook"

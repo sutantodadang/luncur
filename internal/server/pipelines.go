@@ -1746,6 +1746,9 @@ func (s *server) handlePipelineWebhookTrigger(w http.ResponseWriter, r *http.Req
 		webhookUnauthorized(w)
 		return
 	}
+	if s.webhookReplay(w, r, "pipeline:"+pl.ID) {
+		return
+	}
 
 	if info := auditFrom(r.Context()); info != nil {
 		info.Email = "webhook"

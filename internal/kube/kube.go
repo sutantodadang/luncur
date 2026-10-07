@@ -180,15 +180,19 @@ func (c *Client) EnsureNamespaceWithPolicy(ctx context.Context, name, policy str
 // luncurIsolationPolicy is the project-isolation NetworkPolicy applied to
 // every project namespace when the network_isolation setting is on: ingress
 // only from pods in the same namespace, the ingress controller (kube-system
-// on k3s), and luncur-system (the panel proxies addon UIs, e.g. mlflow).
-// Egress is deliberately untouched.
+// on k3s), and the luncur server pod itself (the panel proxies addon UIs,
+// e.g. mlflow, and one-click forwards). The luncur-system peer is narrowed
+// to the server pod (namespaceSelector AND podSelector in one element):
+// user BuildKit builds also run in luncur-system, and a build's RUN step
+// must not reach isolated tenants. Egress is deliberately untouched.
 const luncurIsolationPolicy = `{"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy",
  "metadata":{"name":"luncur-isolation","labels":{"app.kubernetes.io/managed-by":"luncur"}},
  "spec":{"podSelector":{},"policyTypes":["Ingress"],
    "ingress":[{"from":[
      {"podSelector":{}},
      {"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}}},
-     {"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"luncur-system"}}}
+     {"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"luncur-system"}},
+      "podSelector":{"matchLabels":{"app.kubernetes.io/name":"luncur"}}}
    ]}]}}`
 
 // ApplyIsolation server-side-applies the project-isolation NetworkPolicy

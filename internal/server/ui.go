@@ -181,6 +181,10 @@ func (s *server) uiPage(next func(http.ResponseWriter, *http.Request, store.User
 			info.Email = u.Email
 			info.Pattern = r.Pattern
 		}
+		// Authenticated pages can carry secrets (the Wire tab shows env
+		// values): keep them out of the browser's disk cache and bfcache,
+		// where they'd survive logout on a shared machine.
+		w.Header().Set("Cache-Control", "no-store")
 		next(w, r, u)
 	}
 }

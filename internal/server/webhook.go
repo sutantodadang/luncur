@@ -205,6 +205,9 @@ func (s *server) handleWebhookTrigger(w http.ResponseWriter, r *http.Request) {
 		webhookUnauthorized(w)
 		return
 	}
+	if s.webhookReplay(w, r, "app:"+p.Name+"/"+a.Name) {
+		return
+	}
 
 	if info := auditFrom(r.Context()); info != nil {
 		info.Email = "webhook"
@@ -277,4 +280,35 @@ func (s *server) handleWebhookTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"deployment_id": d.ID})
+}
+
+// webhookDeliveryHeaders carry a provider's unique per-delivery id.
+var webhookDeliveryHeaders = []string{"X-GitHub-Delivery", "X-Gitea-Delivery", "X-Gitlab-Event-UUID", "X-Luncur-Delivery"}
+
+// webhookReplay rejects a replayed delivery: a signed request captured in
+// transit could otherwise be re-sent to start unlimited deploys/runs. It
+// runs after signature verification (unsigned junk never reaches the
+// table) and answers a repeat with 200 {"duplicate":true} so the provider
+// doesn't retry. Senders without a delivery id are accepted as before.
+func (s *server) webhookReplay(w http.ResponseWriter, r *http.Request, scope string) bool {
+	for _, h := range webhookDeliveryHeaders {
+		id := strings.TrimSpace(r.Header.Get(h))
+		if id == "" {
+			continue
+		}
+		if len(id) > 200 {
+			id = id[:200]
+		}
+		fresh, err := s.st.RecordWebhookDelivery(scope + ":" + id)
+		if err != nil {
+			log.Printf("webhook delivery dedupe: %v", err)
+			return false
+		}
+		if !fresh {
+			writeJSON(w, http.StatusOK, map[string]any{"duplicate": true})
+			return true
+		}
+		return false
+	}
+	return false
 }

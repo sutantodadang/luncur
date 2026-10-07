@@ -81,3 +81,18 @@ func TestUIWireRolloutCard(t *testing.T) {
 		t.Fatalf("saved policy = %+v", p)
 	}
 }
+
+// S4: authenticated UI pages are never cached by the browser.
+func TestUIPagesAreNoStore(t *testing.T) {
+	u := newUIAI(t, nil)
+	req, _ := http.NewRequest("GET", u.srv.URL+"/ui/projects/shop/apps/web?tab=wire", nil)
+	req.AddCookie(u.sess)
+	resp, err := u.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
