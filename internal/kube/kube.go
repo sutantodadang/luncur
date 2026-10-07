@@ -1165,6 +1165,9 @@ func (c *Client) StatefulSetReady(ctx context.Context, namespace, name string) (
 	if err != nil {
 		return false, err
 	}
+	if u == nil {
+		return false, nil
+	}
 	n, _, _ := unstructured.NestedInt64(u.Object, "status", "readyReplicas")
 	return n >= 1, nil
 }

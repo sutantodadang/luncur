@@ -1,0 +1,23 @@
+name: n8n
+title: n8n
+description: Workflow automation with 400+ integrations, backed by Postgres.
+category: automation
+app:
+  image: n8nio/n8n:2.42.4
+  port: 5678
+  health_path: /healthz
+  memory: 512Mi
+volumes:
+  - {name: data, path: /home/node/.n8n, size_gb: 1}
+addons:
+  - {key: db, type: postgres}
+env:
+  DB_TYPE: postgresdb
+  DB_POSTGRESDB_HOST: ${addon.db.host}
+  DB_POSTGRESDB_PORT: ${addon.db.port}
+  DB_POSTGRESDB_DATABASE: ${addon.db.database}
+  DB_POSTGRESDB_USER: ${addon.db.user}
+  DB_POSTGRESDB_PASSWORD: ${addon.db.password}
+  N8N_ENCRYPTION_KEY: ${random:32}
+  WEBHOOK_URL: ${app.url}/
+  N8N_PROXY_HOPS: "1"

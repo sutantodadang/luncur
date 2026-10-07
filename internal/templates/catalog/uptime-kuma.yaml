@@ -1,0 +1,9 @@
+name: uptime-kuma
+title: Uptime Kuma
+description: Monitoring for HTTP, TCP, DNS and more, with notifications.
+category: monitoring
+app:
+  image: louislam/uptime-kuma:2.5.4
+  port: 3001
+volumes:
+  - {name: data, path: /app/data, size_gb: 1}

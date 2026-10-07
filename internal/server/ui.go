@@ -110,6 +110,8 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/uptime", s.uiPage(s.handleUIUptime))
 	mux.HandleFunc("POST /ui/projects/{project}/status-page", s.uiPage(s.handleUIStatusPage))
 	mux.HandleFunc("POST /ui/projects/{project}/incidents", s.uiPage(s.handleUIIncident))
+	mux.HandleFunc("POST /ui/projects/{project}/templates/{name}", s.uiPage(s.handleUIInstallTemplate))
+	mux.HandleFunc("POST /ui/projects/{project}/envs/{env}/templates/{name}", s.uiPage(s.handleUIInstallTemplate))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/rollout/{action}", s.uiPage(s.handleUIRolloutAction))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook", s.uiPage(s.handleUIWebhookEnable))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook/disable", s.uiPage(s.handleUIWebhookDisable))

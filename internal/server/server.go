@@ -346,6 +346,8 @@ func (s *server) handler() http.Handler {
 	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/policy", s.authed(s.handleGetPolicy))
 	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/rollout", s.authed(s.handleGetRollout))
 	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/uptime", s.authed(s.handleGetUptime))
+	mux.HandleFunc("GET /v1/templates", s.authed(s.handleListTemplates))
+	routeEnv(mux, "POST /v1/projects/{project}/templates/{name}/install", s.authed(s.handleInstallTemplate))
 	routeEnv(mux, "PUT /v1/projects/{project}/apps/{app}/uptime", s.authed(s.handlePutUptime))
 	mux.HandleFunc("GET /v1/projects/{project}/incidents", s.authed(s.handleListIncidents))
 	mux.HandleFunc("POST /v1/projects/{project}/incidents", s.authed(s.handleOpenIncident))

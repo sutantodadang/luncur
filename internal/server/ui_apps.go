@@ -13,6 +13,7 @@ import (
 	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
+	"github.com/sutantodadang/luncur/internal/templates"
 )
 
 // uiEnvChip is the environment selector's per-option view model — reused
@@ -208,7 +209,7 @@ func (s *server) handleUIApps(w http.ResponseWriter, r *http.Request, u store.Us
 		"GPUQuota": p.GPUQuota, "Pipelines": pipelines, "Previews": previews,
 		"CPUQuotaMilli": p.CPUQuotaMilli, "MemQuotaMB": p.MemQuotaMB,
 		"Env": uiEnvChipFrom(env), "Envs": envs, "AIEnabled": s.aiConfigured(),
-		"StatusPage": s.uiStatusPage(p), "Incidents": s.uiIncidents(p),
+		"StatusPage": s.uiStatusPage(p), "Incidents": s.uiIncidents(p), "Templates": templates.All(),
 	})
 }
 
@@ -1089,13 +1090,13 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, u store
 		"CSRF": csrf, "IsAdmin": u.Role == "admin",
 		"Env": uiEnvChipFrom(env), "Envs": envs,
 		"Tab": string(tab), "TabItems": uiTabItems(a.Kind, tab),
-		"PipelineStages": uiPipelineStages(status, latestImageRef),
+		"PipelineStages":  uiPipelineStages(status, latestImageRef),
 		"RolloutProgress": s.rolloutProgress(status, latestID),
 		"Policy":          s.appPolicyView(a),
 		"Rollout":         s.uiRollout(a, tab),
 		"Uptime":          s.uiUptime(p, env, a, tab),
-		"ErrorCard":      errorCard,
-		"LaunchSequence": launch,
+		"ErrorCard":       errorCard,
+		"LaunchSequence":  launch,
 	}
 	for k, v := range extra {
 		data[k] = v

@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -1902,3 +1903,79 @@ func (c *Client) ResolveIncident(project string, id int64) error {
 
 // Server is the base URL this client talks to.
 func (c *Client) Server() string { return c.base }
+
+// TemplateInfo is one gallery template.
+type TemplateInfo struct {
+	Name        string   `json:"name"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Category    string   `json:"category"`
+	Image       string   `json:"image"`
+	Addons      []string `json:"addons"`
+	Volumes     int      `json:"volumes"`
+}
+
+// ListTemplates lists the one-click template gallery.
+func (c *Client) ListTemplates() ([]TemplateInfo, error) {
+	var out struct {
+		Templates []TemplateInfo `json:"templates"`
+	}
+	err := c.do("GET", "/v1/templates", nil, &out)
+	return out.Templates, err
+}
+
+// TemplateInstallResult reports a template install's steps.
+type TemplateInstallResult struct {
+	App   string `json:"app"`
+	Seq   int64  `json:"seq"`
+	URL   string `json:"url"`
+	Error string `json:"error"`
+	Steps []struct {
+		Step   string `json:"step"`
+		OK     bool   `json:"ok"`
+		Detail string `json:"detail"`
+	} `json:"steps"`
+}
+
+// InstallTemplate installs a template as app (name "" = the template's).
+// The steps are returned even when the install fails part-way.
+func (c *Client) InstallTemplate(project, name, app string, env map[string]string) (TemplateInstallResult, error) {
+	var out TemplateInstallResult
+	req, err := http.NewRequest("POST", c.base+c.EnvPath(project, c.env)+"/templates/"+url.PathEscape(name)+"/install",
+		bytes.NewReader(mustJSON(map[string]any{"app_name": app, "env": env})))
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if json.Unmarshal(body, &out) != nil || resp.StatusCode >= 300 {
+		if out.Error != "" {
+			return out, errors.New(out.Error)
+		}
+		var envErr struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(body, &envErr) == nil && envErr.Error.Message != "" {
+			return out, errors.New(envErr.Error.Message)
+		}
+		if resp.StatusCode >= 300 {
+			return out, fmt.Errorf("server returned %s", resp.Status)
+		}
+	}
+	return out, nil
+}
+
+func mustJSON(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
+}
