@@ -13,6 +13,12 @@ manifests are rendered and applied to Kubernetes → the app becomes live at
 `http://<app>.<ip>.sslip.io`. Build logs are streamed on demand via `luncur
 logs`.
 
+The local tarball is the current directory's working tree as it is on disk
+(uncommitted edits included). Inside a git checkout, or any subdirectory of
+one, files matched by `.gitignore` are left out, so ignored secrets such as
+`.env` never reach the build. Outside git, everything except `.git`,
+`node_modules` and `.luncur` is uploaded.
+
 ## Deploy numbering
 
 Deploys are numbered per app, Heroku-style (`#1`, `#2`, ...) — that's the

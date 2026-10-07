@@ -376,8 +376,12 @@ func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) er
 	}
 	// Per-run Jobs (kind=job apps) have per-run names; delete by the app
 	// label instead.
+	// Background propagation: batch/v1 Jobs orphan their pods by default
+	// when the API delete names no policy, which would leave a deleted
+	// app's training pods running (and holding GPUs).
+	bg := metav1.DeletePropagationBackground
 	if err := c.dyn.Resource(gvrByKind["Job"]).Namespace(namespace).DeleteCollection(
-		ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + app},
+		ctx, metav1.DeleteOptions{PropagationPolicy: &bg}, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + app},
 	); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete jobs for %s: %w", app, err)
 	}
@@ -529,11 +533,8 @@ func (c *Client) WaitJob(ctx context.Context, namespace, name string, poll time.
 			// object with a nil error; treat it like a missing Job.
 			return false, fmt.Errorf("get job %s: no object returned", name)
 		}
-		if n, _, _ := unstructured.NestedInt64(u.Object, "status", "succeeded"); n >= 1 {
-			return true, nil
-		}
-		if n, _, _ := unstructured.NestedInt64(u.Object, "status", "failed"); n >= 1 {
-			return false, nil
+		if done, failed := jobFinished(u); done {
+			return !failed, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -578,13 +579,41 @@ func (c *Client) JobDone(ctx context.Context, namespace, name string) (done, fai
 		// object with a nil error; treat it like a missing Job.
 		return false, false, nil
 	}
-	if n, _, _ := unstructured.NestedInt64(u.Object, "status", "succeeded"); n >= 1 {
-		return true, false, nil
+	done, failed = jobFinished(u)
+	return done, failed, nil
+}
+
+// jobFinished reports whether a Job is terminal, and if so whether it
+// failed. The Job controller's Complete/Failed conditions are authoritative
+// when present. Otherwise: failed once any pod failed (luncur's Jobs all use
+// backoffLimit 0), succeeded once status.succeeded reaches spec.completions
+// (default 1) — a multi-node Indexed Job isn't done when its first worker
+// exits 0 while the others are still running.
+func jobFinished(u *unstructured.Unstructured) (done, failed bool) {
+	conds, _, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
+	for _, c := range conds {
+		m, ok := c.(map[string]any)
+		if !ok || m["status"] != "True" {
+			continue
+		}
+		switch m["type"] {
+		case "Complete":
+			return true, false
+		case "Failed":
+			return true, true
+		}
 	}
 	if n, _, _ := unstructured.NestedInt64(u.Object, "status", "failed"); n >= 1 {
-		return true, true, nil
+		return true, true
 	}
-	return false, false, nil
+	completions, found, _ := unstructured.NestedInt64(u.Object, "spec", "completions")
+	if !found || completions < 1 {
+		completions = 1
+	}
+	if n, _, _ := unstructured.NestedInt64(u.Object, "status", "succeeded"); n >= completions {
+		return true, false
+	}
+	return false, false
 }
 
 // JobPodStatus reports the phase (and, if a container is waiting, its

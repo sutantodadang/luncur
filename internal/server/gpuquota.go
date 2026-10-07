@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/sutantodadang/luncur/internal/gpu"
+	"github.com/sutantodadang/luncur/internal/kube"
 	"github.com/sutantodadang/luncur/internal/render"
 	"github.com/sutantodadang/luncur/internal/store"
 )
@@ -23,9 +24,10 @@ func (e *gpuQuotaKubeError) Error() string { return e.err.Error() }
 func (e *gpuQuotaKubeError) Unwrap() error { return e.err }
 
 // setGPUQuota is handleSetGPUQuota's (and the UI twin's, added later) shared
-// core: persist the quota, then sync the namespace ResourceQuota —
-// applying it when n>0, deleting it when n==0 (unlimited). No-ops the kube
-// sync when s.kube is nil (tests, or kube unavailable at boot).
+// core: persist the quota, then sync the ResourceQuota in every one of the
+// project's environment namespaces — applying it when n>0, deleting it when
+// n==0 (unlimited). No-ops the kube sync when s.kube is nil (tests, or kube
+// unavailable at boot).
 func (s *server) setGPUQuota(ctx context.Context, p store.Project, n int64) error {
 	if err := s.st.SetProjectGPUQuota(p.ID, n); err != nil {
 		return err
@@ -33,24 +35,87 @@ func (s *server) setGPUQuota(ctx context.Context, p store.Project, n int64) erro
 	if s.kube == nil {
 		return nil
 	}
-	if n > 0 {
-		obj, err := gpu.QuotaObject(p.Namespace, n)
-		if err != nil {
+	nss, err := s.projectEnvNamespaces(p)
+	if err != nil {
+		return &gpuQuotaKubeError{err}
+	}
+	for _, ns := range nss {
+		if err := s.syncGPUQuotaIn(ctx, ns, n, ns == p.Namespace); err != nil {
 			return &gpuQuotaKubeError{err}
 		}
-		if err := s.ensureProjectNamespace(ctx, p.Namespace); err != nil {
-			return &gpuQuotaKubeError{err}
+	}
+	return nil
+}
+
+// projectEnvNamespaces lists every namespace a project's workloads can run
+// in: the project namespace (also the production environment's) first, then
+// each other environment's luncur-<project>-<env>. Budgets are enforced in
+// all of them — otherwise a non-production environment runs unlimited.
+func (s *server) projectEnvNamespaces(p store.Project) ([]string, error) {
+	envs, err := s.st.ListEnvironments(p.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list environments: %w", err)
+	}
+	out := []string{p.Namespace}
+	seen := map[string]bool{p.Namespace: true}
+	for _, e := range envs {
+		if e.Namespace != "" && !seen[e.Namespace] {
+			seen[e.Namespace] = true
+			out = append(out, e.Namespace)
 		}
-		if err := s.kube.Apply(ctx, p.Namespace, []render.Object{obj}); err != nil {
-			return &gpuQuotaKubeError{err}
+	}
+	return out, nil
+}
+
+// syncGPUQuotaIn applies (n>0) or removes (n==0, best-effort) the GPU
+// ResourceQuota in one namespace. create makes sure the namespace exists
+// first; without it a namespace that hasn't been created yet is skipped —
+// ensureEnvNamespace applies the budget when it first creates it.
+func (s *server) syncGPUQuotaIn(ctx context.Context, ns string, n int64, create bool) error {
+	if n <= 0 {
+		if err := s.kube.DeleteObject(ctx, ns, "ResourceQuota", gpu.QuotaObjectName); err != nil {
+			log.Printf("delete gpu quota in %s: %v", ns, err)
 		}
 		return nil
 	}
-	// Unlimited: best-effort remove the ResourceQuota. A delete failure
-	// doesn't invalidate the (already-persisted) quota=0, so it's logged
-	// rather than surfaced as a request error.
-	if err := s.kube.DeleteObject(ctx, p.Namespace, "ResourceQuota", gpu.QuotaObjectName); err != nil {
-		log.Printf("delete gpu quota %s: %v", p.Name, err)
+	obj, err := gpu.QuotaObject(ns, n)
+	if err != nil {
+		return err
+	}
+	if create {
+		if err := s.ensureNamespace(ctx, ns); err != nil {
+			return err
+		}
+	}
+	if err := s.kube.Apply(ctx, ns, []render.Object{obj}); err != nil && (create || !kube.IsNotFound(err)) {
+		return err
+	}
+	return nil
+}
+
+// syncProjectQuotaIn is syncGPUQuotaIn for the CPU/memory ResourceQuota +
+// LimitRange pair (both 0 = unlimited = remove).
+func (s *server) syncProjectQuotaIn(ctx context.Context, ns string, cpuMilli, memMB int64, create bool) error {
+	if cpuMilli <= 0 && memMB <= 0 {
+		if err := s.kube.DeleteObject(ctx, ns, "ResourceQuota", render.ProjectQuotaName); err != nil {
+			log.Printf("delete project quota in %s: %v", ns, err)
+		}
+		if err := s.kube.DeleteObject(ctx, ns, "LimitRange", render.LimitRangeName); err != nil {
+			log.Printf("delete project limitrange in %s: %v", ns, err)
+		}
+		return nil
+	}
+	objs, err := render.ProjectQuotaObjects(ns, cpuMilli, memMB)
+	if err != nil {
+		return err
+	}
+	if create {
+		if err := s.ensureNamespace(ctx, ns); err != nil {
+			return err
+		}
+	}
+	if err := s.kube.Apply(ctx, ns, objs); err != nil && (create || !kube.IsNotFound(err)) {
+		return err
 	}
 	return nil
 }
@@ -102,7 +167,7 @@ func (s *server) validateGPUBudget(p store.Project, addGPUs int64) error {
 
 // setProjectQuota is handleSetProjectQuota's shared core, mirroring
 // setGPUQuota exactly: persist the CPU/memory budget, then sync the
-// namespace ResourceQuota+LimitRange — applying them when either is set,
+// ResourceQuota+LimitRange in every environment namespace — applying them when either is set,
 // deleting both (best-effort) when both are 0 (unlimited). No-ops the kube
 // sync when s.kube is nil.
 func (s *server) setProjectQuota(ctx context.Context, p store.Project, cpuMilli, memMB int64) error {
@@ -112,27 +177,14 @@ func (s *server) setProjectQuota(ctx context.Context, p store.Project, cpuMilli,
 	if s.kube == nil {
 		return nil
 	}
-	if cpuMilli > 0 || memMB > 0 {
-		objs, err := render.ProjectQuotaObjects(p.Namespace, cpuMilli, memMB)
-		if err != nil {
-			return &gpuQuotaKubeError{err}
-		}
-		if err := s.ensureProjectNamespace(ctx, p.Namespace); err != nil {
-			return &gpuQuotaKubeError{err}
-		}
-		if err := s.kube.Apply(ctx, p.Namespace, objs); err != nil {
-			return &gpuQuotaKubeError{err}
-		}
-		return nil
+	nss, err := s.projectEnvNamespaces(p)
+	if err != nil {
+		return &gpuQuotaKubeError{err}
 	}
-	// Unlimited: best-effort remove the ResourceQuota and LimitRange. A
-	// delete failure doesn't invalidate the (already-persisted) quota=0/0,
-	// so it's logged rather than surfaced as a request error.
-	if err := s.kube.DeleteObject(ctx, p.Namespace, "ResourceQuota", render.ProjectQuotaName); err != nil {
-		log.Printf("delete project quota %s: %v", p.Name, err)
-	}
-	if err := s.kube.DeleteObject(ctx, p.Namespace, "LimitRange", render.LimitRangeName); err != nil {
-		log.Printf("delete project limitrange %s: %v", p.Name, err)
+	for _, ns := range nss {
+		if err := s.syncProjectQuotaIn(ctx, ns, cpuMilli, memMB, ns == p.Namespace); err != nil {
+			return &gpuQuotaKubeError{err}
+		}
 	}
 	return nil
 }

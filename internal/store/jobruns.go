@@ -92,3 +92,24 @@ func (s *Store) ListJobRuns(appID int64) ([]JobRun, error) {
 	}
 	return out, rows.Err()
 }
+
+// RunningJobRuns returns every run still marked running, oldest first —
+// the set a server restart must re-attach watchers to (see
+// server.resumeRunWatchers).
+func (s *Store) RunningJobRuns() ([]JobRun, error) {
+	rows, err := s.db.Query(
+		`SELECT ` + jobRunCols + ` FROM job_runs WHERE status = 'running' ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []JobRun
+	for rows.Next() {
+		var r JobRun
+		if err := rows.Scan(&r.ID, &r.AppID, &r.Status, &r.Nodes, &r.Framework, &r.ExitCode, &r.StartedAt, &r.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

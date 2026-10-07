@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sutantodadang/luncur/internal/acme"
@@ -87,6 +88,14 @@ type server struct {
 	sweepMLflowURLFn func(store.App, string) string
 
 	certs *certManager
+
+	// sweepMu serializes the sweep loop's tick/reconcile with stopSweep, and
+	// pipelineMu every pipeline tick (loop, cron, manual/webhook trigger)
+	// with stopPipelineRun: each tick acts on a store snapshot it read
+	// earlier, so an unserialized stop or second tick could launch the same
+	// pending trial/step twice, or launch one under a run already stopped.
+	sweepMu    sync.Mutex
+	pipelineMu sync.Mutex
 
 	// lastRegistryGC tracks the last completed weekly registry GC sweep,
 	// in memory only — StartRegistryGC uses it to decide when to run again.

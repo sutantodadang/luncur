@@ -75,6 +75,10 @@ type notifyEvent struct {
 	URL      string // app URL (deploy events) or hostname (cert events)
 	Err      string // error detail; truncated to errTailLimit chars before sending
 	Message  string // free-form text for event "pipeline" (notify actions + run finish summaries)
+	// explicit marks a notification the user asked for directly (a pipeline
+	// `notify:` step), which skips the notify_events subscription filter —
+	// only the delivery channel needs to be configured.
+	explicit bool
 }
 
 // notify is the best-effort entry point: it reads notify_format to pick the
@@ -104,7 +108,7 @@ func (s *server) notify(ev notifyEvent) {
 	if err != nil {
 		eventsCSV = defaultNotifyEvents
 	}
-	if !parseNotifyEvents(eventsCSV)[ev.Event] {
+	if !ev.explicit && !parseNotifyEvents(eventsCSV)[ev.Event] {
 		return
 	}
 

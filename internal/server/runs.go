@@ -232,8 +232,66 @@ func (s *server) watchRun(p store.Project, env store.Environment, a store.App, r
 	}
 
 	ok, err := s.kube.WaitJob(ctx, env.Namespace, name, runWatchPoll)
+	s.recordRunOutcome(ctx, env, name, run, err == nil && ok)
+}
+
+// resumeRunWatchers re-attaches a watcher to every run a previous process
+// left "running" — watchRun goroutines die with the process, and nothing
+// else ever moves job_runs off "running", so without this a run whose Job
+// outlived a restart (and every sweep trial / pipeline step built on it)
+// would stay running forever. A Job that already finished is recorded
+// synchronously; a Job that's gone entirely is marked failed; a live one gets
+// a fresh watchRun. No-op without kube.
+func (s *server) resumeRunWatchers(ctx context.Context) {
+	if s.kube == nil {
+		return
+	}
+	runs, err := s.st.RunningJobRuns()
+	if err != nil {
+		log.Printf("resume run watchers: %v", err)
+		return
+	}
+	for _, run := range runs {
+		a, err := s.st.GetAppByID(run.AppID)
+		if err != nil {
+			log.Printf("resume run %d: get app %d: %v", run.ID, run.AppID, err)
+			continue
+		}
+		p, err := s.st.GetProjectByID(a.ProjectID)
+		if err != nil {
+			log.Printf("resume run %d: get project %d: %v", run.ID, a.ProjectID, err)
+			continue
+		}
+		env, err := s.appEnvironment(a)
+		if err != nil {
+			log.Printf("resume run %d: get environment: %v", run.ID, err)
+			continue
+		}
+		name := jobRunName(a.Name, run.ID)
+		exists, err := s.kube.JobExists(ctx, env.Namespace, name)
+		if err != nil {
+			log.Printf("resume run %d: check job %s: %v", run.ID, name, err)
+			continue
+		}
+		if !exists {
+			if err := s.st.FinishJobRun(run.ID, "failed", nil); err != nil {
+				log.Printf("resume run %d: mark failed: %v", run.ID, err)
+			}
+			continue
+		}
+		done, failed, err := s.kube.JobDone(ctx, env.Namespace, name)
+		if err == nil && done {
+			s.recordRunOutcome(ctx, env, name, run, !failed)
+			continue
+		}
+		go s.watchRun(p, env, a, run)
+	}
+}
+
+// recordRunOutcome stores a finished run's status plus its pod exit code.
+func (s *server) recordRunOutcome(ctx context.Context, env store.Environment, name string, run store.JobRun, succeeded bool) {
 	status := "succeeded"
-	if err != nil || !ok {
+	if !succeeded {
 		status = "failed"
 	}
 	var exitCode *int64

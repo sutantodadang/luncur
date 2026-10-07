@@ -20,6 +20,10 @@ type Client struct {
 	token string
 	env   string
 	http  *http.Client
+	// transfer serves long-lived exchanges — SSE log follows and multipart
+	// uploads — that http's whole-exchange Timeout would cut off mid-body.
+	// It bounds only connection setup and the wait for response headers.
+	transfer *http.Client
 }
 
 type UserInfo struct {
@@ -33,6 +37,11 @@ func New(server, token string) *Client {
 		base:  strings.TrimRight(server, "/"),
 		token: token,
 		http:  &http.Client{Timeout: 30 * time.Second},
+		transfer: &http.Client{Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			ResponseHeaderTimeout: 30 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+		}},
 	}
 }
 
@@ -189,7 +198,7 @@ func (c *Client) doMultipart(method, path, contentType string, body io.Reader, o
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.transfer.Do(req)
 	if err != nil {
 		return err
 	}
@@ -566,7 +575,7 @@ func (c *Client) stream(path string, w io.Writer) error {
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.transfer.Do(req)
 	if err != nil {
 		return err
 	}

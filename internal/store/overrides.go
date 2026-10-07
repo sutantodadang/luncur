@@ -19,12 +19,14 @@ var dangerousDeploymentKeys = map[string]string{
 	"hostPath":           "hostPath volumes",
 	"privileged":         "privileged",
 	"serviceAccountName": "serviceAccountName",
+	"serviceAccount":     "serviceAccount", // deprecated alias of serviceAccountName
 }
 
 // rejectDangerousOverride denies patch fields that would let a member
 // escalate to node compromise or hijack routing:
 //   - metadata.name/metadata.namespace on any kind (renaming orphans objects)
-//   - Ingress spec.rules (host hijack)
+//   - Ingress spec.rules (host hijack) and spec.defaultBackend (catch-all)
+//   - Service types other than ClusterIP, nodePort, externalIPs
 //   - Deployment pod-spec escape hatches (see dangerousDeploymentKeys)
 func rejectDangerousOverride(kind string, patch map[string]any) error {
 	if md, ok := patch["metadata"].(map[string]any); ok {
@@ -38,8 +40,12 @@ func rejectDangerousOverride(kind string, patch map[string]any) error {
 
 	if kind == "Ingress" {
 		if spec, ok := patch["spec"].(map[string]any); ok {
-			if _, ok := spec["rules"]; ok {
-				return validationErrorf("override may not set %q", "spec.rules")
+			// rules: host hijack. defaultBackend (and its pre-v1 name
+			// backend): a cluster-wide catch-all for every unmatched host.
+			for _, key := range []string{"rules", "defaultBackend", "backend"} {
+				if _, ok := spec[key]; ok {
+					return validationErrorf("override may not set %q", "spec."+key)
+				}
 			}
 		}
 	}
@@ -56,8 +62,16 @@ func rejectDangerousOverride(kind string, patch map[string]any) error {
 
 	if kind == "Service" {
 		for _, key := range collectKeys(patch) {
-			if key == "externalIPs" || key == "loadBalancerIP" {
+			if key == "externalIPs" || key == "loadBalancerIP" || key == "nodePort" {
 				return validationErrorf("override may not set %q", key)
+			}
+		}
+		// NodePort/LoadBalancer expose the app on every node's host IP,
+		// around the ingress and the isolation NetworkPolicy (K3s ServiceLB
+		// binds the port on the host itself).
+		if spec, ok := patch["spec"].(map[string]any); ok {
+			if t, ok := spec["type"]; ok && t != "ClusterIP" {
+				return validationErrorf("override may not set spec.type %v (only ClusterIP)", t)
 			}
 		}
 	}

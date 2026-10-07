@@ -200,6 +200,11 @@ func argoPhaseToState(phase string) string {
 	}
 }
 
+// argoWorkflowTerminal reports whether a Workflow's status.phase is final.
+func argoWorkflowTerminal(phase string) bool {
+	return phase == "Succeeded" || phase == "Failed" || phase == "Error"
+}
+
 // argoRetrySuffixRe strips a retry attempt suffix like "(1)" off a node's
 // displayName, collapsing every attempt of a step back onto the step name.
 // // VERIFY(argo-field): retry displayName suffix format "<name>(<n>)".
@@ -226,6 +231,7 @@ func argoNodeStates(wf map[string]any) (steps map[string]string, wfPhase string)
 
 	podPhase := map[string]string{}
 	retryPhase := map[string]string{}
+	skippedPhase := map[string]string{}
 	for _, raw := range nodes {
 		node, ok := raw.(map[string]any)
 		if !ok {
@@ -240,10 +246,17 @@ func argoNodeStates(wf map[string]any) (steps map[string]string, wfPhase string)
 			podPhase[name] = phase
 		case "Retry":
 			retryPhase[name] = phase
+		case "Skipped":
+			// A task argo never ran: phase "Omitted" (an upstream failed)
+			// or "Skipped" (a when-condition). No pod node exists for it.
+			skippedPhase[name] = phase
 		}
 	}
 
-	steps = make(map[string]string, len(podPhase)+len(retryPhase))
+	steps = make(map[string]string, len(podPhase)+len(retryPhase)+len(skippedPhase))
+	for name, phase := range skippedPhase {
+		steps[name] = argoPhaseToState(phase)
+	}
 	for name, phase := range podPhase {
 		steps[name] = argoPhaseToState(phase)
 	}
@@ -429,8 +442,9 @@ func (s *server) pipelineTickArgoRun(ctx context.Context, run store.PipelineRun,
 		return
 	}
 	var nodeStates map[string]string
+	var wfPhase string
 	if found {
-		nodeStates, _ = argoNodeStates(wf)
+		nodeStates, wfPhase = argoNodeStates(wf)
 	} else if run.Warning == "" {
 		if err := s.st.SetPipelineRunWarning(run.ID, "argo workflow missing"); err != nil {
 			log.Printf("pipeline run %s: argo tick: set warning: %v", run.ID, err)
@@ -446,14 +460,19 @@ func (s *server) pipelineTickArgoRun(ctx context.Context, run store.PipelineRun,
 			continue
 		}
 		newState := nodeStates[row.Name]
+		detail := "argo node " + newState
 		if !found {
-			newState = "failed"
+			newState, detail = "failed", "argo node missing"
+		} else if argoWorkflowTerminal(wfPhase) && (newState == "" || newState == "running") {
+			// The workflow itself is over, so nothing will ever move this
+			// row again: argo never got to it (or its node phase is stale).
+			newState = "skipped"
+			if wfPhase != "Succeeded" {
+				newState = "failed"
+			}
+			detail = "argo workflow " + strings.ToLower(wfPhase)
 		}
 		if newState != "" && newState != "running" && newState != row.State {
-			detail := "argo node missing"
-			if found {
-				detail = "argo node " + newState
-			}
 			if err := s.st.FinishStep(row.ID, newState, detail); err != nil {
 				log.Printf("pipeline run %s: step %s: finish %s: %v", run.ID, row.Name, newState, err)
 			} else {

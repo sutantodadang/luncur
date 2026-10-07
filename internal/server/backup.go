@@ -208,6 +208,20 @@ func (s *server) appNamespace(a store.App) (string, error) {
 	return p.Namespace, nil
 }
 
+// appEnvironment resolves the environment an app lives in. Pre-environments
+// app rows (environment_id 0) get a synthetic environment pointing at the
+// project namespace, mirroring appNamespace.
+func (s *server) appEnvironment(a store.App) (store.Environment, error) {
+	if a.EnvironmentID != 0 {
+		return s.st.GetEnvironmentByID(a.EnvironmentID)
+	}
+	p, err := s.st.GetProjectByID(a.ProjectID)
+	if err != nil {
+		return store.Environment{}, err
+	}
+	return store.Environment{ProjectID: p.ID, Namespace: p.Namespace}, nil
+}
+
 // dumpAddon streams one addon's logical dump via pods/exec. Credentials are
 // referenced from the pod's own environment — never placed on the command
 // line.
