@@ -138,7 +138,7 @@ func (s *server) storeNebiusCreds(c nebiusCreds) error {
 type errGPUUnconfigured struct{ err error }
 
 func (e *errGPUUnconfigured) Error() string { return e.err.Error() }
-func (e *errGPUUnconfigured) Unwrap() error  { return e.err }
+func (e *errGPUUnconfigured) Unwrap() error { return e.err }
 
 // gpuProvider resolves a configured client for name ("vastai" or "nebius"),
 // or an error identifying what's missing/unknown.
@@ -519,10 +519,11 @@ func gpuInstanceJSON(g store.GPUInstance) map[string]any {
 // idle-since state, now, and the window, it returns labels to destroy and the
 // updated idle-since state.
 //
-// ponytail: a Pending GPU pod with no NodeName yet freezes ALL destroys this
-// tick (busy[""]) rather than tracking per-label state through scheduler
-// churn — simplest safe behavior while the scheduler could still place that
-// pod on any node.
+// A Pending GPU pod with no NodeName yet freezes ALL destroys this tick
+// (busy[""]) rather than tracking per-label state through scheduler churn —
+// the scheduler could still place it on any node. GPUBusyNodes stops
+// counting such a pod after gpu_pending_grace_minutes (reportStuckGPUPods
+// says so once), so one unschedulable pod can't keep VMs billing forever.
 func decideIdleDestroys(instances []store.GPUInstance, busy map[string]bool, idleSince map[string]time.Time, now time.Time, window time.Duration) (destroy []string, next map[string]time.Time) {
 	if busy[""] {
 		return nil, idleSince
@@ -577,11 +578,12 @@ func (s *server) runGPUIdleLoop(ctx context.Context) {
 			s.gpuIdleSince = nil
 			continue
 		}
-		busy, err := s.kube.GPUBusyNodes(ctx)
+		busy, stuck, err := s.kube.GPUBusyNodes(ctx, s.gpuPendingGrace())
 		if err != nil {
 			log.Printf("gpu idle check: %v", err)
 			continue
 		}
+		s.reportStuckGPUPods(stuck)
 		destroy, next := decideIdleDestroys(list, busy, s.gpuIdleSince, time.Now(), time.Duration(mins)*time.Minute)
 		s.gpuIdleSince = next
 		if len(destroy) == 0 {
@@ -609,6 +611,30 @@ func (s *server) runGPUIdleLoop(ctx context.Context) {
 				log.Printf("gpu idle mark %s: %v", g.Label, err)
 			}
 			log.Printf("gpu idle: destroyed %s after %dm without GPU pods", g.Label, mins)
+		}
+	}
+}
+
+// reportStuckGPUPods notifies (app_unhealthy) once per GPU pod that stayed
+// unschedulable past the pending grace and so no longer holds back idle
+// destroys. Loop-local state, like gpuIdleSince.
+func (s *server) reportStuckGPUPods(stuck []string) {
+	if s.gpuStuckReported == nil {
+		s.gpuStuckReported = map[string]bool{}
+	}
+	seen := map[string]bool{}
+	for _, name := range stuck {
+		seen[name] = true
+		if s.gpuStuckReported[name] {
+			continue
+		}
+		s.gpuStuckReported[name] = true
+		s.notify(notifyEvent{Event: "app_unhealthy", Project: "gpu", App: name,
+			Err: fmt.Sprintf("unschedulable for over %s — no node has the GPUs it requests; it no longer blocks idle VM destroys", s.gpuPendingGrace())})
+	}
+	for name := range s.gpuStuckReported {
+		if !seen[name] {
+			delete(s.gpuStuckReported, name)
 		}
 	}
 }

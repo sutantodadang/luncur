@@ -11,6 +11,27 @@
 {{if .Banner}}<p class="err mb-4">{{.Banner}}</p>{{end}}
 {{if .PErrNote}}<p class="err mb-4">{{.PErrNote}}</p>{{end}}
 
+<div class="card mb-6" id="templates">
+<h2>From template</h2>
+<div class="grid gap-3 sm:grid-cols-2">
+{{range .Templates}}
+<form method="post" action="/ui/projects/{{$.Project.Name}}/{{if not $.Env.Default}}envs/{{$.Env.Name}}/{{end}}templates/{{.Name}}" class="rounded-md border border-line bg-panel2 p-3">
+  <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+  <div class="mb-1 flex items-center justify-between gap-2">
+    <span class="font-mono text-sm text-inkhi">{{.Name}}</span>
+    <span class="flex gap-1">{{range .Addons}}<span class="chip chip-muted">{{.Type}}</span>{{end}}{{if .Volumes}}<span class="chip chip-muted">volume</span>{{end}}</span>
+  </div>
+  <p class="mb-2 text-xs text-mut">{{.Description}}</p>
+  <div class="flex items-center gap-2">
+    <input class="input w-auto flex-1 font-mono text-xs" name="app_name" value="{{.Name}}" aria-label="app name for {{.Title}}">
+    <button type="submit" class="btn-ghost" hx-confirm="Install {{.Title}} into {{$.Project.Name}}/{{$.Env.Name}}?">install</button>
+  </div>
+  <div class="cli-echo">$ <b>luncur template install {{.Name}} --project {{$.Project.Name}}{{if not $.Env.Default}} --env {{$.Env.Name}}{{end}}</b></div>
+</form>
+{{end}}
+</div>
+</div>
+
 <div class="card mb-6">
 <h2>Create app</h2>
 <form method="post" action="/ui/projects/{{.Project.Name}}/apps" class="flex flex-wrap items-center gap-2">
@@ -208,6 +229,48 @@ function uiPresetChange(preset) {
   </form>
 </details>
 <div class="cli-echo">$ <b>luncur pipeline create &lt;name&gt; --project {{.Project.Name}} --file pipeline.yaml</b></div>
+</div>
+
+<div class="card mb-6" id="status-page">
+<h2>Status page</h2>
+{{if .StatusPage.Published}}<p class="mb-2 text-sm">Published at <a class="font-mono text-inkhi hover:text-signal" href="/status/{{.StatusPage.Slug}}" target="_blank" rel="noopener">/status/{{.StatusPage.Slug}}</a> &middot; <a class="font-mono text-xs text-mut hover:text-inkhi" href="/status/{{.StatusPage.Slug}}/badge.svg" target="_blank" rel="noopener">badge.svg</a></p>
+{{else}}<p class="mb-2 text-sm text-mut">A public page with your apps' uptime and incidents. Nothing internal is shown.</p>{{end}}
+<form method="post" action="/ui/projects/{{.Project.Name}}/status-page" class="flex flex-wrap items-end gap-2">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <label class="flex flex-col gap-1 text-xs text-mut">slug<input class="input w-40 font-mono" name="slug" value="{{.StatusPage.Slug}}" required></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">title<input class="input w-48" name="title" value="{{.StatusPage.Title}}" placeholder="{{.Project.Name}}"></label>
+  <label class="flex flex-col gap-1 text-xs text-mut">apps (comma-separated)<input class="input w-56 font-mono" name="apps" value="{{.StatusPage.AppsCSV}}" placeholder="web,api"></label>
+  <button type="submit" class="btn">{{if .StatusPage.Published}}save{{else}}publish{{end}}</button>
+</form>
+{{if .StatusPage.Published}}<form method="post" action="/ui/projects/{{.Project.Name}}/status-page" class="mt-2"><input type="hidden" name="_csrf" value="{{.CSRF}}"><input type="hidden" name="unpublish" value="1"><button type="submit" class="btn-danger" hx-confirm="Unpublish the status page?">unpublish</button></form>{{end}}
+<div class="cli-echo">$ <b>luncur status-page enable --project {{.Project.Name}} --slug {{.StatusPage.Slug}} --apps web</b></div>
+</div>
+
+<div class="card mb-6" id="incidents">
+<h2>Incidents</h2>
+{{if not .Incidents}}<p class="mb-1 text-sm text-mut">No incidents. Uptime checks open one automatically after 3 failed probes.</p>{{end}}
+{{range .Incidents}}
+<div class="mb-3 border-b border-row pb-3">
+  <p class="text-sm text-inkhi">#{{.ID}} {{.Title}} <span class="chip {{if eq .Status "open"}}chip-bad{{else}}chip-ok{{end}}">{{.Status}}</span>{{if .Auto}} <span class="chip chip-muted">auto</span>{{end}}</p>
+  <p class="font-mono text-[11px] text-mut">{{if .App}}{{.App}} &middot; {{end}}opened {{.OpenedAt}}{{if .ResolvedAt}} &middot; resolved {{.ResolvedAt}}{{end}}</p>
+  {{range .Updates}}<p class="mt-1 text-xs"><span class="font-mono text-mut">{{.CreatedAt}}</span> {{.Body}}</p>{{end}}
+  {{if eq .Status "open"}}<div class="mt-2 flex flex-wrap items-center gap-2">
+    <form method="post" action="/ui/projects/{{$.Project.Name}}/incidents" class="flex items-center gap-2"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="note"><input type="hidden" name="id" value="{{.ID}}"><input class="input w-64" name="body" placeholder="update" required><button type="submit" class="btn-ghost">post update</button></form>
+    <form method="post" action="/ui/projects/{{$.Project.Name}}/incidents"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="resolve"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" class="btn-ghost">resolve</button></form>
+  </div>{{end}}
+</div>
+{{end}}
+<details class="mt-2">
+  <summary class="cursor-pointer text-xs text-mut">open an incident (e.g. planned maintenance)</summary>
+  <form method="post" action="/ui/projects/{{.Project.Name}}/incidents" class="mt-2 flex flex-wrap items-end gap-2">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="open">
+    <input class="input w-64" name="title" placeholder="title" required>
+    <input class="input w-32 font-mono" name="app" placeholder="app (optional)">
+    <input class="input w-auto flex-1" name="body" placeholder="first update (optional)">
+    <button type="submit" class="btn">open incident</button>
+  </form>
+</details>
+<div class="cli-echo">$ <b>luncur incident open "Planned maintenance" --project {{.Project.Name}}</b> &middot; $ <b>luncur incident resolve &lt;id&gt; --project {{.Project.Name}}</b></div>
 </div>
 
 <div class="card mb-6">

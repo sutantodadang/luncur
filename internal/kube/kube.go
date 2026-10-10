@@ -72,6 +72,10 @@ var gvrByKind = map[string]schema.GroupVersionResource{
 	"ResourceQuota":       {Group: "", Version: "v1", Resource: "resourcequotas"},
 	"LimitRange":          {Group: "", Version: "v1", Resource: "limitranges"},
 	"PodDisruptionBudget": {Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"},
+	// Traefik's CRDs (bundled with K3s) for canary / blue-green weighted
+	// routing (internal/server/canary.go).
+	"TraefikService": {Group: "traefik.io", Version: "v1alpha1", Resource: "traefikservices"},
+	"IngressRoute":   {Group: "traefik.io", Version: "v1alpha1", Resource: "ingressroutes"},
 }
 
 // clusterScoped marks kinds Apply must patch without a namespace.
@@ -180,15 +184,19 @@ func (c *Client) EnsureNamespaceWithPolicy(ctx context.Context, name, policy str
 // luncurIsolationPolicy is the project-isolation NetworkPolicy applied to
 // every project namespace when the network_isolation setting is on: ingress
 // only from pods in the same namespace, the ingress controller (kube-system
-// on k3s), and luncur-system (the panel proxies addon UIs, e.g. mlflow).
-// Egress is deliberately untouched.
+// on k3s), and the luncur server pod itself (the panel proxies addon UIs,
+// e.g. mlflow, and one-click forwards). The luncur-system peer is narrowed
+// to the server pod (namespaceSelector AND podSelector in one element):
+// user BuildKit builds also run in luncur-system, and a build's RUN step
+// must not reach isolated tenants. Egress is deliberately untouched.
 const luncurIsolationPolicy = `{"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy",
  "metadata":{"name":"luncur-isolation","labels":{"app.kubernetes.io/managed-by":"luncur"}},
  "spec":{"podSelector":{},"policyTypes":["Ingress"],
    "ingress":[{"from":[
      {"podSelector":{}},
      {"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}}},
-     {"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"luncur-system"}}}
+     {"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"luncur-system"}},
+      "podSelector":{"matchLabels":{"app.kubernetes.io/name":"luncur"}}}
    ]}]}}`
 
 // ApplyIsolation server-side-applies the project-isolation NetworkPolicy
@@ -307,6 +315,22 @@ func clusterRoleToUnstructured(cr *rbacv1.ClusterRole) (*unstructured.Unstructur
 	return &unstructured.Unstructured{Object: m}, nil
 }
 
+// HasCRD reports whether a CustomResourceDefinition (e.g.
+// "traefikservices.traefik.io") is installed.
+func (c *Client) HasCRD(ctx context.Context, name string) (bool, error) {
+	if c.dyn == nil {
+		return false, nil
+	}
+	u, err := c.dyn.Resource(gvrByKind["CustomResourceDefinition"]).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return u != nil, nil
+}
+
 // HasWorkflowCRD reports whether the Argo Workflows CRD is installed —
 // the preflight `startPipelineRun` uses before compiling a run onto the
 // argo engine (spec §Argo: friendly "run `luncur argo install`" error
@@ -365,6 +389,14 @@ func (c *Client) DeleteAppObjects(ctx context.Context, namespace, app string) er
 		{"HorizontalPodAutoscaler", app},
 		{"PodDisruptionBudget", app},
 		{"Secret", render.SecretName(app)},
+		// A canary / blue-green rollout's track and routing (see
+		// internal/server/canary.go); NotFound when none ran (or the
+		// Traefik CRDs aren't installed).
+		{"Deployment", app + "-canary"},
+		{"Service", app + "-canary"},
+		{"IngressRoute", app + "-split-web"},
+		{"IngressRoute", app + "-split-websecure"},
+		{"TraefikService", app + "-split"},
 	}
 	for _, t := range targets {
 		err := c.dyn.Resource(gvrByKind[t.kind]).Namespace(namespace).Delete(
@@ -1012,6 +1044,8 @@ type NodeInfo struct {
 	GPU         bool   `json:"gpu"`
 	GPUCapacity int64  `json:"gpu_capacity"`
 	MetricsOK   bool   `json:"metrics_available"`
+	// Cordoned is spec.unschedulable: no new pods land here.
+	Cordoned bool `json:"cordoned"`
 }
 
 // ListNodes summarizes every cluster node: role (control-plane label or
@@ -1068,7 +1102,8 @@ func (c *Client) ListNodes(ctx context.Context) ([]NodeInfo, error) {
 			ip = internal
 		}
 		info := NodeInfo{
-			Name: n.Name, Role: role, Ready: ready, IP: ip,
+			Cordoned: n.Spec.Unschedulable,
+			Name:     n.Name, Role: role, Ready: ready, IP: ip,
 			Version:     n.Status.NodeInfo.KubeletVersion,
 			CPUCapMilli: n.Status.Allocatable.Cpu().MilliValue(),
 			MemCapMiB:   n.Status.Allocatable.Memory().Value() / (1 << 20),
@@ -1129,6 +1164,9 @@ func (c *Client) StatefulSetReady(ctx context.Context, namespace, name string) (
 	}
 	if err != nil {
 		return false, err
+	}
+	if u == nil {
+		return false, nil
 	}
 	n, _, _ := unstructured.NestedInt64(u.Object, "status", "readyReplicas")
 	return n >= 1, nil
@@ -1422,16 +1460,19 @@ func (c *Client) CronRuns(ctx context.Context, namespace, app string) ([]CronRun
 // candidate. Pending pods with no NodeName yet (unscheduled) can't be
 // attributed to a node, so they're recorded under the "" key instead —
 // callers treat that as "freeze all destroys," since the scheduler may still
-// place the pod on any node this tick.
-func (c *Client) GPUBusyNodes(ctx context.Context) (map[string]bool, error) {
+// place the pod on any node this tick. An unscheduled pod older than
+// pendingGrace stops counting (it likely asks for more than any node has,
+// and must not keep rented VMs billing forever); it's returned in stuck
+// ("namespace/name") so the caller can report it instead.
+func (c *Client) GPUBusyNodes(ctx context.Context, pendingGrace time.Duration) (busy map[string]bool, stuck []string, err error) {
 	if c.cs == nil {
-		return nil, fmt.Errorf("kubernetes client not configured")
+		return nil, nil, fmt.Errorf("kubernetes client not configured")
 	}
 	pods, err := c.cs.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	busy := map[string]bool{}
+	busy = map[string]bool{}
 	for _, p := range pods.Items {
 		if p.Status.Phase != corev1.PodPending && p.Status.Phase != corev1.PodRunning {
 			continue
@@ -1439,7 +1480,11 @@ func (c *Client) GPUBusyNodes(ctx context.Context) (map[string]bool, error) {
 		if !podRequestsGPU(&p) {
 			continue
 		}
+		if p.Spec.NodeName == "" && pendingGrace > 0 && !p.CreationTimestamp.IsZero() && time.Since(p.CreationTimestamp.Time) > pendingGrace {
+			stuck = append(stuck, p.Namespace+"/"+p.Name)
+			continue
+		}
 		busy[p.Spec.NodeName] = true
 	}
-	return busy, nil
+	return busy, stuck, nil
 }

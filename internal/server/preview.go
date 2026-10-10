@@ -154,6 +154,9 @@ func (s *server) handleProjectWebhook(w http.ResponseWriter, r *http.Request) {
 		webhookUnauthorized(w)
 		return
 	}
+	if s.webhookReplay(w, r, "project:"+p.Name) {
+		return
+	}
 
 	if info := auditFrom(r.Context()); info != nil {
 		info.Email = "webhook"
@@ -540,6 +543,9 @@ func (s *server) clonePreviewApp(env store.Environment, base store.App, branch s
 		if err := s.st.SetHealthPath(a.ID, base.HealthPath); err != nil {
 			return fmt.Errorf("set health path: %w", err)
 		}
+	}
+	if err := s.st.CopyAppPolicy(base.ID, a.ID); err != nil {
+		return fmt.Errorf("copy rollout policy: %w", err)
 	}
 	if base.Internal {
 		if err := s.st.SetInternal(a.ID, true); err != nil {

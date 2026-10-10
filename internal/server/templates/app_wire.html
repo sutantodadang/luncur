@@ -44,6 +44,49 @@
 </div>
 {{end}}
 
+{{if not .App.Ejected}}
+<div class="card mb-6" id="rollout-policy">
+<h2>Rollout</h2>
+<form method="post" action="/ui/projects/{{.Project.Name}}/apps/{{.App.Name}}/policy" class="flex flex-col gap-3">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input type="hidden" name="auto_rollback_present" value="1">
+  <div class="flex flex-wrap items-end gap-3">
+    {{if or (eq .App.Kind "web") (eq .App.Kind "worker") (eq .App.Kind "model")}}
+    <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="auto_rollback" value="1" {{if .Policy.AutoRollback}}checked{{end}}> auto-rollback on failed rollout</label>
+    <label class="flex flex-col gap-1 text-xs text-mut">rollout timeout (s)<input class="input w-24" type="number" name="rollout_timeout" min="30" max="3600" value="{{.Policy.RolloutTimeout}}"></label>
+    {{end}}
+    {{if eq .App.Kind "web"}}
+    <label class="flex flex-col gap-1 text-xs text-mut">default probe<select class="input" name="probe">
+      <option value="auto" {{if eq .Policy.Probe "auto"}}selected{{end}}>auto (TCP when no health path)</option>
+      <option value="off" {{if eq .Policy.Probe "off"}}selected{{end}}>off</option>
+    </select></label>
+    {{end}}
+    <label class="flex flex-col gap-1 text-xs text-mut">pod security<select class="input" name="security">
+      <option value="baseline" {{if eq .Policy.Security "baseline"}}selected{{end}}>baseline</option>
+      <option value="restricted" {{if eq .Policy.Security "restricted"}}selected{{end}}>restricted (non-root)</option>
+      <option value="relaxed" {{if eq .Policy.Security "relaxed"}}selected{{end}}>relaxed</option>
+    </select></label>
+  </div>
+  {{if eq .App.Kind "web"}}
+  <div class="flex flex-wrap items-end gap-3">
+    <label class="flex flex-col gap-1 text-xs text-mut">strategy<select class="input" name="strategy">
+      <option value="rolling" {{if eq .Policy.Strategy "rolling"}}selected{{end}}>rolling</option>
+      <option value="canary" {{if eq .Policy.Strategy "canary"}}selected{{end}} {{if .Policy.StrategyBlocked}}disabled{{end}}>canary</option>
+      <option value="bluegreen" {{if eq .Policy.Strategy "bluegreen"}}selected{{end}} {{if .Policy.StrategyBlocked}}disabled{{end}}>blue-green</option>
+    </select></label>
+    <label class="flex flex-col gap-1 text-xs text-mut">canary steps %<input class="input w-28 font-mono" name="canary_steps" value="{{.Policy.Steps}}"></label>
+    <label class="flex flex-col gap-1 text-xs text-mut">step hold (s)<input class="input w-24" type="number" name="canary_interval" min="10" max="3600" value="{{.Policy.CanaryInterval}}"></label>
+    <label class="flex flex-col gap-1 text-xs text-mut">min success %<input class="input w-24" type="number" name="canary_min_success" min="50" max="100" value="{{.Policy.CanaryMinSuccess}}"></label>
+    <label class="flex flex-col gap-1 text-xs text-mut">blue-green keep (s)<input class="input w-24" type="number" name="bluegreen_keep" min="0" max="86400" value="{{.Policy.BlueGreenKeep}}"></label>
+  </div>
+  {{if .Policy.StrategyBlocked}}<p class="text-xs text-mut">canary / blue-green unavailable: {{.Policy.StrategyBlocked}}</p>{{end}}
+  {{end}}
+  <div><button type="submit" class="btn">save</button></div>
+</form>
+<div class="cli-echo">$ <b>luncur app set {{.App.Name}} --project {{.Project.Name}}{{if not .Env.Default}} --env {{.Env.Name}}{{end}} --auto-rollback {{if .Policy.AutoRollback}}on{{else}}off{{end}} --security {{.Policy.Security}}{{if eq .App.Kind "web"}} --strategy {{.Policy.Strategy}}{{end}}</b></div>
+</div>
+{{end}}
+
 {{if and (not .App.Ejected) (eq .App.Kind "web") (not .App.Internal)}}
 <div class="card mb-6">
 <h2>Domains</h2>

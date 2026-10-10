@@ -388,3 +388,39 @@ func mergeHeaders(maps ...map[string]string) map[string]string {
 	}
 	return out
 }
+
+// S9: a replayed signed delivery (same X-GitHub-Delivery) does nothing.
+func TestWebhookReplayIsIgnored(t *testing.T) {
+	t.Parallel()
+	srv, st := webhookTestServer(t)
+	admin := seedUserToken(t, st, "root@b.co", "admin")
+	doAuthed(t, "POST", srv.URL+"/v1/projects", admin, `{"name":"proj"}`).Body.Close()
+	doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps", admin,
+		`{"name":"g","port":8080,"git_url":"https://x/y.git"}`).Body.Close()
+	path, secretHex := decodeWebhookEnable(t, doAuthed(t, "POST", srv.URL+"/v1/projects/proj/apps/g/webhook", admin, ""))
+	body := []byte(`{"ref":"refs/heads/main"}`)
+	headers := map[string]string{"X-Hub-Signature-256": githubSig(secretHex, body), "X-GitHub-Event": "push", "X-GitHub-Delivery": "d-1"}
+
+	first := postWebhook(t, srv.URL+path, headers, body)
+	first.Body.Close()
+	if first.StatusCode != http.StatusAccepted {
+		t.Fatalf("first delivery = %d, want 202", first.StatusCode)
+	}
+	second := postWebhook(t, srv.URL+path, headers, body)
+	b, _ := io.ReadAll(second.Body)
+	second.Body.Close()
+	if second.StatusCode != http.StatusOK || !strings.Contains(string(b), `"duplicate":true`) {
+		t.Fatalf("replay = %d %s, want 200 duplicate", second.StatusCode, b)
+	}
+	a, _ := st.GetApp(mustProjectID(t, st, "proj"), "g")
+	if n, _ := st.CountDeployments(a.ID); n != 1 {
+		t.Fatalf("deploys = %d, want 1 (replay must not deploy)", n)
+	}
+	// A new delivery id is a new push.
+	headers["X-GitHub-Delivery"] = "d-2"
+	third := postWebhook(t, srv.URL+path, headers, body)
+	third.Body.Close()
+	if third.StatusCode != http.StatusAccepted {
+		t.Fatalf("new delivery = %d, want 202", third.StatusCode)
+	}
+}

@@ -1,0 +1,13 @@
+name: umami
+title: Umami
+description: Privacy-friendly, cookie-free web analytics.
+category: analytics
+app:
+  image: umamisoftware/umami:3.3.1
+  port: 3000
+  health_path: /api/heartbeat
+addons:
+  - {key: db, type: postgres}
+env:
+  DATABASE_URL: ${addon.db.url}
+  APP_SECRET: ${random:48}

@@ -38,6 +38,13 @@ independently after `gpu_idle_minutes` (a setting; `0`/unset disables it) of
 no GPU pod scheduled on it, so an always-on inference node survives while a
 burst training node on the same account gets reaped on its own schedule.
 
+A GPU pod that is still **Pending with no node** pauses every idle destroy:
+the scheduler might place it on any node. To stop a pod that can never be
+scheduled from billing your VMs forever, that pause lasts only
+`gpu_pending_grace_minutes` (default 30). A typical cause is a pod asking for
+more GPUs than any node has. After the grace period the pod no longer counts,
+and it is reported once as `app_unhealthy`.
+
 !!! note "Nebius support is not yet verified live"
     Nebius support is docs-derived (API shapes read from docs.nebius.com, not
     yet confirmed against a live account) — see

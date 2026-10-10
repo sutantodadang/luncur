@@ -9,6 +9,7 @@ import (
 func rollbackCmd() *cobra.Command {
 	var project string
 	var deploy int64
+	var noWait bool
 	cmd := &cobra.Command{
 		Use:   "rollback <app>",
 		Short: "Redeploy a previous deployment's image",
@@ -40,16 +41,16 @@ func rollbackCmd() *cobra.Command {
 					return fmt.Errorf("no deploy #%d found for %s", deploy, args[0])
 				}
 			}
-			newSeq, err := c.Rollback(project, args[0], targetID)
+			res, err := c.Rollback(project, args[0], targetID)
 			if err != nil {
 				return err
 			}
-			cmd.Printf("rolled back (new deploy #%d)\n", newSeq)
-			return nil
+			return waitRollout(cmd, c, project, args[0], res, noWait, "rolled back")
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project name")
 	cmd.MarkFlagRequired("project")
 	cmd.Flags().Int64Var(&deploy, "deploy", 0, "deploy number to roll back to, as shown by `luncur status` (default: previous live)")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return once applied instead of waiting for the rollout")
 	return cmd
 }

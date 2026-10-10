@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -269,6 +270,12 @@ type DeployResult struct {
 	Seq          int64  `json:"seq"`
 	Status       string `json:"status"`
 	URL          string `json:"url"`
+	// FailReason/Why are the rollout gate's verdict on a failed deploy;
+	// Ready/Want its new-pod progress while deploying.
+	FailReason string `json:"fail_reason,omitempty"`
+	Why        string `json:"why,omitempty"`
+	Ready      int    `json:"ready,omitempty"`
+	Want       int    `json:"want,omitempty"`
 }
 
 // DeployInfo is one row of an app's deploy history, as returned by
@@ -281,6 +288,7 @@ type DeployInfo struct {
 	Image          string `json:"image"`
 	CreatedAt      string `json:"created_at"`
 	RolledBackFrom string `json:"rolled_back_from,omitempty"`
+	FailReason     string `json:"fail_reason,omitempty"`
 }
 
 func (c *Client) CreateProject(name string) (ProjectInfo, error) {
@@ -878,14 +886,11 @@ func (c *Client) SetSetting(key, value string) error {
 // Rollback redeploys a previous deployment's image (deployID == "" auto-picks
 // the previous live deployment) and returns the new deployment's per-app
 // seq (deploy number) — the human-facing number, not the internal id.
-func (c *Client) Rollback(project, app string, deployID string) (int64, error) {
-	var out struct {
-		DeploymentID string `json:"deployment_id"`
-		Seq          int64  `json:"seq"`
-	}
+func (c *Client) Rollback(project, app string, deployID string) (DeployResult, error) {
+	var out DeployResult
 	err := c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/rollback",
 		map[string]string{"deploy_id": deployID}, &out)
-	return out.Seq, err
+	return out, err
 }
 
 // S3Config is a project's external S3 configuration. SecretKey is only
@@ -1407,6 +1412,20 @@ type Node struct {
 	GPU         bool   `json:"gpu"`
 	GPUCapacity int64  `json:"gpu_capacity"`
 	MetricsOK   bool   `json:"metrics_available"`
+	Cordoned    bool   `json:"cordoned"`
+	Drain       *struct {
+		State   string   `json:"state"`
+		Total   int      `json:"total"`
+		Evicted int      `json:"evicted"`
+		Blocked []string `json:"blocked"`
+		Error   string   `json:"error"`
+	} `json:"drain"`
+}
+
+// NodeAction runs cordon, uncordon or drain on a node (admin only). Drain
+// starts in the background; poll ListNodes for its progress.
+func (c *Client) NodeAction(name, action string, force bool, timeoutSec int) error {
+	return c.do("POST", "/v1/nodes/"+url.PathEscape(name)+"/"+action, map[string]any{"force": force, "timeout": timeoutSec}, nil)
 }
 
 // ListNodes fetches every cluster node (admin only).
@@ -1724,4 +1743,279 @@ func (c *Client) CreatePreview(project, branch, from string) (PreviewInfo, error
 func (c *Client) DeletePreview(project, name string) error {
 	return c.do("DELETE",
 		"/v1/projects/"+url.PathEscape(project)+"/previews/"+url.PathEscape(name), nil, nil)
+}
+
+// AppPolicy is an app's reliability and rollout policy.
+type AppPolicy struct {
+	AutoRollback     bool   `json:"auto_rollback"`
+	RolloutTimeout   int    `json:"rollout_timeout"`
+	Probe            string `json:"probe"`
+	Security         string `json:"security"`
+	Strategy         string `json:"strategy"`
+	CanarySteps      []int  `json:"canary_steps"`
+	CanaryInterval   int    `json:"canary_interval"`
+	CanaryMinSuccess int    `json:"canary_min_success"`
+	BlueGreenKeep    int    `json:"bluegreen_keep"`
+}
+
+// GetPolicy fetches the app's policy.
+func (c *Client) GetPolicy(project, app string) (AppPolicy, error) {
+	var out AppPolicy
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/policy", nil, &out)
+	return out, err
+}
+
+// SetPolicy applies a partial policy update (only the given keys change)
+// and returns the resulting policy.
+func (c *Client) SetPolicy(project, app string, patch map[string]any) (AppPolicy, error) {
+	var out AppPolicy
+	err := c.do("PUT", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/policy", patch, &out)
+	return out, err
+}
+
+// RolloutInfo is an app's canary / blue-green rollout state.
+type RolloutInfo struct {
+	Active      bool   `json:"active"`
+	DeployID    string `json:"deploy_id"`
+	Seq         int64  `json:"seq"`
+	Strategy    string `json:"strategy"`
+	Phase       string `json:"phase"`
+	Step        int    `json:"step"`
+	Weight      int    `json:"weight"`
+	Steps       []int  `json:"steps"`
+	SuccessRate int    `json:"success_rate"`
+	ProbesOK    int    `json:"probes_ok"`
+	ProbesTotal int    `json:"probes_total"`
+	Note        string `json:"note"`
+}
+
+// GetRollout fetches the app's active rollout ({active:false} when none).
+func (c *Client) GetRollout(project, app string) (RolloutInfo, error) {
+	var out RolloutInfo
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/rollout", nil, &out)
+	return out, err
+}
+
+// RolloutAction requests promote or abort of the app's active rollout.
+func (c *Client) RolloutAction(project, app, action string) error {
+	return c.do("POST", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/rollout/"+action, nil, nil)
+}
+
+// UptimeInfo is an app's uptime check and stats.
+type UptimeInfo struct {
+	Enabled   bool   `json:"enabled"`
+	External  bool   `json:"external"`
+	Path      string `json:"path"`
+	State     string `json:"state"`
+	LastAt    string `json:"last_at"`
+	LastError string `json:"last_error"`
+	URL       string `json:"url"`
+	Stats     struct {
+		Pct24h float64 `json:"pct_24h"`
+		Pct30d float64 `json:"pct_30d"`
+		Pct90d float64 `json:"pct_90d"`
+		P95MS  int     `json:"p95_ms_24h"`
+	} `json:"stats"`
+}
+
+// GetUptime fetches the app's uptime check.
+func (c *Client) GetUptime(project, app string) (UptimeInfo, error) {
+	var out UptimeInfo
+	err := c.do("GET", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/uptime", nil, &out)
+	return out, err
+}
+
+// SetUptime applies a partial uptime check update.
+func (c *Client) SetUptime(project, app string, patch map[string]any) (UptimeInfo, error) {
+	var out UptimeInfo
+	err := c.do("PUT", c.EnvPath(project, c.env)+"/apps/"+url.PathEscape(app)+"/uptime", patch, &out)
+	return out, err
+}
+
+// StatusPageInfo is a project's public status page config.
+type StatusPageInfo struct {
+	Enabled bool     `json:"enabled"`
+	Slug    string   `json:"slug"`
+	Title   string   `json:"title"`
+	Apps    []string `json:"apps"`
+	Path    string   `json:"path"`
+}
+
+// GetStatusPage fetches the project's status page config.
+func (c *Client) GetStatusPage(project string) (StatusPageInfo, error) {
+	var out StatusPageInfo
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/status-page", nil, &out)
+	return out, err
+}
+
+// SetStatusPage publishes (or updates) the project's status page.
+func (c *Client) SetStatusPage(project string, in map[string]any) (StatusPageInfo, error) {
+	var out StatusPageInfo
+	err := c.do("PUT", "/v1/projects/"+url.PathEscape(project)+"/status-page", in, &out)
+	return out, err
+}
+
+// DeleteStatusPage unpublishes the project's status page.
+func (c *Client) DeleteStatusPage(project string) error {
+	return c.do("DELETE", "/v1/projects/"+url.PathEscape(project)+"/status-page", nil, nil)
+}
+
+// IncidentInfo is one incident.
+type IncidentInfo struct {
+	ID         int64  `json:"id"`
+	App        string `json:"app"`
+	Title      string `json:"title"`
+	Status     string `json:"status"`
+	Auto       bool   `json:"auto"`
+	OpenedAt   string `json:"opened_at"`
+	ResolvedAt string `json:"resolved_at"`
+	Updates    []struct {
+		Body      string `json:"body"`
+		CreatedAt string `json:"created_at"`
+	} `json:"updates"`
+}
+
+// ListIncidents lists a project's incidents.
+func (c *Client) ListIncidents(project string) ([]IncidentInfo, error) {
+	var out struct {
+		Incidents []IncidentInfo `json:"incidents"`
+	}
+	err := c.do("GET", "/v1/projects/"+url.PathEscape(project)+"/incidents", nil, &out)
+	return out.Incidents, err
+}
+
+// OpenIncident opens an incident (app "" = project-wide).
+func (c *Client) OpenIncident(project, title, app, body string) (IncidentInfo, error) {
+	var out IncidentInfo
+	err := c.do("POST", "/v1/projects/"+url.PathEscape(project)+"/incidents", map[string]string{"title": title, "app": app, "body": body}, &out)
+	return out, err
+}
+
+// IncidentNote adds an update to an incident.
+func (c *Client) IncidentNote(project string, id int64, body string) error {
+	return c.do("POST", fmt.Sprintf("/v1/projects/%s/incidents/%d/updates", url.PathEscape(project), id), map[string]string{"body": body}, nil)
+}
+
+// ResolveIncident resolves an incident.
+func (c *Client) ResolveIncident(project string, id int64) error {
+	return c.do("POST", fmt.Sprintf("/v1/projects/%s/incidents/%d/resolve", url.PathEscape(project), id), nil, nil)
+}
+
+// Server is the base URL this client talks to.
+func (c *Client) Server() string { return c.base }
+
+// TemplateInfo is one gallery template.
+type TemplateInfo struct {
+	Name        string   `json:"name"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Category    string   `json:"category"`
+	Image       string   `json:"image"`
+	Addons      []string `json:"addons"`
+	Volumes     int      `json:"volumes"`
+}
+
+// ListTemplates lists the one-click template gallery.
+func (c *Client) ListTemplates() ([]TemplateInfo, error) {
+	var out struct {
+		Templates []TemplateInfo `json:"templates"`
+	}
+	err := c.do("GET", "/v1/templates", nil, &out)
+	return out.Templates, err
+}
+
+// TemplateInstallResult reports a template install's steps.
+type TemplateInstallResult struct {
+	App   string `json:"app"`
+	Seq   int64  `json:"seq"`
+	URL   string `json:"url"`
+	Error string `json:"error"`
+	Steps []struct {
+		Step   string `json:"step"`
+		OK     bool   `json:"ok"`
+		Detail string `json:"detail"`
+	} `json:"steps"`
+}
+
+// InstallTemplate installs a template as app (name "" = the template's).
+// The steps are returned even when the install fails part-way.
+func (c *Client) InstallTemplate(project, name, app string, env map[string]string) (TemplateInstallResult, error) {
+	var out TemplateInstallResult
+	req, err := http.NewRequest("POST", c.base+c.EnvPath(project, c.env)+"/templates/"+url.PathEscape(name)+"/install",
+		bytes.NewReader(mustJSON(map[string]any{"app_name": app, "env": env})))
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if json.Unmarshal(body, &out) != nil || resp.StatusCode >= 300 {
+		if out.Error != "" {
+			return out, errors.New(out.Error)
+		}
+		var envErr struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(body, &envErr) == nil && envErr.Error.Message != "" {
+			return out, errors.New(envErr.Error.Message)
+		}
+		if resp.StatusCode >= 300 {
+			return out, fmt.Errorf("server returned %s", resp.Status)
+		}
+	}
+	return out, nil
+}
+
+func mustJSON(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
+}
+
+// InsightsReport is the cost / right-sizing report.
+type InsightsReport struct {
+	Prices struct {
+		Currency string  `json:"currency"`
+		CPUCore  float64 `json:"cpu_core_month"`
+		MemGB    float64 `json:"memory_gb_month"`
+	} `json:"prices"`
+	MetricsOK    bool    `json:"metrics_available"`
+	MonthlyTotal float64 `json:"monthly_total"`
+	SavingsTotal float64 `json:"monthly_savings_total"`
+	Apps         []struct {
+		Project  string  `json:"project"`
+		Env      string  `json:"env"`
+		App      string  `json:"app"`
+		Replicas int     `json:"replicas"`
+		CPUReq   int64   `json:"cpu_request_millicores"`
+		MemReq   int64   `json:"memory_request_mib"`
+		CPUP95   int64   `json:"cpu_p95_millicores"`
+		MemMax   int64   `json:"memory_max_mib"`
+		Hours    int     `json:"hours"`
+		RecCPU   int64   `json:"recommended_cpu_millicores"`
+		RecMem   int64   `json:"recommended_memory_mib"`
+		Flag     string  `json:"flag"`
+		Monthly  float64 `json:"monthly_cost"`
+		Savings  float64 `json:"monthly_savings"`
+		ScaleCmd string  `json:"scale_command"`
+	} `json:"apps"`
+}
+
+// Insights fetches the report (project "" = every project you can see).
+func (c *Client) Insights(project string) (InsightsReport, error) {
+	var out InsightsReport
+	path := "/v1/insights"
+	if project != "" {
+		path += "?project=" + url.QueryEscape(project)
+	}
+	err := c.do("GET", path, nil, &out)
+	return out, err
 }

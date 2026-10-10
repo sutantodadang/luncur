@@ -106,6 +106,24 @@ type server struct {
 	aiAPIHandler http.Handler
 	aiConvs      aiConversations
 
+	// hardening caches cluster facts for render's hardening knobs.
+	hardening hardeningState
+
+	// drains tracks node drains (nodes.go).
+	drains drainTracker
+
+	// canaryProbeFn replaces canary.go's HTTP probe in tests.
+	canaryProbeFn func(url string) bool
+
+	// Uptime / status pages (uptime.go, statuspage.go). uptimeProbeFn
+	// replaces the HTTP probe in tests.
+	uptimeProbeFn func(url string) uptimeResult
+	statusLimiter *rateLimiter
+	statusCache   statusCache
+
+	// usage folds monitor samples into hourly aggregates (insights.go).
+	usage usageAccumulator
+
 	// lastRegistryGC tracks the last completed weekly registry GC sweep,
 	// in memory only — StartRegistryGC uses it to decide when to run again.
 	lastRegistryGC time.Time
@@ -114,6 +132,9 @@ type server struct {
 	// seen idle (no GPU pod scheduled on it). In-memory, loop-local state
 	// for runGPUIdleLoop — written only by that single goroutine.
 	gpuIdleSince map[string]time.Time
+	// gpuStuckReported dedupes reportStuckGPUPods notifications (same
+	// single-goroutine ownership as gpuIdleSince).
+	gpuStuckReported map[string]bool
 
 	// sweepMLflowDown tracks, per sweep id, whether its mlflow addon has
 	// already been found unreachable this sweep's lifetime — once set, the
@@ -189,6 +210,7 @@ func newServer(d Deps) *server {
 		httpClient:      &http.Client{Timeout: 5 * time.Second},
 		mon:             newMonitor(),
 		loginLimiter:    newRateLimiter(time.Now),
+		statusLimiter:   &rateLimiter{hits: map[string]int{}, now: time.Now, limit: statusLimit},
 	}
 	if d.Kube != nil {
 		s.execer = d.Kube
@@ -324,6 +346,26 @@ func (s *server) handler() http.Handler {
 	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/scale", s.authed(s.handleScaleApp))
 	routeEnv(mux, "PUT /v1/projects/{project}/apps/{app}/autoscale", s.authed(s.handleAutoscaleApp))
 	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/health", s.authed(s.handleSetHealth))
+	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/policy", s.authed(s.handleGetPolicy))
+	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/rollout", s.authed(s.handleGetRollout))
+	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/uptime", s.authed(s.handleGetUptime))
+	mux.HandleFunc("GET /v1/templates", s.authed(s.handleListTemplates))
+	mux.HandleFunc("GET /v1/insights", s.authed(s.handleInsights))
+	routeEnv(mux, "POST /v1/projects/{project}/templates/{name}/install", s.authed(s.handleInstallTemplate))
+	routeEnv(mux, "PUT /v1/projects/{project}/apps/{app}/uptime", s.authed(s.handlePutUptime))
+	mux.HandleFunc("GET /v1/projects/{project}/incidents", s.authed(s.handleListIncidents))
+	mux.HandleFunc("POST /v1/projects/{project}/incidents", s.authed(s.handleOpenIncident))
+	mux.HandleFunc("POST /v1/projects/{project}/incidents/{id}/updates", s.authed(s.handleIncidentUpdate))
+	mux.HandleFunc("POST /v1/projects/{project}/incidents/{id}/resolve", s.authed(s.handleResolveIncident))
+	mux.HandleFunc("GET /v1/projects/{project}/status-page", s.authed(s.handleGetStatusPage))
+	mux.HandleFunc("PUT /v1/projects/{project}/status-page", s.authed(s.handlePutStatusPage))
+	mux.HandleFunc("DELETE /v1/projects/{project}/status-page", s.authed(s.handleDeleteStatusPage))
+	// Public, unauthenticated, rate-limited status pages.
+	mux.HandleFunc("GET /status/{slug}", s.statusLimited(s.handlePublicStatus))
+	mux.HandleFunc("GET /status/{slug}/badge.svg", s.statusLimited(s.handlePublicStatusBadge))
+	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/rollout/promote", s.authed(s.handleRolloutAction("promote")))
+	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/rollout/abort", s.authed(s.handleRolloutAction("abort")))
+	routeEnv(mux, "PUT /v1/projects/{project}/apps/{app}/policy", s.authed(s.handlePutPolicy))
 	routeEnv(mux, "POST /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookEnable))
 	routeEnv(mux, "GET /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookShow))
 	routeEnv(mux, "DELETE /v1/projects/{project}/apps/{app}/webhook", s.authed(s.handleWebhookDisable))
@@ -384,6 +426,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/ai/generate", s.authed(s.handleAIGenerate))
 	mux.HandleFunc("GET /v1/ai/usage", s.authed(s.handleAIUsage))
 	mux.HandleFunc("GET /v1/nodes", s.adminOnly(s.handleListNodes))
+	mux.HandleFunc("POST /v1/nodes/{name}/cordon", s.adminOnly(s.handleNodeAction("cordon")))
+	mux.HandleFunc("POST /v1/nodes/{name}/uncordon", s.adminOnly(s.handleNodeAction("uncordon")))
+	mux.HandleFunc("POST /v1/nodes/{name}/drain", s.adminOnly(s.handleNodeAction("drain")))
 	mux.HandleFunc("PUT /v1/gpu/key", s.adminOnly(s.handleSetGPUKey))
 	mux.HandleFunc("GET /v1/gpu/offers", s.adminOnly(s.handleGPUOffers))
 	mux.HandleFunc("POST /v1/gpu/instances", s.adminOnly(s.handleRentGPU))

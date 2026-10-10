@@ -1,0 +1,19 @@
+name: metabase
+title: Metabase
+description: Business intelligence dashboards and questions over your databases.
+category: analytics
+app:
+  image: metabase/metabase:v0.63.19
+  port: 3000
+  health_path: /api/health
+  memory: 1536Mi
+addons:
+  - {key: db, type: postgres}
+env:
+  MB_DB_TYPE: postgres
+  MB_DB_HOST: ${addon.db.host}
+  MB_DB_PORT: ${addon.db.port}
+  MB_DB_DBNAME: ${addon.db.database}
+  MB_DB_USER: ${addon.db.user}
+  MB_DB_PASS: ${addon.db.password}
+  MB_SITE_URL: ${app.url}

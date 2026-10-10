@@ -48,12 +48,13 @@
 <div class="flex flex-wrap items-center gap-2">
 {{range $i, $st := .PipelineStages}}{{if $i}}<span class="text-mut">&rarr;</span>{{end}}<span class="pipe-stage {{$st.Class}}">{{if eq $st.Class "pipe-done"}}&check; {{else if eq $st.Class "pipe-fail"}}&cross; {{end}}{{$st.Name}}</span>{{end}}
 </div>
+{{if .RolloutProgress}}<p class="mt-2 font-mono text-xs text-build">{{.RolloutProgress}} &middot; waiting for the new pods before going live</p>{{end}}
 <div class="cli-echo">$ <b>luncur status {{.App.Name}} --project {{.Project.Name}} --env {{.Env.Name}}</b></div>
 </div>
 
 {{if .ErrorCard}}
 <div class="err3 mb-6">
-<p class="mb-1 text-sm text-ink">Deploy #{{.ErrorCard.Seq}} failed while {{.ErrorCard.Stage}}.</p>
+<p class="mb-1 text-sm text-ink">Deploy #{{.ErrorCard.Seq}} failed while {{.ErrorCard.Stage}}{{if .ErrorCard.Reason}}: <span class="font-mono">{{.ErrorCard.Reason}}</span>{{end}}.</p>
 <p class="mb-2 text-sm text-mut">{{.ErrorCard.Why}}</p>
 <div class="cli-echo">$ <b>luncur logs {{.App.Name}} --deploy {{.ErrorCard.Seq}} --project {{.Project.Name}}</b> &middot; <a class="hover:text-signal" href="?tab=ship#deploy-{{.ErrorCard.Seq}}">view log</a></div>
 </div>

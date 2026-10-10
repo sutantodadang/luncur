@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/sutantodadang/luncur/internal/cronexpr"
@@ -372,10 +373,13 @@ func (s *server) pipelineTickOne(ctx context.Context, run store.PipelineRun) {
 // failed image attempt with retries remaining is relaunched right here
 // rather than through decide's Launch list.
 //
-// deploy/scale/notify steps execute synchronously in the Launch phase and
-// never sit in "running" across ticks, so they never reach this function.
+// scale/notify steps execute synchronously in the Launch phase and never
+// sit in "running" across ticks. A deploy step does while the rollout gate
+// watches its deploy (pipelineHarvestDeploy).
 func (s *server) pipelineHarvestStep(ctx context.Context, run store.PipelineRun, pl store.Pipeline, project store.Project, v pipeStepView, appCache map[string]store.App) pipeStepView {
 	switch v.Spec.Kind {
+	case "deploy":
+		return s.pipelineHarvestDeploy(run, v)
 	case "app":
 		if !v.Row.JobRunID.Valid {
 			return v // launched but the job_runs row isn't recorded yet (shouldn't happen)
@@ -416,6 +420,16 @@ func (s *server) pipelineHarvestStep(ctx context.Context, run store.PipelineRun,
 			return v
 		}
 		if !done {
+			// A Job deleted mid-run (by hand, or a namespace cleanup) never
+			// reports done; without this the step would hang until a
+			// restart's reconcile.
+			if exists, err := s.kube.JobExists(ctx, project.Namespace, name); err == nil && !exists {
+				if err := s.st.FinishStep(v.Row.ID, "failed", "job deleted"); err != nil {
+					log.Printf("pipeline run %s: step %s: finish failed: %v", run.ID, v.Row.Name, err)
+					return v
+				}
+				v.Row.State = "failed"
+			}
 			return v
 		}
 		if !failed {
@@ -539,6 +553,9 @@ func (s *server) pipelineLaunchImage(ctx context.Context, run store.PipelineRun,
 		}
 	}
 	objs := render.PipelineStepJob(project.Namespace, run.ID, v.Row.Name, attempt, v.Spec.Image, v.Spec.Command, env, v.Spec.GPU)
+	for i := range objs {
+		objs[i] = withPriority(objs[i], s.batchPriority())
+	}
 
 	err := s.ensureProjectNamespace(ctx, project.Namespace)
 	if err == nil {
@@ -632,7 +649,48 @@ func (s *server) pipelineRunDeploy(ctx context.Context, run store.PipelineRun, p
 		s.finishPipelineStep(run, v, "failed", err.Error())
 		return
 	}
+	if s.deployStatusWord(d) == "deploying" {
+		// The rollout gate decides; pipelineHarvestStep picks the outcome up
+		// on a later tick instead of blocking this one.
+		if err := s.st.SetStepDetail(v.Row.ID, pipelineDeployWaitPrefix+d.ID); err != nil {
+			log.Printf("pipeline run %s: step %s: record deploy: %v", run.ID, v.Row.Name, err)
+		}
+		return
+	}
 	s.finishPipelineStep(run, v, "done", fmt.Sprintf("deployed %s", live.ImageRef))
+}
+
+// pipelineDeployWaitPrefix marks a running deploy step's detail while the
+// rollout gate watches its deploy ("rolling out deploy:<id>").
+const pipelineDeployWaitPrefix = "rolling out deploy:"
+
+// pipelineHarvestDeploy finishes a deploy step once its gated deploy is
+// live or failed.
+func (s *server) pipelineHarvestDeploy(run store.PipelineRun, v pipeStepView) pipeStepView {
+	id, ok := strings.CutPrefix(v.Row.Detail, pipelineDeployWaitPrefix)
+	if !ok {
+		return v
+	}
+	d, err := s.st.GetDeployment(id)
+	if err != nil {
+		log.Printf("pipeline run %s: step %s: get deploy: %v", run.ID, v.Row.Name, err)
+		return v
+	}
+	state, detail := "", ""
+	switch d.Status {
+	case "live":
+		state, detail = "done", fmt.Sprintf("deployed %s", d.ImageRef)
+	case "failed":
+		state, detail = "failed", fmt.Sprintf("deploy #%d failed: %s", d.Seq, d.FailReason)
+	default:
+		return v
+	}
+	if err := s.st.FinishStep(v.Row.ID, state, detail); err != nil {
+		log.Printf("pipeline run %s: step %s: finish %s: %v", run.ID, v.Row.Name, state, err)
+		return v
+	}
+	v.Row.State = state
+	return v
 }
 
 // pipelineRunScale is the "scale" built-in action: set an app's replica
@@ -1686,6 +1744,9 @@ func (s *server) handlePipelineWebhookTrigger(w http.ResponseWriter, r *http.Req
 	}
 	if !verifyWebhook(r, body, string(plain)) {
 		webhookUnauthorized(w)
+		return
+	}
+	if s.webhookReplay(w, r, "pipeline:"+pl.ID) {
 		return
 	}
 

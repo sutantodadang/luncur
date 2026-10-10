@@ -1,0 +1,13 @@
+name: vaultwarden
+title: Vaultwarden
+description: Lightweight Bitwarden-compatible password manager server.
+category: security
+app:
+  image: vaultwarden/server:1.37.3
+  port: 80
+  health_path: /alive
+volumes:
+  - {name: data, path: /data, size_gb: 1}
+env:
+  DOMAIN: ${app.url}
+  ROCKET_PORT: "80"

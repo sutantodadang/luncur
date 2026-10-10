@@ -175,5 +175,5 @@ func (s *server) handleRollback(w http.ResponseWriter, r *http.Request, u store.
 		}
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"deployment_id": d.ID, "seq": d.Seq, "status": "live"})
+	writeJSON(w, http.StatusAccepted, map[string]any{"deployment_id": d.ID, "seq": d.Seq, "status": s.deployStatusWord(d)})
 }

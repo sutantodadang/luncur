@@ -91,6 +91,17 @@ var settingGroups = []settingGroup{
 	{Title: "Network", Fields: []settingField{
 		{Key: "network_isolation", Options: []string{"on", "off"}},
 	}},
+	{Title: "Workload defaults", Fields: []settingField{
+		{Key: "default_cpu_request"},
+		{Key: "default_memory_request"},
+		{Key: "gpu_pending_grace_minutes"},
+	}},
+	{Title: "Cost insights", Fields: []settingField{
+		{Key: "cost_currency"},
+		{Key: "cost_cpu_core_month"},
+		{Key: "cost_mem_gb_month"},
+		{Key: "cost_gpu_month"},
+	}},
 }
 
 // settingRow is one field's rendered view: Value carries the current

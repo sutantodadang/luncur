@@ -59,6 +59,8 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/explain", s.uiPage(s.handleUIAIExplain))
 	mux.HandleFunc("POST /ui/projects/{project}/envs/{env}/apps/{app}/explain", s.uiPage(s.handleUIAIExplain))
 	mux.HandleFunc("GET /ui/nodes", s.uiPage(s.handleUINodes))
+	mux.HandleFunc("GET /ui/insights", s.uiPage(s.handleUIInsights))
+	mux.HandleFunc("POST /ui/nodes/{name}/{action}", s.uiPage(s.handleUINodeAction))
 	mux.HandleFunc("POST /ui/gpu/key", s.uiPage(s.handleUIGPUKey))
 	mux.HandleFunc("POST /ui/gpu/key/nebius", s.uiPage(s.handleUIGPUKeyNebius))
 	mux.HandleFunc("POST /ui/gpu/rent", s.uiPage(s.handleUIGPURent))
@@ -105,6 +107,13 @@ func (s *server) uiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/sweeps/{id}/stop", s.uiPage(s.handleUISweepStop))
 	mux.HandleFunc("GET /ui/projects/{project}/apps/{app}/sweeps/{id}/trials", s.uiPage(s.handleUISweepTrials))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/health", s.uiPage(s.handleUIHealth))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/policy", s.uiPage(s.handleUIPolicy))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/uptime", s.uiPage(s.handleUIUptime))
+	mux.HandleFunc("POST /ui/projects/{project}/status-page", s.uiPage(s.handleUIStatusPage))
+	mux.HandleFunc("POST /ui/projects/{project}/incidents", s.uiPage(s.handleUIIncident))
+	mux.HandleFunc("POST /ui/projects/{project}/templates/{name}", s.uiPage(s.handleUIInstallTemplate))
+	mux.HandleFunc("POST /ui/projects/{project}/envs/{env}/templates/{name}", s.uiPage(s.handleUIInstallTemplate))
+	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/rollout/{action}", s.uiPage(s.handleUIRolloutAction))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook", s.uiPage(s.handleUIWebhookEnable))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/webhook/disable", s.uiPage(s.handleUIWebhookDisable))
 	mux.HandleFunc("POST /ui/projects/{project}/apps/{app}/env", s.uiPage(s.handleUIEnvSet))
@@ -180,6 +189,10 @@ func (s *server) uiPage(next func(http.ResponseWriter, *http.Request, store.User
 			info.Email = u.Email
 			info.Pattern = r.Pattern
 		}
+		// Authenticated pages can carry secrets (the Wire tab shows env
+		// values): keep them out of the browser's disk cache and bfcache,
+		// where they'd survive logout on a shared machine.
+		w.Header().Set("Cache-Control", "no-store")
 		next(w, r, u)
 	}
 }

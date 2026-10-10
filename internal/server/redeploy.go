@@ -75,7 +75,7 @@ func (s *server) handleRedeploy(w http.ResponseWriter, r *http.Request, u store.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"deployment_id": d.ID,
 		"seq":           d.Seq,
-		"status":        "live",
+		"status":        s.deployStatusWord(d),
 		"url":           s.appURLForEnv(a, env.Name, p.DefaultEnv),
 	})
 }

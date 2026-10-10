@@ -172,11 +172,17 @@ func (s *Store) FinishSweep(id, status string) error {
 	if status != "done" && status != "stopped" && status != "failed" {
 		return errors.New("finish status must be done, stopped, or failed")
 	}
-	res, err := s.db.Exec(`UPDATE sweeps SET status = ? WHERE id = ?`, status, id)
+	// Guarded: a late tick that read the sweep while it was running must
+	// not overwrite a terminal status (e.g. turn "stopped" into "done").
+	res, err := s.db.Exec(`UPDATE sweeps SET status = ? WHERE id = ? AND status NOT IN ('done','stopped','failed')`, status, id)
 	if err != nil {
 		return err
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
+		var n int
+		if err := s.db.QueryRow(`SELECT count(*) FROM sweeps WHERE id = ?`, id).Scan(&n); err == nil && n > 0 {
+			return ErrAlreadyFinished
+		}
 		return ErrNotFound
 	}
 	return nil

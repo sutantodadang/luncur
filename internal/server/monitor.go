@@ -190,6 +190,7 @@ func (s *server) sampleMetrics(ctx context.Context) {
 	}
 	now := s.nowFn()
 	s.mon.record(now, apps, nodes)
+	s.accumulateUsage(now, apps)
 	s.checkCrashLoops(ctx, now)
 }
 

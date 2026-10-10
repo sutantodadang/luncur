@@ -98,7 +98,10 @@ func (s *server) assistantData(w http.ResponseWriter, r *http.Request, u store.U
 // handleUIAssistant is the assistant page: chat transcript, ask form,
 // generate form, usage and the `luncur mcp` setup snippet.
 func (s *server) handleUIAssistant(w http.ResponseWriter, r *http.Request, u store.User) {
-	s.renderPage(w, r, "assistant.html", s.assistantData(w, r, u, r.URL.Query().Get("c")))
+	data := s.assistantData(w, r, u, r.URL.Query().Get("c"))
+	// ?q= prefills the ask box (e.g. the Insights page's "ask the assistant").
+	data["Prefill"] = r.URL.Query().Get("q")
+	s.renderPage(w, r, "assistant.html", data)
 }
 
 // handleUIAssistantAsk runs one chat turn and re-renders the transcript

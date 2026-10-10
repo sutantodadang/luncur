@@ -163,8 +163,21 @@ func NewWithBackend(d Deps) (http.Handler, *PushBackend, func(ctx context.Contex
 		go s.StartPreviewReaper(ctx)
 		go s.StartFailedPodGC(ctx)
 		go s.StartRegistryGC(ctx)
-		go s.reconcileUnfinished(ctx)
+		go func() {
+			// Priority classes first, so reconciled deploys render with them.
+			s.ensurePriorityClasses(ctx)
+			s.reconcileUnfinished(ctx)
+			// Re-assert the isolation policy so existing namespaces pick up
+			// its current shape (it narrowed the luncur-system peer to the
+			// server pod — builds run there too).
+			if s.isolationOn() {
+				if err := s.networkIsolationChanged(ctx); err != nil {
+					log.Printf("re-apply network isolation at startup: %v", err)
+				}
+			}
+		}()
 		go s.StartMonitor(ctx)
+		go s.StartUptime(ctx)
 		go s.StartGPUWatch(ctx)
 		s.StartGPUIdleLoop(ctx)
 		// Run watchers die with the process: re-attach them first, so the

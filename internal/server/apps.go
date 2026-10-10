@@ -500,44 +500,23 @@ func (s *server) deployGitApp(p store.Project, env store.Environment, a store.Ap
 }
 
 // applyImageDeploy is the synchronous render+apply core shared by prebuilt
-// image deploys and rollbacks: apply the app at `image`, then mark the
-// deployment live — or failed, returning the error.
+// image deploys and rollbacks: apply the app at `image`, then hand the
+// deployment to the rollout gate (afterApply) — or mark it failed, returning
+// the error.
 func (s *server) applyImageDeploy(ctx context.Context, p store.Project, env store.Environment, a store.App, d store.Deployment, image string) error {
-	rendered, err := s.renderApp(p, env, a, image, true)
-	if err == nil {
-		if err = s.ensureEnvNamespace(ctx, env); err == nil {
-			err = s.kube.Apply(ctx, env.Namespace, rendered.Objects)
-		}
-	}
-	if err != nil {
+	if err := s.applyAndGate(ctx, p, env, a, d, image); err != nil {
 		if e := s.st.SetDeploymentStatus(d.ID, "failed"); e != nil {
 			log.Printf("mark deploy %s failed: %v", d.ID, e)
 		}
 		s.notify(notifyEvent{Event: "deploy_failed", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, Err: err.Error()})
 		return err
 	}
-	if err := s.st.SetDeploymentStatus(d.ID, "live"); err != nil {
-		log.Printf("mark deploy %s live (apply already succeeded): %v", d.ID, err)
-	}
-	// Every successful deploy touches its environment's LastActiveAt so an
-	// actively-deployed preview survives reapPreviews' idle-TTL sweep
-	// (harmless on a standing environment — nothing reads its LastActiveAt).
-	if err := s.st.TouchEnvironment(env.ID); err != nil {
-		log.Printf("touch environment %s after deploy: %v", env.Name, err)
-	}
-	// A successful rollout is the natural moment to clear eviction corpses:
-	// the old ReplicaSet's Failed pods are pure noise once the new one is up.
-	if n, err := s.kube.DeleteFailedPods(ctx, env.Namespace); err != nil {
-		log.Printf("gc failed pods after deploy %s: %v", d.ID, err)
-	} else if n > 0 {
-		log.Printf("deploy %s: deleted %d dead pod(s) in %s", d.ID, n, env.Namespace)
-	}
-	s.notify(notifyEvent{Event: "deploy_success", Project: p.Name, App: a.Name, DeployID: d.ID, Seq: d.Seq, URL: s.appURLForEnv(a, env.Name, p.DefaultEnv)})
 	return nil
 }
 
 // deployImage is the synchronous prebuilt-image deploy path: render, apply,
-// mark live. Unchanged from the pre-build-pipeline behavior.
+// then the rollout gate decides live/failed (the response reports the
+// status at return time — "deploying" while the gate watches).
 func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Project, env store.Environment, a store.App, image string) {
 	d, err := s.st.CreateDeployment(a.ID, "deploying", image, 0)
 	if err != nil {
@@ -555,7 +534,7 @@ func (s *server) deployImage(w http.ResponseWriter, r *http.Request, p store.Pro
 	writeJSON(w, http.StatusOK, map[string]any{
 		"deployment_id": d.ID,
 		"seq":           d.Seq,
-		"status":        "live",
+		"status":        s.deployStatusWord(d),
 		"url":           s.appURLForEnv(a, env.Name, p.DefaultEnv),
 	})
 }
@@ -611,6 +590,7 @@ func (s *server) handleListDeploys(w http.ResponseWriter, r *http.Request, u sto
 			"image":            d.ImageRef,
 			"created_at":       d.CreatedAt,
 			"rolled_back_from": d.RolledBackFrom,
+			"fail_reason":      d.FailReason,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -629,13 +609,22 @@ func (s *server) handleGetDeploy(w http.ResponseWriter, r *http.Request, u store
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"deployment_id": d.ID,
 		"seq":           d.Seq,
 		"status":        d.Status,
 		"image":         d.ImageRef,
 		"url":           s.appURLForEnv(a, env.Name, p.DefaultEnv),
-	})
+		"fail_reason":   d.FailReason,
+		"ready_at":      d.ReadyAt,
+	}
+	if o, err := s.st.GetDeployOutcome(d.ID); err == nil && o.Want > 0 {
+		out["ready"], out["want"] = o.Ready, o.Want
+	}
+	if d.FailReason != "" {
+		out["why"] = failReasonWhy(d.FailReason)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *server) handleDeployLogs(w http.ResponseWriter, r *http.Request, u store.User) {

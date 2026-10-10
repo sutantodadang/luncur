@@ -298,11 +298,16 @@ func (s *Store) FinishPipelineRun(id, status string) error {
 	if status != "done" && status != "stopped" && status != "failed" {
 		return errors.New("finish status must be done, stopped, or failed")
 	}
-	res, err := s.db.Exec(`UPDATE pipeline_runs SET status = ?, finished_at = datetime('now') WHERE id = ?`, status, id)
+	// Guarded like FinishSweep: a terminal status is final.
+	res, err := s.db.Exec(`UPDATE pipeline_runs SET status = ?, finished_at = datetime('now') WHERE id = ? AND status NOT IN ('done','stopped','failed')`, status, id)
 	if err != nil {
 		return err
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
+		var n int
+		if err := s.db.QueryRow(`SELECT count(*) FROM pipeline_runs WHERE id = ?`, id).Scan(&n); err == nil && n > 0 {
+			return ErrAlreadyFinished
+		}
 		return ErrNotFound
 	}
 	return nil
@@ -406,6 +411,13 @@ func (s *Store) FinishStep(stepID, state, detail string) error {
 		return errors.New("step not in a finishable state")
 	}
 	return nil
+}
+
+// SetStepDetail updates a running step's detail without finishing it (a
+// deploy step waiting on the rollout gate records its deploy id here).
+func (s *Store) SetStepDetail(stepID, detail string) error {
+	_, err := s.db.Exec(`UPDATE pipeline_run_steps SET detail = ? WHERE id = ? AND state = 'running'`, detail, stepID)
+	return err
 }
 
 func (s *Store) getRunStep(stepID string) (PipelineRunStep, error) {

@@ -106,6 +106,13 @@ func LuncurClusterRole() *rbacv1.ClusterRole {
 			rule([]string{"metrics.k8s.io"}, []string{"pods", "nodes"}, read...),
 			rule([]string{"autoscaling"}, []string{"horizontalpodautoscalers"}, full...),
 			rule([]string{"policy"}, []string{"poddisruptionbudgets"}, full...),
+			// Priority classes (luncur-system/app/batch), node cordon and
+			// drain (patch nodes, evict pods), and Traefik's weighted
+			// routing CRDs for canary / blue-green deploys.
+			rule([]string{"scheduling.k8s.io"}, []string{"priorityclasses"}, manage...),
+			rule([]string{""}, []string{"nodes"}, "patch", "update"),
+			rule([]string{""}, []string{"pods/eviction"}, "create"),
+			rule([]string{"traefik.io"}, []string{"traefikservices", "ingressroutes"}, full...),
 			{
 				APIGroups:     []string{"rbac.authorization.k8s.io"},
 				Resources:     []string{"clusterroles"},
@@ -277,12 +284,18 @@ func LuncurObjects(p Params) ([]render.Object, error) {
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "luncur",
-					Containers:         containers,
-					Volumes:            volumes,
+					// Evicted last under node pressure (the classes are
+					// applied just before this Deployment, see below).
+					PriorityClassName: render.PriorityClassSystem,
+					Containers:        containers,
+					Volumes:           volumes,
 				},
 			},
 		},
 	}
+	// PriorityClasses before the Deployment that references luncur-system:
+	// a pod naming a missing class is rejected at admission.
+	objs = append(objs, render.PriorityClasses()...)
 	if err := add("Deployment", dep); err != nil {
 		return nil, err
 	}

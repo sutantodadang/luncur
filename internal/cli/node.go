@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -21,6 +22,87 @@ func nodeCmd() *cobra.Command {
 	}
 	cmd.AddCommand(nodeLsCmd())
 	cmd.AddCommand(nodeJoinCommandCmd())
+	cmd.AddCommand(nodeCordonCmd("cordon", "Mark a node unschedulable (running pods stay)"))
+	cmd.AddCommand(nodeCordonCmd("uncordon", "Mark a node schedulable again"))
+	cmd.AddCommand(nodeDrainCmd())
+	return cmd
+}
+
+func nodeCordonCmd(action, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   action + " <name>",
+		Short: short + " (admin)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			if err := c.NodeAction(args[0], action, false, 0); err != nil {
+				return err
+			}
+			cmd.Printf("%s %sed\n", args[0], action)
+			return nil
+		},
+	}
+}
+
+// nodeDrainCmd cordons a node and evicts its pods (disruption budgets
+// respected), following progress until the drain finishes.
+func nodeDrainCmd() *cobra.Command {
+	var force, noWait bool
+	var timeout time.Duration
+	cmd := &cobra.Command{
+		Use:   "drain <name>",
+		Short: "Cordon a node and evict its pods for maintenance (admin)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := apiClient()
+			if err != nil {
+				return err
+			}
+			if err := c.NodeAction(args[0], "drain", force, int(timeout.Seconds())); err != nil {
+				return err
+			}
+			cmd.Printf("draining %s…\n", args[0])
+			if noWait {
+				return nil
+			}
+			last := ""
+			deadline := time.Now().Add(timeout + 2*time.Minute)
+			for time.Now().Before(deadline) {
+				time.Sleep(2 * time.Second)
+				nodes, err := c.ListNodes()
+				if err != nil {
+					return err
+				}
+				for _, n := range nodes {
+					if n.Name != args[0] || n.Drain == nil {
+						continue
+					}
+					line := fmt.Sprintf("  evicted %d/%d", n.Drain.Evicted, n.Drain.Total)
+					for _, b := range n.Drain.Blocked {
+						line += "\n  blocked: " + b
+					}
+					if line != last {
+						cmd.Println(line)
+						last = line
+					}
+					switch n.Drain.State {
+					case "done":
+						cmd.Printf("%s drained — run `luncur node uncordon %s` when maintenance is over\n", args[0], args[0])
+						return nil
+					case "failed":
+						return fmt.Errorf("drain failed: %s", n.Drain.Error)
+					}
+				}
+			}
+			return fmt.Errorf("timed out following the drain of %s", args[0])
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "drain even the only schedulable node (evicts luncur itself)")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "start the drain and return")
+	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "how long to retry evictions blocked by disruption budgets")
 	return cmd
 }
 
@@ -44,6 +126,9 @@ func nodeLsCmd() *cobra.Command {
 				status := "NotReady"
 				if n.Ready {
 					status = "Ready"
+				}
+				if n.Cordoned {
+					status += ",SchedulingDisabled"
 				}
 				gpuCol := "-"
 				if n.GPU {

@@ -6,10 +6,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
@@ -1404,5 +1407,65 @@ func TestPipelineWebhookTriggerNotForbidGated(t *testing.T) {
 	}
 	if len(runs) != 2 {
 		t.Fatalf("runs = %+v, want 2 (webhook not Forbid-gated)", runs)
+	}
+}
+
+// A deploy step whose deploy is still rolling out stays running across
+// ticks and finishes with the rollout gate's verdict.
+func TestPipelineDeployStepWaitsForRolloutGate(t *testing.T) {
+	t.Parallel()
+	s := pipelineTestServer(t, nil, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	a := pipelineSeedApp(t, s.st, p.ID, "api", "web", "api:1")
+	pl := pipelineSeedPipeline(t, s.st, p.ID, "pipe")
+	run := pipelineSeedRun(t, s.st, pl, []pipeline.Step{{Name: "d", Kind: "deploy", Deploy: "api"}})
+	row := pipelineFindStep(t, s.st, run.ID, "d")
+	if err := s.st.MarkStepRunning(row.ID, nil, 1); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.st.CreateDeployment(a.ID, "deploying", "api:2", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.st.SetStepDetail(row.ID, pipelineDeployWaitPrefix+d.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	s.pipelineTick(context.Background())
+	if got := pipelineFindStep(t, s.st, run.ID, "d"); got.State != "running" {
+		t.Fatalf("step while deploying = %+v, want running", got)
+	}
+
+	s.st.SetDeploymentStatus(d.ID, "failed")
+	s.st.SetDeployFailReason(d.ID, "crash-looping: Error (3 restarts)")
+	s.pipelineTick(context.Background())
+	got := pipelineFindStep(t, s.st, run.ID, "d")
+	if got.State != "failed" || !strings.Contains(got.Detail, "crash-looping") {
+		t.Fatalf("step after gate failure = %+v", got)
+	}
+}
+
+// S12: an image step whose Job was deleted mid-run fails instead of
+// hanging until the next restart.
+func TestPipelineImageStepFailsWhenJobDeleted(t *testing.T) {
+	t.Parallel()
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	dyn.PrependReactor("*", "*", func(a ktesting.Action) (bool, runtime.Object, error) {
+		if a.GetVerb() == "get" && a.GetResource().Resource == "jobs" {
+			return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, "x")
+		}
+		return true, nil, nil
+	})
+	s := pipelineTestServer(t, dyn, nil)
+	p := pipelineSeedProject(t, s.st, "ml")
+	pl := pipelineSeedPipeline(t, s.st, p.ID, "pipe")
+	run := pipelineSeedRun(t, s.st, pl, []pipeline.Step{{Name: "i", Kind: "image", Image: "busybox:1", Command: []string{"true"}}})
+	row := pipelineFindStep(t, s.st, run.ID, "i")
+	if err := s.st.MarkStepRunning(row.ID, nil, 1); err != nil {
+		t.Fatal(err)
+	}
+	s.pipelineTick(context.Background())
+	if got := pipelineFindStep(t, s.st, run.ID, "i"); got.State != "failed" || got.Detail != "job deleted" {
+		t.Fatalf("step = %+v, want failed/job deleted", got)
 	}
 }

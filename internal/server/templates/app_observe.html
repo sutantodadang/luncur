@@ -110,6 +110,40 @@
 <div class="cli-echo">$ <b>luncur ps {{.App.Name}} --project {{.Project.Name}}</b></div>
 </div>
 
+{{with .Uptime}}
+<div class="card mb-6" id="uptime">
+<h2>Uptime</h2>
+{{if .Enabled}}
+<div class="mb-2 flex flex-wrap items-center gap-3">
+  <span class="chip {{if eq .State "up"}}chip-ok{{else if eq .State "down"}}chip-bad{{else}}chip-muted{{end}}">{{if eq .State "unknown"}}waiting for first check{{else}}{{.State}}{{end}}</span>
+  <span class="font-mono text-xs">{{printf "%.2f" .Stats.Pct24h}}% <span class="text-mut">24h</span> &middot; {{printf "%.2f" .Stats.Pct30d}}% <span class="text-mut">30d</span> &middot; {{printf "%.2f" .Stats.Pct90d}}% <span class="text-mut">90d</span> &middot; p95 {{.Stats.P95MS}}ms</span>
+</div>
+<div class="sp-bars" aria-label="30 days of uptime">{{range .Days}}<span class="sp-bar {{if .NoData}}sp-none{{else if .Outage}}sp-down{{else if .Partial}}sp-partial{{else}}sp-ok{{end}}" title="{{.Day}}: {{if .NoData}}no data{{else}}{{printf "%.2f" .Pct}}%{{end}}"></span>{{end}}</div>
+<p class="mt-1 font-mono text-[11px] text-mut">probes {{.URL}} every minute{{if .LastError}} &middot; last error: {{.LastError}}{{end}}</p>
+{{else}}<p class="mb-2 text-sm text-mut">Uptime check is off.</p>{{end}}
+<form method="post" action="/ui/projects/{{$.Project.Name}}/apps/{{$.App.Name}}/uptime" class="mt-3 flex flex-wrap items-end gap-3">
+  <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+  <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}> check every minute</label>
+  <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="external" value="1" {{if .External}}checked{{end}}> probe the public URL</label>
+  <label class="flex flex-col gap-1 text-xs text-mut">path<input class="input w-40" name="path" placeholder="{{if $.App.HealthPath}}{{$.App.HealthPath}}{{else}}/{{end}}" value="{{.Path}}"></label>
+  <button type="submit" class="btn">save</button>
+</form>
+<div class="cli-echo">$ <b>luncur uptime status {{$.App.Name}} --project {{$.Project.Name}}</b> &middot; $ <b>luncur uptime {{if .Enabled}}disable{{else}}enable{{end}} {{$.App.Name}} --project {{$.Project.Name}}</b></div>
+</div>
+{{end}}
+
+{{with .Insight}}
+<div class="card mb-6" id="rightsize">
+<h2>Right-size</h2>
+{{if .RecCPU}}
+<p class="font-mono text-xs">requests {{.CPURequest}}m &middot; {{.MemRequest}}Mi per pod &middot; observed p95 {{.CPUP95Milli}}m &middot; peak {{.MemMaxMB}}Mi ({{.Hours}}h)</p>
+<p class="mt-1 text-sm">{{if eq .Flag "over"}}<span class="chip chip-warn">over-provisioned</span> recommend {{.RecCPU}}m &middot; {{.RecMem}}Mi{{else if eq .Flag "risk"}}<span class="chip chip-bad">at risk</span> memory peak is near the {{.MemLimit}}Mi limit — recommend {{.RecMem}}Mi{{else}}<span class="chip chip-ok">right-sized</span>{{end}}</p>
+{{if .ScaleCmd}}<div class="cli-echo">$ <b>{{.ScaleCmd}}</b></div>{{end}}
+{{else}}<p class="text-sm text-mut">Collecting usage — recommendations appear after 6 hours of metrics ({{.Hours}}h so far).</p>{{end}}
+<p class="mt-2 text-xs"><a class="text-mut hover:text-inkhi" href="/ui/insights?project={{$.Project.Name}}">all apps &rarr;</a></p>
+</div>
+{{end}}
+
 {{if and (not .App.Ejected) (eq .App.Kind "web")}}
 <div class="card">
 <h2>Health check</h2>

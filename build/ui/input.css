@@ -111,6 +111,42 @@
     @apply border border-line bg-[rgba(110,110,120,.1)] text-mut;
   }
 
+  /* Public status page (status_public.html): 90 daily uptime bars in the
+     semantic status colors — never orange (accent discipline). */
+  .sp-bars {
+    @apply flex h-8 items-stretch gap-[2px];
+  }
+  .sp-bar {
+    @apply flex-1 rounded-[2px];
+  }
+  .sp-ok {
+    background-color: var(--c-phosphor);
+  }
+  .sp-partial {
+    background-color: var(--c-build);
+  }
+  .sp-down {
+    background-color: var(--c-fail);
+  }
+  .sp-none {
+    background-color: var(--c-line);
+  }
+  .sp-overall {
+    border-left-width: 2px;
+  }
+  .sp-overall-operational {
+    border-left-color: var(--c-phosphor);
+    color: var(--c-phosphor);
+  }
+  .sp-overall-degraded {
+    border-left-color: var(--c-build);
+    color: var(--c-build);
+  }
+  .sp-overall-down {
+    border-left-color: var(--c-fail);
+    color: var(--c-fail);
+  }
+
   .tbl {
     @apply w-full text-[13px];
   }

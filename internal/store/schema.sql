@@ -345,3 +345,131 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   requests      INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (day, user_id, workflow)
 );
+
+-- Per-app reliability/rollout policy. A side table rather than apps columns:
+-- migrateAppsUniqueScope's legacy rebuild copies a fixed apps column list, so
+-- new apps columns would be dropped on old installs. A missing row means
+-- every default below (see store.DefaultAppPolicy).
+CREATE TABLE IF NOT EXISTS app_policies (
+  app_id             INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  auto_rollback      INTEGER NOT NULL DEFAULT 1,
+  rollout_timeout    INTEGER NOT NULL DEFAULT 300,
+  probe              TEXT NOT NULL DEFAULT 'auto',
+  security           TEXT NOT NULL DEFAULT 'baseline',
+  strategy           TEXT NOT NULL DEFAULT 'rolling',
+  canary_steps       TEXT NOT NULL DEFAULT '10,50',
+  canary_interval    INTEGER NOT NULL DEFAULT 120,
+  canary_min_success INTEGER NOT NULL DEFAULT 99,
+  bluegreen_keep     INTEGER NOT NULL DEFAULT 600
+);
+
+-- What the rollout gate learned about a deploy: why it failed (one line,
+-- the 3-line error's "what broke") and when its new pods became ready.
+-- A side table for the same reason as app_policies (deployments has a
+-- legacy rebuild too).
+CREATE TABLE IF NOT EXISTS deployment_outcomes (
+  deploy_id   TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+  fail_reason TEXT NOT NULL DEFAULT '',
+  ready_at    TEXT NOT NULL DEFAULT '',
+  ready       INTEGER NOT NULL DEFAULT 0,
+  want        INTEGER NOT NULL DEFAULT 0
+);
+
+-- One row per canary/blue-green deploy: the step machine's state, so the UI
+-- can show progress and a restart resumes from the recorded step.
+CREATE TABLE IF NOT EXISTS rollouts (
+  deploy_id   TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  strategy    TEXT NOT NULL,
+  step        INTEGER NOT NULL DEFAULT 0,
+  weight      INTEGER NOT NULL DEFAULT 0,
+  phase       TEXT NOT NULL DEFAULT 'starting',
+  step_started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  probes_ok   INTEGER NOT NULL DEFAULT 0,
+  probes_total INTEGER NOT NULL DEFAULT 0,
+  note        TEXT NOT NULL DEFAULT '',
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_rollouts_app ON rollouts(app_id);
+
+-- Webhook delivery ids already handled (GitHub/Gitea/GitLab/luncur), so a
+-- replayed signed request is a no-op. Pruned after 72h.
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id      TEXT PRIMARY KEY,
+  seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Uptime checks: one per web app that has one enabled.
+CREATE TABLE IF NOT EXISTS uptime_checks (
+  app_id     INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  external   INTEGER NOT NULL DEFAULT 0,
+  path       TEXT NOT NULL DEFAULT '',
+  state      TEXT NOT NULL DEFAULT 'unknown',
+  fail_streak INTEGER NOT NULL DEFAULT 0,
+  ok_streak  INTEGER NOT NULL DEFAULT 0,
+  last_at    TEXT NOT NULL DEFAULT '',
+  last_error TEXT NOT NULL DEFAULT ''
+);
+
+-- Raw probe results, kept 48h.
+CREATE TABLE IF NOT EXISTS uptime_samples (
+  app_id     INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  at         TEXT NOT NULL,
+  ok         INTEGER NOT NULL,
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  code       INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_uptime_samples_app_at ON uptime_samples(app_id, at);
+
+-- Daily roll-ups of uptime_samples, kept 400 days (status page bars).
+CREATE TABLE IF NOT EXISTS uptime_daily (
+  app_id   INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  day      TEXT NOT NULL,
+  ok_count INTEGER NOT NULL DEFAULT 0,
+  total    INTEGER NOT NULL DEFAULT 0,
+  p95_ms   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (app_id, day)
+);
+
+-- Incidents: opened automatically by the uptime prober (app_id set) or by a
+-- member for planned maintenance (app_id may be 0).
+CREATE TABLE IF NOT EXISTS incidents (
+  id          INTEGER PRIMARY KEY,
+  project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  app_id      INTEGER NOT NULL DEFAULT 0,
+  title       TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved')),
+  auto        INTEGER NOT NULL DEFAULT 0,
+  opened_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_incidents_project ON incidents(project_id, status);
+
+CREATE TABLE IF NOT EXISTS incident_updates (
+  id          INTEGER PRIMARY KEY,
+  incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+  body        TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Public status pages, at most one per project.
+CREATE TABLE IF NOT EXISTS status_pages (
+  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  slug       TEXT NOT NULL UNIQUE,
+  title      TEXT NOT NULL DEFAULT '',
+  apps       TEXT NOT NULL DEFAULT '',
+  enabled    INTEGER NOT NULL DEFAULT 1
+);
+
+-- Hourly per-app resource usage aggregates from metrics-server samples,
+-- kept 30 days. Feeds right-sizing and cost insights.
+CREATE TABLE IF NOT EXISTS app_usage_hourly (
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  hour          TEXT NOT NULL,
+  cpu_p95_milli INTEGER NOT NULL DEFAULT 0,
+  cpu_max_milli INTEGER NOT NULL DEFAULT 0,
+  mem_max_mb    INTEGER NOT NULL DEFAULT 0,
+  samples       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (app_id, hour)
+);

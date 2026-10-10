@@ -235,6 +235,22 @@ func Render(p Params) ([]render.Object, error) {
 		}
 	}
 
+	// Liveness (TCP, generous: a database restarting mid-recovery is worse
+	// than a slow one) and requests-only defaults so addons never run
+	// BestEffort — the first pods evicted under node pressure.
+	if container.LivenessProbe == nil {
+		container.LivenessProbe = &corev1.Probe{
+			ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}},
+			InitialDelaySeconds: 30, PeriodSeconds: 20, FailureThreshold: 6,
+		}
+	}
+	if container.Resources.Requests == nil {
+		container.Resources.Requests = corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("50m"),
+			corev1.ResourceMemory: resource.MustParse("128Mi"),
+		}
+	}
+
 	sts := &appsv1.StatefulSet{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "StatefulSet"},
 		ObjectMeta: meta,

@@ -42,6 +42,9 @@ nav:
       - Addons: guides/addons.md
       - Volumes: guides/volumes.md
       - Backups & restore: guides/backups.md
+      - Uptime & status pages: guides/status-pages.md
+      - Template gallery: guides/templates.md
+      - Cost & right-sizing: guides/insights.md
   - AI assistant: ai/assistant.md
   - Machine learning:
       - GPU cloud: ml/gpu-cloud.md
@@ -52,6 +55,7 @@ nav:
   - Operations:
       - Audit log: operations/audit.md
       - Doctor: operations/doctor.md
+      - Node maintenance: operations/node-maintenance.md
       - Disaster recovery: operations/disaster-recovery.md
       - Registry GC: operations/registry-gc.md
       - Raspberry Pi & ARM: operations/raspberry-pi.md

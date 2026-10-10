@@ -115,6 +115,17 @@ luncur scale myapp --project myproj --cpu 250m --memory 256Mi   # requests==limi
 luncur scale myapp --project myproj --cpu "" --memory ""        # clear
 ```
 
+Apps that set no CPU/memory still get small **requests** (default `50m` /
+`64Mi`, no limits), so they're never the first pods evicted under node
+pressure. Change or disable the defaults with the `default_cpu_request` /
+`default_memory_request` settings (`0` = off). See [Insights](insights.md) for
+recommended values based on real usage.
+
+Multi-replica apps are spread across nodes (and zones) when the cluster has
+more than one. On K8s 1.30+ (K3s's default), pods also pause 5 seconds before
+shutting down, so the ingress stops routing to them first: no 502s during
+rollouts.
+
 ## Add health checks
 
 ```sh
@@ -124,6 +135,108 @@ luncur health myapp --project myproj --off
 
 Readiness gates rollouts and Service endpoints (zero-downtime deploys), while
 liveness restarts a wedged container.
+
+Without a health path, web apps still get a **TCP readiness probe** on their
+port, so "Ready" means "accepting connections" rather than "process started".
+Turn it off per app with `luncur app set myapp --project myproj --probe off`.
+
+## Rollouts: when a deploy is "live"
+
+A deploy is marked `live` only once its **new pods are serving**. Applying
+the manifests is not enough: with zero-downtime rolling updates the old pods
+keep serving while new ones start, so a broken image used to look live.
+Now the deploy stays `deploying` while luncur's rollout gate watches the new
+ReplicaSet:
+
+- **Live:** every wanted replica is updated and available and no old pod is
+  left.
+- **Failed fast**, before the timeout:
+
+  | What happened to a new pod | `fail_reason` |
+  |---|---|
+  | `CrashLoopBackOff`, or 3+ restarts | `crash-looping: <exit reason> (N restarts)` |
+  | OOM-killed | `OOM-killed: <limit> limit hit` |
+  | Missing Secret/ConfigMap key, invalid image name | `bad container config: …` |
+  | Image pull failing for over 60s | `image pull failed: …` |
+  | Not ready within the rollout timeout (default 5m) | `rollout timed out …` or `unschedulable: …` |
+
+When a rollout fails, luncur **rolls back automatically** to the previous live
+deploy. The new deploy row shows `(auto-rollback of #N)`, and a
+`deploy_rolled_back` notification is sent. A rollback is never itself
+auto-rolled back. The CLI waits for the verdict and prints the 3-line error:
+
+```text
+$ luncur deploy web --project shop --image shop/web:2.0
+deployment #14 rolling out…
+  ready 0/2
+✗ deployment #14 failed: crash-looping: Error (4 restarts)
+  why:  The new container exits shortly after starting — usually a missing env var, a bad command, or a failing migration.
+  next: luncur logs web --project shop
+```
+
+`--no-wait` returns as soon as the manifests are applied. A pipeline `deploy:`
+step finishes only when its deploy is live or failed.
+
+```sh
+luncur app set myapp --project myproj                       # show the policy
+luncur app set myapp --project myproj --auto-rollback off   # keep a failed rollout in place
+luncur app set myapp --project myproj --rollout-timeout 10m # slow-starting apps
+```
+
+The same settings are on the app's **Wire → Rollout** card.
+
+## Canary and blue-green deploys
+
+Web apps can roll out new images gradually:
+
+```sh
+luncur app set web --project shop --strategy canary --canary-steps 10,50 --canary-interval 2m
+luncur app set web --project shop --strategy bluegreen --bluegreen-keep 10m
+luncur app set web --project shop --strategy rolling       # back to the default
+```
+
+With `canary`, a deploy starts a second Deployment, `web-canary`, running the
+new image while the current one keeps serving. Traffic then shifts through the
+steps (10% → 50% → promote). Each step holds for the canary interval, and luncur
+probes the canary every 10 seconds on the health path (or `/`). The canary is
+**aborted** if:
+
+- the probe success rate drops below `--canary-min-success` (default 99%); or
+- a canary pod restarts.
+
+Your live version never changes during a canary, so an abort needs no
+rollback.
+
+After the last step, the stable Deployment is rolled to the new image (gated
+like any rollout), and the canary is removed.
+
+**Blue-green** is the same machine with a full-size canary ("green") and a
+single 100% switch, held for `--bluegreen-keep`. Aborting within that window
+flips traffic straight back.
+
+How traffic is split:
+
+- **Weighted** (default on K3s): when Traefik's CRDs are installed, a
+  `TraefikService` splits traffic by weight. It sits behind `IngressRoute`s that
+  outrank the app's Ingress for the same hosts. Removing them hands routing
+  back to the untouched Ingress.
+- **Replica ratio** (fallback): without those CRDs, canary pods join the app's
+  Service and are scaled to approximate each weight.
+
+```sh
+luncur rollout status web --project shop    # phase, weight, probe success
+luncur rollout promote web --project shop   # skip the remaining steps
+luncur rollout abort web --project shop     # traffic back to the current version
+```
+
+The app's **Ship** tab shows the rollout live with promote and abort buttons.
+Canary and blue-green can't be used with:
+
+- apps with volumes (ReadWriteOnce storage can't run two copies);
+- GPU apps;
+- internal apps.
+
+A first deploy and every rollback always roll normally.
 
 ## Roll back a bad deploy
 
